@@ -1,0 +1,465 @@
+
+=== DRY RUN STARTER PACK ===
+Node.js + SQLite + Vanilla JS SPA
+Community Text Voting Platform
+
+=== 1. FOLDER STRUCTURE ===
+
+/app
+  /public
+    index.html
+    app.js
+    styles.css
+  /src
+    /routes
+      auth.js
+      documents.js
+      proposals.js
+      votes.js
+      comments.js
+      activity.js
+      admin.js
+    /db
+      schema.sql
+      db.js
+    /lib
+      otp.js
+      session.js
+      overlap.js
+      lineindex.js
+      paginate.js
+    config.js
+  server.js
+  package.json
+  .env
+
+=== 2. PACKAGE.JSON ===
+
+{
+  "name": "text-vote",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/headless.js"
+  },
+  "dependencies": {
+    "fastify": "^4.x",
+    "@fastify/cookie": "^9.x",
+    "@fastify/static": "^7.x",
+    "@fastify/multipart": "^8.x",
+    "better-sqlite3": "^9.x",
+    "nodemailer": "^6.x",
+    "marked": "^12.x",
+    "dompurify": "^3.x",
+    "jsdom": "^24.x"
+  },
+  "devDependencies": {
+    "node-fetch": "^3.x"
+  }
+}
+
+NOTE: DOMPurify needs jsdom in Node context for server-side sanitization.
+marked is used server-side only for import normalization.
+All rendering is client-side.
+
+=== 3. SQLITE SCHEMA (schema.sql) ===
+
+PRAGMA journal_mode=WAL;
+PRAGMA foreign_keys=ON;
+
+-- USERS
+CREATE TABLE users (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  email       TEXT    NOT NULL UNIQUE,
+  display_name TEXT   NOT NULL,
+  organization TEXT,
+  role        TEXT    NOT NULL DEFAULT 'member'
+              CHECK(role IN ('global_admin','owner','moderator','member')),
+  status      TEXT    NOT NULL DEFAULT 'active'
+              CHECK(status IN ('active','blocked','disabled')),
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- OTP CODES
+CREATE TABLE otp_codes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  email       TEXT    NOT NULL,
+  code        TEXT    NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  used        INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX idx_otp_email ON otp_codes(email);
+
+-- SESSIONS
+CREATE TABLE sessions (
+  id          TEXT    PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id),
+  expires_at  INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+
+-- DOCUMENTS
+CREATE TABLE documents (
+  id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+  owner_id                  INTEGER NOT NULL REFERENCES users(id),
+  title                     TEXT    NOT NULL,
+  description               TEXT,
+  canonical_text            TEXT    NOT NULL,
+  line_numbering            TEXT    NOT NULL DEFAULT 'auto_generate'
+                            CHECK(line_numbering IN ('auto_generate','preserve_source')),
+  lines_per_page            INTEGER NOT NULL DEFAULT 35,
+  status                    TEXT    NOT NULL DEFAULT 'draft'
+                            CHECK(status IN (
+                              'draft','open','resolving',
+                              'conflict_pause','resolved','archived'
+                            )),
+  visibility                TEXT    NOT NULL DEFAULT 'members_only'
+                            CHECK(visibility IN ('public_read','members_only')),
+  moderation_mode           TEXT    NOT NULL DEFAULT 'none'
+                            CHECK(moderation_mode IN (
+                              'none','flag_and_show','reviewed_only'
+                            )),
+  participation_mode        TEXT    NOT NULL DEFAULT 'open'
+                            CHECK(participation_mode IN ('open','invite_only')),
+  vote_visibility           TEXT    NOT NULL DEFAULT 'public'
+                            CHECK(vote_visibility IN (
+                              'public','members_only','hidden_until_resolution'
+                            )),
+  max_proposal_length       INTEGER NOT NULL DEFAULT 1000,
+  min_votes_for_resolution  INTEGER NOT NULL DEFAULT 10,
+  activity_poll_seconds     INTEGER NOT NULL DEFAULT 30,
+  created_at                INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at                INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+-- DOCUMENT LINE INDEX
+CREATE TABLE document_lines (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id   INTEGER NOT NULL REFERENCES documents(id),
+  line_number   INTEGER NOT NULL,
+  page_number   INTEGER NOT NULL,
+  char_start    INTEGER NOT NULL,
+  char_end      INTEGER NOT NULL,
+  source_line_number TEXT,
+  UNIQUE(document_id, line_number)
+);
+CREATE INDEX idx_lines_doc ON document_lines(document_id);
+
+-- DOCUMENT MEMBERSHIP
+CREATE TABLE document_members (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id   INTEGER NOT NULL REFERENCES documents(id),
+  user_id       INTEGER NOT NULL REFERENCES users(id),
+  role          TEXT    NOT NULL DEFAULT 'member'
+                CHECK(role IN ('owner','moderator','member')),
+  status        TEXT    NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','blocked','invited')),
+  invited_by    INTEGER REFERENCES users(id),
+  created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+  UNIQUE(document_id, user_id)
+);
+CREATE INDEX idx_members_doc  ON document_members(document_id);
+CREATE INDEX idx_members_user ON document_members(user_id);
+
+-- PROPOSALS
+CREATE TABLE proposals (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id       INTEGER NOT NULL REFERENCES documents(id),
+  proposer_id       INTEGER NOT NULL REFERENCES users(id),
+  edit_type         TEXT    NOT NULL
+                    CHECK(edit_type IN ('INSERT','REPLACE','DELETE')),
+  range_start       INTEGER NOT NULL,
+  range_end         INTEGER NOT NULL,
+  replacement_text  TEXT,
+  status            TEXT    NOT NULL DEFAULT 'active'
+                    CHECK(status IN (
+                      'active','pending_review','rejected',
+                      'withdrawn','accepted','superseded','conflict_flagged'
+                    )),
+  rejection_comment TEXT,
+  moderated_by      INTEGER REFERENCES users(id),
+  moderated_at      INTEGER,
+  created_at        INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at        INTEGER NOT NULL DEFAULT (unixepoch()),
+  CHECK(range_start <= range_end),
+  CHECK(
+    (edit_type = 'DELETE' AND (replacement_text IS NULL OR replacement_text = ''))
+    OR edit_type IN ('INSERT','REPLACE')
+  )
+);
+CREATE INDEX idx_proposals_doc      ON proposals(document_id);
+CREATE INDEX idx_proposals_proposer ON proposals(proposer_id);
+CREATE INDEX idx_proposals_range    ON proposals(document_id, range_start, range_end);
+
+-- PROPOSAL RELATIONS
+CREATE TABLE proposal_relations (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_proposal INTEGER NOT NULL REFERENCES proposals(id),
+  to_proposal   INTEGER NOT NULL REFERENCES proposals(id),
+  verb          TEXT    NOT NULL
+                CHECK(verb IN (
+                  'is_based_on','alternative_to','conflicts_with',
+                  'depends_on','supersedes','clarifies'
+                )),
+  created_by    INTEGER NOT NULL REFERENCES users(id),
+  created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+  UNIQUE(from_proposal, to_proposal, verb),
+  CHECK(from_proposal != to_proposal)
+);
+CREATE INDEX idx_relations_from ON proposal_relations(from_proposal);
+CREATE INDEX idx_relations_to   ON proposal_relations(to_proposal);
+
+-- VOTES
+CREATE TABLE votes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal_id   INTEGER NOT NULL REFERENCES proposals(id),
+  user_id       INTEGER NOT NULL REFERENCES users(id),
+  created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+  UNIQUE(proposal_id, user_id)
+);
+CREATE INDEX idx_votes_proposal ON votes(proposal_id);
+CREATE INDEX idx_votes_user     ON votes(user_id);
+
+-- COMMENTS
+CREATE TABLE comments (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  proposal_id   INTEGER NOT NULL REFERENCES proposals(id),
+  author_id     INTEGER NOT NULL REFERENCES users(id),
+  parent_id     INTEGER REFERENCES comments(id),
+  body          TEXT    NOT NULL,
+  status        TEXT    NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','hidden','withdrawn')),
+  hidden_by     INTEGER REFERENCES users(id),
+  hidden_reason TEXT,
+  created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+  CHECK(
+    parent_id IS NULL
+    OR (SELECT parent_id FROM comments c2 WHERE c2.id = parent_id) IS NULL
+  )
+);
+CREATE INDEX idx_comments_proposal ON comments(proposal_id);
+CREATE INDEX idx_comments_parent   ON comments(parent_id);
+CREATE INDEX idx_comments_author   ON comments(author_id);
+
+-- RESOLUTION RUNS
+CREATE TABLE resolution_runs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id     INTEGER NOT NULL REFERENCES documents(id),
+  initiated_by    INTEGER NOT NULL REFERENCES users(id),
+  order_mode      TEXT    NOT NULL
+                  CHECK(order_mode IN (
+                    'sequential','most_votes_first',
+                    'biggest_change_first','smallest_change_first'
+                  )),
+  status          TEXT    NOT NULL DEFAULT 'in_progress'
+                  CHECK(status IN ('in_progress','conflict_pause','completed')),
+  created_at      INTEGER NOT NULL DEFAULT (unixepoch()),
+  completed_at    INTEGER
+);
+
+-- RESOLUTION DECISIONS
+CREATE TABLE resolution_decisions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  resolution_id   INTEGER NOT NULL REFERENCES resolution_runs(id),
+  proposal_id     INTEGER NOT NULL REFERENCES proposals(id),
+  decision        TEXT    NOT NULL
+                  CHECK(decision IN ('accepted','rejected','manual_merge')),
+  decided_by      INTEGER NOT NULL REFERENCES users(id),
+  note            TEXT,
+  decided_at      INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+=== 4. API ENDPOINTS ===
+
+All JSON. All writes require valid session cookie.
+Reads on public documents: no auth required.
+Reads on members_only documents: auth required.
+
+--- AUTH ---
+POST   /api/auth/otp/request        { email }
+POST   /api/auth/otp/verify         { email, code }
+POST   /api/auth/logout
+GET    /api/auth/me
+
+--- USERS ---
+GET    /api/users/:id
+PATCH  /api/users/:id               { display_name, organization }
+POST   /api/admin/users/:id/block
+POST   /api/admin/users/:id/unblock
+
+--- DOCUMENTS ---
+POST   /api/documents               create document + import text
+GET    /api/documents/:id           metadata + settings
+GET    /api/documents/:id/lines     full line index (char offsets, page/line numbers)
+GET    /api/documents/:id/text      canonical text (raw)
+PATCH  /api/documents/:id           update settings (owner/admin)
+POST   /api/documents/:id/open      set status=open (owner/admin)
+POST   /api/documents/:id/resolve   initiate resolution phase
+
+--- DOCUMENT MEMBERS ---
+GET    /api/documents/:id/members
+POST   /api/documents/:id/members   invite user
+PATCH  /api/documents/:id/members/:userId   update role/status
+DELETE /api/documents/:id/members/:userId   remove member
+
+--- PROPOSALS ---
+GET    /api/documents/:id/proposals           list all (with vote counts if visible)
+POST   /api/documents/:id/proposals           create proposal
+GET    /api/proposals/:id                     single proposal detail
+PATCH  /api/proposals/:id                     edit (only if zero votes, proposer only)
+DELETE /api/proposals/:id                     withdraw (only if zero votes, proposer only)
+POST   /api/proposals/:id/fork                create variant based on this proposal
+GET    /api/proposals/:id/relations           all relations + auto-detected overlaps
+POST   /api/proposals/:id/relations           add relation to another proposal
+GET    /api/proposals/:id/overlaps            proposals overlapping this range
+
+--- VOTES ---
+POST   /api/proposals/:id/vote                cast or change vote
+DELETE /api/proposals/:id/vote                retract vote
+GET    /api/proposals/:id/votes               vote count (subject to visibility setting)
+
+--- COMMENTS ---
+GET    /api/proposals/:id/comments            two-level thread
+POST   /api/proposals/:id/comments            post top-level comment
+POST   /api/comments/:id/replies              post reply (one level only)
+PATCH  /api/comments/:id/hide                 moderator hide
+DELETE /api/comments/:id                      soft-delete (author, if no replies)
+
+--- ACTIVITY ---
+GET    /api/activity/mine                     my proposals + comments activity feed
+                                              ?since=unixepoch for polling
+
+--- RESOLUTION ---
+GET    /api/documents/:id/resolution          current resolution run state
+POST   /api/documents/:id/resolution/decide   owner decides on conflict_flagged proposal
+GET    /api/documents/:id/resolution/output   final resolved text (when completed)
+POST   /api/documents/:id/resolution/new-doc  create new document from resolved output
+
+--- ADMIN ---
+GET    /api/admin/documents                   all documents
+GET    /api/admin/users                       all users
+POST   /api/admin/proposals/:id/moderate      approve/reject with comment
+
+=== 5. HEADLESS TEST PLAN (tests/headless.js) ===
+
+Group A: Auth
+  A1. Request OTP for new email -> 200, code stored in DB
+  A2. Verify OTP with correct code -> 200, session cookie set
+  A3. Verify OTP with wrong code -> 401
+  A4. Verify OTP with expired code -> 401
+  A5. GET /api/auth/me with valid cookie -> 200, user object
+  A6. GET /api/auth/me with no cookie -> 401
+  A7. POST /api/auth/logout -> 200, cookie cleared
+
+Group B: Document Import
+  B1. POST /api/documents with .txt content -> 200, line index generated
+  B2. POST /api/documents with .md content -> 200, markdown normalized
+  B3. Verify line count matches expected
+  B4. Verify char offsets are contiguous and cover full text
+  B5. Verify page breaks at correct line intervals
+  B6. Verify preserve_source mode detects existing line numbers
+
+Group C: Proposals
+  C1. Create INSERT proposal (zero-length range) -> 200
+  C2. Create REPLACE proposal -> 200
+  C3. Create DELETE proposal -> 200
+  C4. Create proposal crossing multiple lines -> 200
+  C5. Create proposal with replacement_text exceeding max_proposal_length -> 400
+  C6. Create DELETE with non-empty replacement_text -> 400
+  C7. Edit proposal with zero votes -> 200
+  C8. Edit proposal with one vote -> 403
+  C9. Withdraw proposal with zero votes -> 200
+  C10. Withdraw proposal with one vote -> 403
+  C11. Fork proposal -> 200, new proposal created, is_based_on relation auto-created
+  C12. Unauthenticated proposal create -> 401
+
+Group D: Overlaps and Relations
+  D1. Create two proposals with overlapping ranges -> both 200
+  D2. GET /api/proposals/:id/overlaps -> returns overlapping proposal
+  D3. Add manual relation between proposals -> 200
+  D4. Add duplicate relation -> 409
+  D5. Add self-relation -> 400
+  D6. Add relation with invalid verb -> 400
+
+Group E: Voting
+  E1. Cast vote on proposal -> 200
+  E2. Cast vote again on same proposal -> 200 (idempotent update)
+  E3. Retract vote -> 200
+  E4. Vote on overlapping proposal -> 200 (independent voting confirmed)
+  E5. Unauthenticated vote -> 401
+  E6. Vote after resolution phase invoked -> 403
+
+Group F: Comments
+  F1. Post top-level comment -> 200
+  F2. Post reply to comment -> 200
+  F3. Post reply to reply (3rd level) -> 400 (two-level only)
+  F4. Unauthenticated comment -> 401
+  F5. Moderator hides comment -> 200
+  F6. Author soft-deletes comment with no replies -> 200
+  F7. Author soft-deletes comment with replies -> 400
+
+Group G: Activity Feed
+  G1. GET /api/activity/mine -> returns my proposals and comments
+  G2. Cast vote on my proposal -> appears in activity feed
+  G3. Reply to my comment -> appears in activity feed
+  G4. Link proposal to mine -> appears in activity feed
+  G5. Poll with ?since= param -> returns only new activity
+
+Group H: Resolution
+  H1. Invoke resolution on open document -> 200, status=resolving
+  H2. Attempt new proposal on resolving document -> 403
+  H3. Attempt new vote on resolving document -> 403
+  H4. Resolution with non-overlapping proposals -> all accepted, status=resolved
+  H5. Resolution with overlapping proposals -> status=conflict_pause
+  H6. Owner resolves conflict -> decision recorded, resolution continues
+  H7. GET /api/documents/:id/resolution/output -> final text returned
+  H8. Create new document from resolved output -> 200, new document in draft
+
+Group I: Permissions and Access Control
+  I1. Public document readable by anonymous -> 200
+  I2. Members-only document by anonymous -> 401
+  I3. Blocked user attempts to propose -> 403
+  I4. Globally disabled user attempts login -> 403
+  I5. Invite-only document: non-member attempts to propose -> 403
+  I6. Vote counts hidden_until_resolution: anonymous sees no counts -> counts null
+  I7. Vote counts hidden_until_resolution: after resolution -> counts visible
+
+Group J: Concurrency and Integrity
+  J1. Two users vote on same proposal simultaneously -> both succeed, count=2
+  J2. Same user votes twice simultaneously -> only one vote recorded (UNIQUE constraint)
+  J3. 10 simultaneous document reads -> all 200, no lock errors
+  J4. SQLite WAL mode confirmed active
+
+=== 6. CONFIG (.env) ===
+
+PORT=3000
+SESSION_SECRET=change-this-to-a-long-random-string
+SESSION_EXPIRY_HOURS=72
+OTP_EXPIRY_MINUTES=15
+OTP_LENGTH=6
+ACTIVITY_POLL_SECONDS=30
+DEFAULT_LINES_PER_PAGE=35
+DEFAULT_MAX_PROPOSAL_LENGTH=1000
+DEFAULT_MIN_VOTES_FOR_RESOLUTION=10
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_FROM=noreply@yourdomain.com
+DB_PATH=./data/app.db
+
+=== 7. FUTURE IMPROVEMENTS (noted) ===
+
+- Import: .docx and .pdf support
+- Auth: social login (one provider first)
+- Auth: SMS OTP
+- Notifications: email digest for activity
+- Search: full-text search across proposals
+- Export: PDF of resolved document
+- API: pagination on all list endpoints
+- Performance: cache document line index in memory
+- UI: diff view showing proposal change in context
+- UI: side-by-side comparison of overlapping proposals

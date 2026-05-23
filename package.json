@@ -1,0 +1,37 @@
+{
+  "name": "votetext",
+  "version": "0.1.0",
+  "description": "Collaborative text voting platform — propose, discuss, and vote on document changes",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "init-db": "node scripts/init-db.js",
+    "seed": "node scripts/seed.js",
+    "clean-db": "rm -f data/votetext.db data/votetext.db-shm data/votetext.db-wal && npm run init-db",
+    "test": "node --test tests/api.test.js"
+  },
+  "keywords": [
+    "voting",
+    "collaboration",
+    "text",
+    "document",
+    "proposals"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.1",
+    "nodemailer": "^6.9.16"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

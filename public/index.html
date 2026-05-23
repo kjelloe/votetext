@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoteText</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header id="app-header">
+        <div class="header-inner">
+            <a href="#/documents" class="logo">VoteText</a>
+            <nav id="app-nav">
+                <a href="#/documents" class="nav-link" data-route="documents">Documents</a>
+                <a href="#/activity" class="nav-link" data-route="activity">Activity</a>
+            </nav>
+            <div id="user-area">
+                <button id="login-btn" class="btn btn-primary">Log in</button>
+                <div id="user-menu" class="hidden">
+                    <span id="user-name-display"></span>
+                    <a href="#/profile" class="nav-link">Profile</a>
+                    <button id="logout-btn" class="btn btn-ghost">Log out</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main id="app-main" role="main">
+        <div class="loading-spinner">Loading…</div>
+    </main>
+
+    <footer class="app-footer">
+        <span>VoteText — collaborative text voting</span>
+    </footer>
+
+    <div id="modal-overlay" class="hidden">
+        <div id="modal-box">
+            <button id="modal-close" class="btn btn-ghost modal-close-btn">&times;</button>
+            <div id="modal-content"></div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

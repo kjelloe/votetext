@@ -1,0 +1,543 @@
+'use strict';
+
+// Must be set before any project module is required — dotenv will not override existing env vars
+process.env.DATABASE_PATH = './data/test_votetext.db';
+process.env.PORT = '3099';
+process.env.NODE_ENV = 'test';
+process.env.SESSION_LIFETIME_HOURS = '1';
+process.env.OTP_EXPIRY_MINUTES = '10';
+
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+
+// Initialise a fresh test database before loading any project module
+const Database = require('better-sqlite3');
+const DB_PATH = path.resolve('./data/test_votetext.db');
+if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+const schema = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
+const initDb = new Database(DB_PATH);
+initDb.exec(schema);
+initDb.close();
+
+// Load project modules (they will use DATABASE_PATH already set above)
+const app = require('../src/server');
+const { db } = require('../src/db');
+
+const BASE = 'http://localhost:3099/api';
+
+// Shared test state — tests run sequentially and build on each other
+let server;
+let sessionCookie = '';  // alice
+let viewerCookie = '';   // bob (viewer only)
+let docId;
+let variantId;
+let commentId;
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
+
+before(async () => {
+    await new Promise(resolve => { server = app.listen(3099, resolve); });
+});
+
+after(async () => {
+    db.close();
+    await new Promise(resolve => server.close(resolve));
+    if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+    // Also clean up WAL artefacts
+    for (const ext of ['-shm', '-wal']) {
+        const f = DB_PATH + ext;
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
+});
+
+// ── Helper ───────────────────────────────────────────────────────────────────
+
+async function req(method, urlPath, opts = {}) {
+    const { body, cookie } = opts;
+    const headers = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (cookie) headers['Cookie'] = cookie;
+
+    const res = await fetch(BASE + urlPath, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    const data = res.status === 204 ? null : await res.json();
+    const setCookie = res.headers.get('set-cookie') || '';
+    const m = setCookie.match(/session_id=([^;]+)/);
+
+    return { status: res.status, data, sessionId: m ? m[1] : null };
+}
+
+// Read the most-recent unused OTP from the test DB directly
+function latestOtp(email) {
+    return db.prepare(
+        "SELECT code FROM otp_codes WHERE email = ? AND used = 0 ORDER BY created_at DESC LIMIT 1"
+    ).get(email.toLowerCase());
+}
+
+// ── AUTH ─────────────────────────────────────────────────────────────────────
+
+test('POST /auth/request-otp — missing email → 400', async () => {
+    const r = await req('POST', '/auth/request-otp', { body: {} });
+    assert.equal(r.status, 400);
+});
+
+test('POST /auth/request-otp — invalid email → 400', async () => {
+    const r = await req('POST', '/auth/request-otp', { body: { email: 'notvalid' } });
+    assert.equal(r.status, 400);
+});
+
+test('POST /auth/request-otp — valid email → 200, OTP saved', async () => {
+    const r = await req('POST', '/auth/request-otp', { body: { email: 'alice@test.com' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.message, 'Code sent');
+    const otp = latestOtp('alice@test.com');
+    assert.ok(otp, 'OTP record should exist in DB');
+    assert.match(otp.code, /^\d{6}$/, 'OTP should be 6 digits');
+});
+
+test('POST /auth/verify-otp — wrong code → 401', async () => {
+    const r = await req('POST', '/auth/verify-otp', { body: { email: 'alice@test.com', code: '000000' } });
+    assert.equal(r.status, 401);
+});
+
+test('POST /auth/verify-otp — correct code → 200, session cookie set', async () => {
+    const otp = latestOtp('alice@test.com');
+    const r = await req('POST', '/auth/verify-otp', { body: { email: 'alice@test.com', code: otp.code } });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.user);
+    assert.equal(r.data.user.email, 'alice@test.com');
+    assert.ok(r.sessionId, 'session_id cookie should be present in response');
+    sessionCookie = `session_id=${r.sessionId}`;
+});
+
+test('POST /auth/verify-otp — used code → 401', async () => {
+    // The OTP was marked used in the previous test
+    const otp = db.prepare("SELECT code FROM otp_codes WHERE email = 'alice@test.com' ORDER BY created_at DESC LIMIT 1").get();
+    const r = await req('POST', '/auth/verify-otp', { body: { email: 'alice@test.com', code: otp.code } });
+    assert.equal(r.status, 401);
+});
+
+test('GET /auth/me — no cookie → 401', async () => {
+    const r = await req('GET', '/auth/me');
+    assert.equal(r.status, 401);
+});
+
+test('GET /auth/me — valid session → 200', async () => {
+    const r = await req('GET', '/auth/me', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.user.email, 'alice@test.com');
+});
+
+test('PATCH /auth/profile — update display name → 200', async () => {
+    const r = await req('PATCH', '/auth/profile', { body: { display_name: 'Alice Test', organization: 'TestCo' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.user.display_name, 'Alice Test');
+});
+
+// Set up a second user (Bob) with viewer access for access-control tests
+test('Setup: create viewer user Bob', async () => {
+    await req('POST', '/auth/request-otp', { body: { email: 'bob@test.com' } });
+    const otp = latestOtp('bob@test.com');
+    const r = await req('POST', '/auth/verify-otp', { body: { email: 'bob@test.com', code: otp.code } });
+    assert.equal(r.status, 200);
+    viewerCookie = `session_id=${r.sessionId}`;
+});
+
+// ── DOCUMENTS ─────────────────────────────────────────────────────────────────
+
+test('POST /documents — missing title → 400', async () => {
+    const r = await req('POST', '/documents', { body: { text: 'some text' }, cookie: sessionCookie });
+    assert.equal(r.status, 400);
+});
+
+test('POST /documents — missing text → 400', async () => {
+    const r = await req('POST', '/documents', { body: { title: 'Test' }, cookie: sessionCookie });
+    assert.equal(r.status, 400);
+});
+
+test('POST /documents — valid → 201, lines created', async () => {
+    const text = 'First line\nSecond line\nThird line\nFourth line\nFifth line';
+    const r = await req('POST', '/documents', {
+        body: { title: 'Test Document', text, description: 'A test doc', settings: { lines_per_page: 3 } },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.ok(r.data.document.id);
+    assert.equal(r.data.document.title, 'Test Document');
+    assert.equal(r.data.document.total_lines, 5);
+    assert.equal(r.data.document.total_pages, 2); // 5 lines / 3 per page = 2 pages
+    assert.equal(r.data.document.total_chars, text.length);
+    docId = r.data.document.id;
+});
+
+test('GET /documents — lists user documents → 200', async () => {
+    const r = await req('GET', '/documents', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.documents));
+    assert.ok(r.data.documents.some(d => d.id === docId));
+});
+
+test('GET /documents/:id — → 200 with metadata', async () => {
+    const r = await req('GET', `/documents/${docId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.title, 'Test Document');
+    assert.equal(r.data.document.status, 'draft');
+});
+
+test('GET /documents/:id/lines — page 1 returns lines with correct char offsets', async () => {
+    const r = await req('GET', `/documents/${docId}/lines?page=1`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.page, 1);
+    assert.equal(r.data.total_pages, 2);
+    assert.equal(r.data.lines.length, 3);
+
+    // Verify char offsets are contiguous
+    const lines = r.data.lines;
+    assert.equal(lines[0].char_offset_start, 0);
+    assert.equal(lines[0].char_offset_end, 10);           // 'First line'
+    assert.equal(lines[1].char_offset_start, 11);         // +1 for \n
+    assert.equal(lines[1].char_offset_end, 22);           // 'Second line'
+    assert.equal(lines[2].char_offset_start, 23);
+});
+
+test('GET /documents/:id/lines — page 2 returns remaining lines', async () => {
+    const r = await req('GET', `/documents/${docId}/lines?page=2`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.lines.length, 2);
+});
+
+test('PATCH /documents/:id — update title and settings → 200', async () => {
+    const r = await req('PATCH', `/documents/${docId}`, {
+        body: { title: 'Updated Title', settings: { allow_anonymous_view: false } },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.title, 'Updated Title');
+});
+
+test('POST /documents/:id/status — invalid transition (draft → voting) → 422', async () => {
+    const r = await req('POST', `/documents/${docId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+test('POST /documents/:id/status — valid transition (draft → open) → 200', async () => {
+    const r = await req('POST', `/documents/${docId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'open');
+});
+
+// ── VARIANTS ──────────────────────────────────────────────────────────────────
+
+test('POST /documents/:id/variants — invalid char range → 400', async () => {
+    const r = await req('POST', `/documents/${docId}/variants`, {
+        body: { char_start: 10, char_end: 5, operation: 'replace', new_text: 'x', title: 'bad' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('POST /documents/:id/variants — replace → 201', async () => {
+    const r = await req('POST', `/documents/${docId}/variants`, {
+        body: { char_start: 0, char_end: 10, operation: 'replace', new_text: 'Changed line', title: 'Fix first line', rationale: 'Better wording' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.ok(r.data.variant.id);
+    assert.equal(r.data.variant.operation, 'replace');
+    assert.equal(r.data.variant.status, 'pending');
+    variantId = r.data.variant.id;
+});
+
+test('POST /documents/:id/variants — insert → 201', async () => {
+    const r = await req('POST', `/documents/${docId}/variants`, {
+        body: { char_start: 0, char_end: 0, operation: 'insert', new_text: 'PREAMBLE\n', title: 'Add preamble' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.variant.operation, 'insert');
+});
+
+test('POST /documents/:id/variants — delete → 201', async () => {
+    const r = await req('POST', `/documents/${docId}/variants`, {
+        body: { char_start: 11, char_end: 22, operation: 'delete', new_text: '', title: 'Remove second line' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.variant.operation, 'delete');
+});
+
+test('GET /documents/:id/variants — lists all variants → 200', async () => {
+    const r = await req('GET', `/documents/${docId}/variants`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.variants.length >= 3);
+});
+
+test('GET /variants/:id — → 200 with proposer name', async () => {
+    const r = await req('GET', `/variants/${variantId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.variant.proposer_name);
+});
+
+test('PATCH /variants/:id — update title → 200', async () => {
+    const r = await req('PATCH', `/variants/${variantId}`, {
+        body: { title: 'Corrected first line' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.title, 'Corrected first line');
+});
+
+// ── VOTING ────────────────────────────────────────────────────────────────────
+
+test('POST /variants/:id/vote — invalid value → 400', async () => {
+    const r = await req('POST', `/variants/${variantId}/vote`, { body: { vote_value: 2 }, cookie: sessionCookie });
+    assert.equal(r.status, 400);
+});
+
+test('POST /variants/:id/vote — cast for (1) → 200, tally updated', async () => {
+    const r = await req('POST', `/variants/${variantId}/vote`, { body: { vote_value: 1 }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.tallies.votes_for, 1);
+    assert.equal(r.data.tallies.votes_against, 0);
+});
+
+test('POST /variants/:id/vote — change to against (-1) → 200, tally recalculated', async () => {
+    const r = await req('POST', `/variants/${variantId}/vote`, { body: { vote_value: -1 }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.tallies.votes_for, 0);
+    assert.equal(r.data.tallies.votes_against, 1);
+});
+
+test('POST /variants/:id/vote — abstain (0) → 200', async () => {
+    const r = await req('POST', `/variants/${variantId}/vote`, { body: { vote_value: 0 }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.tallies.votes_abstain, 1);
+    assert.equal(r.data.tallies.votes_against, 0);
+});
+
+test('DELETE /variants/:id/vote — retract → 204', async () => {
+    const r = await req('DELETE', `/variants/${variantId}/vote`, { cookie: sessionCookie });
+    assert.equal(r.status, 204);
+    // Verify tally is back to 0
+    const check = await req('GET', `/variants/${variantId}/votes`, { cookie: sessionCookie });
+    assert.equal(check.data.tallies.votes_abstain, 0);
+});
+
+test('GET /variants/:id/votes — → 200 with tallies', async () => {
+    // Cast one vote first
+    await req('POST', `/variants/${variantId}/vote`, { body: { vote_value: 1 }, cookie: sessionCookie });
+    const r = await req('GET', `/variants/${variantId}/votes`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.votes));
+    assert.equal(r.data.tallies.votes_for, 1);
+});
+
+// ── COMMENTS ──────────────────────────────────────────────────────────────────
+
+test('POST /variants/:id/comments — empty text → 400', async () => {
+    const r = await req('POST', `/variants/${variantId}/comments`, { body: { text: '' }, cookie: sessionCookie });
+    assert.equal(r.status, 400);
+});
+
+test('POST /variants/:id/comments — top-level comment → 201', async () => {
+    const r = await req('POST', `/variants/${variantId}/comments`, {
+        body: { text: 'This looks good to me.' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.ok(r.data.comment.id);
+    commentId = r.data.comment.id;
+});
+
+test('POST /variants/:id/comments — reply to comment → 201', async () => {
+    const r = await req('POST', `/variants/${variantId}/comments`, {
+        body: { text: 'Agreed, I support this.', parent_comment_id: commentId },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.comment.parent_comment_id, commentId);
+});
+
+test('POST /variants/:id/comments — reply to reply → 422 (max 2 levels)', async () => {
+    // Get the reply's ID
+    const listR = await req('GET', `/variants/${variantId}/comments`, { cookie: sessionCookie });
+    const top = listR.data.comments.find(c => c.id === commentId);
+    const replyId = top && top.replies && top.replies[0] && top.replies[0].id;
+    if (!replyId) return; // guard: if reply not found, skip gracefully
+
+    const r = await req('POST', `/variants/${variantId}/comments`, {
+        body: { text: 'Third level — should fail', parent_comment_id: replyId },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('GET /variants/:id/comments — threaded structure → 200', async () => {
+    const r = await req('GET', `/variants/${variantId}/comments`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.comments));
+    const top = r.data.comments.find(c => c.id === commentId);
+    assert.ok(top, 'Top-level comment should exist');
+    assert.ok(Array.isArray(top.replies), 'Replies should be an array');
+    assert.equal(top.replies.length, 1, 'Should have one reply');
+});
+
+test('DELETE /comments/:id — non-author → 403', async () => {
+    // viewerCookie is Bob who did not post the comment
+    const r = await req('DELETE', `/comments/${commentId}`, { cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('DELETE /comments/:id — author → 204', async () => {
+    // Create a fresh comment to delete
+    const c = await req('POST', `/variants/${variantId}/comments`, { body: { text: 'to be deleted' }, cookie: sessionCookie });
+    const r = await req('DELETE', `/comments/${c.data.comment.id}`, { cookie: sessionCookie });
+    assert.equal(r.status, 204);
+});
+
+// ── ACTIVITY FEED ─────────────────────────────────────────────────────────────
+
+test('GET /activity — returns user activity → 200', async () => {
+    const r = await req('GET', '/activity', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.activity));
+    assert.ok(r.data.activity.length > 0, 'Activity feed should not be empty');
+});
+
+test('GET /documents/:id/activity — document activity → 200', async () => {
+    const r = await req('GET', `/documents/${docId}/activity`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.activity));
+    const actions = r.data.activity.map(a => a.action);
+    assert.ok(actions.includes('document_created'));
+});
+
+// ── ACCESS CONTROL ────────────────────────────────────────────────────────────
+
+test('POST /documents/:id/access — grant viewer to Bob → 201', async () => {
+    const r = await req('POST', `/documents/${docId}/access`, {
+        body: { email: 'bob@test.com', access_level: 'viewer' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+});
+
+test('POST /documents/:id/variants — viewer cannot propose → 403', async () => {
+    const r = await req('POST', `/documents/${docId}/variants`, {
+        body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'x', title: 'Bob proposes' },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
+test('PATCH /documents/:id/access/:userId — upgrade Bob to proposer → 200', async () => {
+    const bobUser = db.prepare("SELECT id FROM users WHERE email = 'bob@test.com'").get();
+    const r = await req('PATCH', `/documents/${docId}/access/${bobUser.id}`, {
+        body: { access_level: 'proposer' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+});
+
+test('POST /documents/:id/variants — proposer can now propose → 201', async () => {
+    const r = await req('POST', `/documents/${docId}/variants`, {
+        body: { char_start: 0, char_end: 10, operation: 'replace', new_text: 'Bob\'s line', title: 'Bob proposes' },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 201);
+});
+
+test('POST /documents/:id/access — block Bob → 200', async () => {
+    const bobUser = db.prepare("SELECT id FROM users WHERE email = 'bob@test.com'").get();
+    const r = await req('PATCH', `/documents/${docId}/access/${bobUser.id}`, {
+        body: { blocked: true },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+});
+
+test('GET /documents/:id — blocked user → 403', async () => {
+    const r = await req('GET', `/documents/${docId}`, { cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+// ── STATUS LIFECYCLE ──────────────────────────────────────────────────────────
+
+test('POST /documents/:id/status — full lifecycle: open → voting → resolved → archived', async () => {
+    // Unblock Bob first for clean state
+    const bobUser = db.prepare("SELECT id FROM users WHERE email = 'bob@test.com'").get();
+    await req('PATCH', `/documents/${docId}/access/${bobUser.id}`, { body: { blocked: false }, cookie: sessionCookie });
+
+    let r = await req('POST', `/documents/${docId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'voting');
+
+    r = await req('POST', `/documents/${docId}/status`, { body: { status: 'resolved' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'resolved');
+
+    r = await req('POST', `/documents/${docId}/status`, { body: { status: 'archived' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'archived');
+});
+
+test('POST /variants/:id/vote — resolved document → 422', async () => {
+    const r = await req('POST', `/variants/${variantId}/vote`, { body: { vote_value: 1 }, cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+// ── VARIANT RELATIONS ─────────────────────────────────────────────────────────
+
+test('POST /variants/:id/relations — add relation → 201', async () => {
+    // Create a fresh doc/variants for relation test
+    const doc = await req('POST', '/documents', { body: { title: 'Rel doc', text: 'abc def ghi' }, cookie: sessionCookie });
+    const d = doc.data.document;
+    await req('POST', `/documents/${d.id}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+
+    const v1 = await req('POST', `/documents/${d.id}/variants`, { body: { char_start: 0, char_end: 3, operation: 'replace', new_text: 'xyz', title: 'v1' }, cookie: sessionCookie });
+    const v2 = await req('POST', `/documents/${d.id}/variants`, { body: { char_start: 4, char_end: 7, operation: 'replace', new_text: 'uvw', title: 'v2' }, cookie: sessionCookie });
+
+    const r = await req('POST', `/variants/${v1.data.variant.id}/relations`, {
+        body: { to_variant_id: v2.data.variant.id, relation_type: 'conflicts' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+});
+
+test('POST /variants/:id/relations — duplicate → 409', async () => {
+    // Use the existing overlapping variants (overlaps relations are auto-created)
+    const vList = db.prepare('SELECT id FROM variants WHERE document_id = ? LIMIT 2').all(docId);
+    if (vList.length < 2) return;
+    const [a, b] = vList;
+    // Insert manually
+    db.prepare("INSERT OR IGNORE INTO variant_relations (from_variant_id, to_variant_id, relation_type, created_by) VALUES (?, ?, 'conflicts', 1)").run(a.id, b.id);
+    // Try to insert same relation via API
+    const r = await req('POST', `/variants/${a.id}/relations`, {
+        body: { to_variant_id: b.id, relation_type: 'conflicts' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 409);
+});
+
+// ── LOGOUT ────────────────────────────────────────────────────────────────────
+
+test('POST /auth/logout — clears session → 200', async () => {
+    // Create a disposable session
+    await req('POST', '/auth/request-otp', { body: { email: 'temp@test.com' } });
+    const otp = latestOtp('temp@test.com');
+    const loginR = await req('POST', '/auth/verify-otp', { body: { email: 'temp@test.com', code: otp.code } });
+    const tempCookie = `session_id=${loginR.sessionId}`;
+
+    const logoutR = await req('POST', '/auth/logout', { cookie: tempCookie });
+    assert.equal(logoutR.status, 200);
+
+    // Session should now be invalid
+    const meR = await req('GET', '/auth/me', { cookie: tempCookie });
+    assert.equal(meR.status, 401);
+});

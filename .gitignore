@@ -1,3 +1,7 @@
+# Basic
+node_modules/*
+data/*
+
 # Logs
 logs
 *.log
