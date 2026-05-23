@@ -5,7 +5,8 @@ const { getOne, run, logActivity } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
 const router = Router();
-const EDIT_WINDOW_MS = 30 * 60 * 1000;
+const editWindowMins = parseInt(process.env.COMMENT_EDIT_WINDOW_MINUTES || '30');
+const EDIT_WINDOW_MS = editWindowMins * 60 * 1000;
 
 // PATCH /api/comments/:id
 router.patch('/:id', requireAuth, (req, res, next) => {
@@ -18,7 +19,7 @@ router.patch('/:id', requireAuth, (req, res, next) => {
         if (comment.user_id !== req.user.id) return res.status(403).json({ error: 'Not your comment' });
 
         const editCutoff = new Date(Date.now() - EDIT_WINDOW_MS).toISOString();
-        if (comment.created_at < editCutoff) return res.status(422).json({ error: 'Edit window has passed (30 min)' });
+        if (comment.created_at < editCutoff) return res.status(422).json({ error: `Edit window has passed (${editWindowMins} min)` });
 
         run("UPDATE comments SET text = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [text.trim(), comment.id]);
 

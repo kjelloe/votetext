@@ -45,8 +45,8 @@ router.get('/:id', (req, res, next) => {
         );
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ?', [variant.document_id]);
-        if (!checkDocAccess(doc, req)) return res.status(401).json({ error: 'Authentication required' });
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
 
         res.json({ variant });
     } catch (err) {
@@ -93,6 +93,12 @@ router.delete('/:id', requireAuth, (req, res, next) => {
 // GET /api/variants/:id/relations
 router.get('/:id/relations', (req, res, next) => {
     try {
+        const variant = getOne('SELECT id, document_id FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+
         const relations = getAll(
             `SELECT vr.*, v1.title as from_title, v2.title as to_title, u.display_name as created_by_name
              FROM variant_relations vr
@@ -100,7 +106,7 @@ router.get('/:id/relations', (req, res, next) => {
              JOIN variants v2 ON v2.id = vr.to_variant_id
              LEFT JOIN users u ON u.id = vr.created_by
              WHERE vr.from_variant_id = ? OR vr.to_variant_id = ?`,
-            [req.params.id, req.params.id]
+            [variant.id, variant.id]
         );
         res.json({ relations });
     } catch (err) {
@@ -119,6 +125,9 @@ router.post('/:id/relations', requireAuth, (req, res, next) => {
 
         const from = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!from) return res.status(404).json({ error: 'Variant not found' });
+
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [from.document_id]);
+        if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
 
         const to = getOne('SELECT * FROM variants WHERE id = ?', [to_variant_id]);
         if (!to) return res.status(404).json({ error: 'Target variant not found' });
@@ -141,8 +150,11 @@ router.post('/:id/relations', requireAuth, (req, res, next) => {
 // GET /api/variants/:id/comments
 router.get('/:id/comments', (req, res, next) => {
     try {
-        const variant = getOne('SELECT id FROM variants WHERE id = ?', [req.params.id]);
+        const variant = getOne('SELECT id, document_id FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
+
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
 
         const all = getAll(
             'SELECT c.*, u.display_name as author_name FROM comments c JOIN users u ON u.id = c.user_id WHERE c.variant_id = ? AND c.is_hidden = 0 ORDER BY c.created_at',
@@ -236,8 +248,11 @@ router.get('/:id/votes', (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+
         const votes = getAll(
-            'SELECT v.vote_value, u.display_name, v.created_at, v.updated_at FROM votes v JOIN users u ON u.id = v.user_id WHERE v.variant_id = ? ORDER BY v.created_at',
+            'SELECT v.vote_value, v.user_id, u.display_name, v.created_at, v.updated_at FROM votes v JOIN users u ON u.id = v.user_id WHERE v.variant_id = ? ORDER BY v.created_at',
             [variant.id]
         );
         res.json({ votes, tallies: { votes_for: variant.votes_for, votes_against: variant.votes_against, votes_abstain: variant.votes_abstain } });

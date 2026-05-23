@@ -12,10 +12,11 @@ Read `ARCHITECTURE.md` for the full picture. The rest of this file is operationa
 
 ```bash
 npm run init-db   # initialise data/votetext.db from schema.sql (run once)
+npm run migrate   # add new columns to an existing database (idempotent)
 npm run seed      # seed sample users + document (prints browser session cookie)
 npm run dev       # start with nodemon auto-reload → http://localhost:3000
 npm start         # production start
-npm test          # integration tests (isolated DB, no SMTP needed)
+npm test          # integration tests (isolated DB, no email needed)
 npm run clean-db  # drop and reinitialise the database
 ```
 
@@ -125,11 +126,17 @@ Tests live in `tests/api.test.js` and use `node:test` (no extra deps). Key conve
 
 ---
 
-## SMTP
+## Email
 
-Configured via `SMTP_HOST/PORT/USER/PASS/FROM` in `.env`. In `NODE_ENV !== 'production'`, SMTP failures are non-fatal — the OTP is saved to the DB and the warning is logged. This means dev/test flows work without a live SMTP server.
+Uses the **MailerSend SDK** (`mailersend` npm package). Set `MAILERSEND_API_KEY`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME` in `.env`.
 
-To test real email delivery: set valid MailerSend credentials (already in `.env`) and ensure `SMTP_FROM` has the correct format `"Name <address@domain>"`.
+In `NODE_ENV !== 'production'`, email failures are non-fatal — the OTP is saved to the DB and logged to the console. Dev/test flows work without a live API key.
+
+The SDK is ESM-only; `auth.js` loads it via a lazy `await import('mailersend')` call cached in `_ms`. Do not switch to a static `require()`.
+
+## Soft delete
+
+Documents use soft delete: `DELETE /documents/:id` sets `deleted_at` instead of removing the row. All document lookups must include `AND deleted_at IS NULL`. The `scripts/migrate.js` script adds this column to existing databases.
 
 ---
 

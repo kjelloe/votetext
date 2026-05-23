@@ -95,7 +95,8 @@ CREATE TABLE IF NOT EXISTS documents (
     settings        TEXT    NOT NULL DEFAULT '{}',
 
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    deleted_at      TEXT                                                               -- NULL = active; set to soft-delete
 );
 
 CREATE INDEX idx_documents_owner_id   ON documents (owner_id);

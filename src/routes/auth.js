@@ -2,9 +2,14 @@
 
 const crypto = require('crypto');
 const { Router } = require('express');
-const nodemailer = require('nodemailer');
 const { getOne, run } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+
+let _ms = null;
+async function getMailerSend() {
+    if (!_ms) _ms = await import('mailersend');
+    return _ms;
+}
 
 const router = Router();
 
@@ -20,15 +25,6 @@ function isRateLimited(email) {
     attempts.push(now);
     otpLog.set(email, attempts);
     return false;
-}
-
-function makeTransport() {
-    return nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
 }
 
 // POST /api/auth/request-otp
@@ -49,17 +45,23 @@ router.post('/request-otp', async (req, res, next) => {
         run('INSERT INTO otp_codes (email, code, expires_at) VALUES (?, ?, ?)', [normalizedEmail, code, expiresAt]);
 
         try {
-            const transporter = makeTransport();
-            await transporter.sendMail({
-                from: process.env.SMTP_FROM,
-                to: normalizedEmail,
-                subject: 'Your VoteText login code',
-                text: `Your login code is: ${code}\n\nExpires in ${process.env.OTP_EXPIRY_MINUTES || 10} minutes.\n\nIf you didn't request this, ignore this email.`,
-                html: `<p>Your VoteText login code:</p><h2 style="letter-spacing:4px">${code}</h2><p>Expires in ${process.env.OTP_EXPIRY_MINUTES || 10} minutes.</p>`,
-            });
+            const { MailerSend, EmailParams, Sender, Recipient } = await getMailerSend();
+            const ms = new MailerSend({ apiKey: process.env.MAILERSEND_API_KEY });
+            const sender = new Sender(
+                process.env.MAIL_FROM_ADDRESS || 'votetext@kjell.solutions',
+                process.env.MAIL_FROM_NAME || 'VoteText'
+            );
+            const expMins = process.env.OTP_EXPIRY_MINUTES || 10;
+            const emailParams = new EmailParams()
+                .setFrom(sender)
+                .setTo([new Recipient(normalizedEmail)])
+                .setSubject('Your VoteText login code')
+                .setText(`Your login code is: ${code}\n\nExpires in ${expMins} minutes.\n\nIf you didn't request this, ignore this email.`)
+                .setHtml(`<p>Your VoteText login code:</p><h2 style="letter-spacing:4px">${code}</h2><p>Expires in ${expMins} minutes.</p>`);
+            await ms.email.send(emailParams);
         } catch (emailErr) {
             if (process.env.NODE_ENV === 'production') throw emailErr;
-            console.warn('[dev] SMTP send failed (OTP still saved to DB):', emailErr.message);
+            console.warn(`[dev] Email failed — OTP for ${normalizedEmail}: ${code}`);
         }
 
         res.json({ message: 'Code sent' });

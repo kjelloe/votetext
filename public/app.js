@@ -689,7 +689,8 @@ async function viewVariant(variantId) {
         }
     }
 
-    const myVote = state.user ? (await api('GET', `/variants/${variantId}/votes`).then(d => d.votes.find(vt => vt.display_name === state.user.display_name))).vote_value : undefined;
+    const myVoteRecord = state.user ? voteData.votes.find(vt => vt.user_id === state.user.id) : null;
+    const myVote = myVoteRecord != null ? myVoteRecord.vote_value : undefined;
 
     const wrap = el('div', { class: 'variant-layout' });
 
@@ -957,8 +958,12 @@ function openEditVariantModal(v) {
 /* ===== View: Activity ===== */
 async function viewActivity() {
     if (!state.user) { location.hash = '#/login'; return; }
+    await renderActivity(false);
+}
 
-    const data = await api('GET', '/activity');
+async function renderActivity(mineOnly) {
+    const url = mineOnly ? '/activity?mine=true' : '/activity';
+    const data = await api('GET', url);
     const activity = data.activity || [];
 
     const wrap = el('div', { class: 'page-container' });
@@ -966,14 +971,18 @@ async function viewActivity() {
 
     wrap.innerHTML = `
         <div class="page-header">
-            <h1 class="page-title">My Activity</h1>
+            <h1 class="page-title">Activity</h1>
+            <div class="flex gap-1">
+                <button id="act-all-btn" class="btn ${!mineOnly ? 'btn-primary' : 'btn-ghost'} btn-sm">All</button>
+                <button id="act-mine-btn" class="btn ${mineOnly ? 'btn-primary' : 'btn-ghost'} btn-sm">Mine</button>
+            </div>
         </div>
         ${activity.length === 0 ? '<div class="empty-state"><h3>No activity yet</h3><p>Start by creating or joining a document.</p></div>' :
             `<div class="activity-list">${activity.map(a => `
                 <div class="activity-item">
                     <span class="activity-icon">${icons[a.action] || '•'}</span>
                     <div class="activity-body">
-                        <strong>${esc(a.action.replace(/_/g, ' '))}</strong>
+                        <strong>${esc(a.user_name || 'Unknown')}</strong> ${esc(a.action.replace(/_/g, ' '))}
                         ${a.document_title ? ` on <a href="#/documents/${esc(a.document_id)}">${esc(a.document_title)}</a>` : ''}
                         ${a.variant_id ? ` · <a href="#/variants/${esc(a.variant_id)}">view variant</a>` : ''}
                     </div>
@@ -982,6 +991,9 @@ async function viewActivity() {
             </div>`}
     `;
     setMain(wrap);
+
+    document.getElementById('act-all-btn').addEventListener('click', () => renderActivity(false));
+    document.getElementById('act-mine-btn').addEventListener('click', () => renderActivity(true));
 }
 
 /* ===== View: Profile ===== */

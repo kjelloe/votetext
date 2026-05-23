@@ -43,7 +43,7 @@ router.get('/', (req, res, next) => {
              FROM documents d
              JOIN users u ON u.id = d.owner_id
              LEFT JOIN user_document_access uda ON uda.document_id = d.id AND uda.user_id = ?
-             WHERE d.owner_id = ? OR (uda.user_id IS NOT NULL AND uda.blocked = 0)
+             WHERE d.deleted_at IS NULL AND (d.owner_id = ? OR (uda.user_id IS NOT NULL AND uda.blocked = 0))
              ORDER BY d.updated_at DESC`,
             [req.user.id, req.user.id, req.user.id]
         );
@@ -100,7 +100,7 @@ router.post('/', requireAuth, (req, res, next) => {
 router.get('/:id', (req, res, next) => {
     try {
         const doc = getOne(
-            'SELECT d.*, u.display_name as owner_name FROM documents d JOIN users u ON u.id = d.owner_id WHERE d.id = ?',
+            'SELECT d.*, u.display_name as owner_name FROM documents d JOIN users u ON u.id = d.owner_id WHERE d.id = ? AND d.deleted_at IS NULL',
             [req.params.id]
         );
         if (!doc) return res.status(404).json({ error: 'Document not found' });
@@ -171,12 +171,12 @@ router.post('/:id/status', requireAuth, requireDocumentAccess('admin'), (req, re
 // DELETE /api/documents/:id
 router.delete('/:id', requireAuth, (req, res, next) => {
     try {
-        const doc = getOne('SELECT * FROM documents WHERE id = ?', [req.params.id]);
+        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (doc.owner_id !== req.user.id && req.user.role !== 'superadmin') {
             return res.status(403).json({ error: 'Only the owner can delete this document' });
         }
-        run('DELETE FROM documents WHERE id = ?', [doc.id]);
+        run("UPDATE documents SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [doc.id]);
         res.status(204).send();
     } catch (err) {
         next(err);
@@ -186,7 +186,7 @@ router.delete('/:id', requireAuth, (req, res, next) => {
 // GET /api/documents/:id/lines
 router.get('/:id/lines', (req, res, next) => {
     try {
-        const doc = getOne('SELECT id, owner_id, settings, total_pages FROM documents WHERE id = ?', [req.params.id]);
+        const doc = getOne('SELECT id, owner_id, settings, total_pages FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
 
         let settings = {};
@@ -206,7 +206,7 @@ router.get('/:id/lines', (req, res, next) => {
 // GET /api/documents/:id/variants
 router.get('/:id/variants', (req, res, next) => {
     try {
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ?', [req.params.id]);
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
 
         let settings = {};
@@ -215,7 +215,7 @@ router.get('/:id/variants', (req, res, next) => {
         if (!userId && !settings.allow_anonymous_view) return res.status(401).json({ error: 'Authentication required' });
 
         const variants = getAll(
-            'SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.document_id = ? AND v.is_hidden = 0 ORDER BY v.created_at DESC',
+            "SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn' ORDER BY v.created_at DESC",
             [doc.id]
         );
         res.json({ variants });

@@ -50,7 +50,8 @@
 | C8 | PATCH variant by non-proposer | 403 |
 | C9 | PATCH variant that is not pending | 422 |
 | C10 | DELETE (withdraw) variant by proposer | 200, `status = withdrawn` |
-| C11 | GET `/documents/:id/variants` | 200, withdrawn variants excluded |
+| C11 | GET `/documents/:id/variants` | 200, withdrawn and hidden variants excluded |
+| C12 | Propose variant on `draft` document | 201 (allowed) |
 
 ---
 
@@ -108,10 +109,14 @@
 | G4 | Upgrade user from `viewer` to `proposer` | 200 |
 | G5 | Block user → blocked user GET document | 403 |
 | G6 | Unblock user → user can GET document again | 200 |
-| G7 | Unauthenticated GET on document with `allow_anonymous_view = false` | 401 |
+| G7 | Unauthenticated GET on document with `allow_anonymous_view = false` | 403 |
 | G8 | Unauthenticated GET on document with `allow_anonymous_view = true` | 200 |
 | G9 | DELETE `/documents/:id/access/:userId` | 204, access revoked |
 | G10 | Non-owner tries to DELETE document | 403 |
+| G11 | GET `/variants/:id/comments` on private document without auth | 403 |
+| G12 | GET `/variants/:id/votes` on private document without auth | 403 |
+| G13 | GET `/variants/:id/relations` on private document without auth | 403 |
+| G14 | DELETE `/documents/:id` — document soft-deleted, subsequent GET → 404 |
 
 ---
 
@@ -135,9 +140,10 @@
 
 | ID | Scenario | Expected |
 |----|----------|----------|
-| I1 | GET `/activity` — own feed after several actions | 200, actions listed in reverse chronological order |
-| I2 | GET `/documents/:id/activity` | 200, `document_created` action present |
-| I3 | Pagination: `?page=2` | 200, second page of results |
+| I1 | GET `/activity` — default feed | 200, all activity on documents user owns or has access to, reverse chronological |
+| I2 | GET `/activity?mine=true` — filtered feed | 200, only actions performed by the requesting user |
+| I3 | GET `/documents/:id/activity` | 200, `document_created` action present |
+| I4 | Pagination: `?page=2` | 200, second page of results |
 
 ---
 

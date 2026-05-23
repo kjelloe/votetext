@@ -32,7 +32,7 @@ data/votetext.db  (single SQLite file, WAL mode)
 | Runtime | Node.js 18+ | LTS, native fetch, `node:test` built in |
 | HTTP | Express 4 | Minimal, well-understood, enough middleware |
 | Database | SQLite via `better-sqlite3` | Zero-config, single file, synchronous API = simpler code |
-| Auth | Passwordless email OTP | No password storage, nodemailer covers SMTP |
+| Auth | Passwordless email OTP | No password storage, MailerSend SDK covers email delivery |
 | Frontend | Vanilla JS + HTML + CSS | No build step, no framework churn, < 2000 lines total |
 | Deployment target | Single Linux VPS | Single-process, SQLite handles thousands of concurrent readers in WAL mode |
 
@@ -49,6 +49,7 @@ votetext/
 │   └── votetext.db         — SQLite database (gitignored)
 ├── scripts/
 │   ├── init-db.js          — creates DB from schema.sql
+│   ├── migrate.js          — ALTER TABLE migrations for existing databases
 │   └── seed.js             — seeds sample data for development
 ├── src/
 │   ├── server.js           — Express app; only calls listen() when run directly
@@ -77,7 +78,7 @@ votetext/
 
 ## Database Schema
 
-11 tables in a single SQLite file. Key relationships:
+12 tables in a single SQLite file. Key relationships:
 
 ```
 users ──────────────┬── sessions
@@ -102,6 +103,8 @@ activity_log ── references users, documents, variants
 **Denormalized vote tallies** — `variants.votes_for/against/abstain` are updated atomically alongside the `votes` table insert/update inside a transaction. This gives O(1) tally reads.
 
 **JSON settings blob** — `documents.settings` stores configurable options (`allow_anonymous_view`, `lines_per_page`, `resolution_mode`, etc.) without schema migrations.
+
+**Soft delete** — `documents.deleted_at TEXT` (NULL = active). All queries filter `AND deleted_at IS NULL`. Existing DBs need `npm run migrate` to add the column.
 
 **WAL mode** — All reads happen concurrently; writes are serialised by SQLite. Busy timeout is 5 s.
 
@@ -282,7 +285,7 @@ certbot → TLS via Let's Encrypt
 
 SQLite backups via `sqlite3 data/votetext.db ".backup /backup/votetext-$(date +%F).db"` — safe with WAL mode active.
 
-SMTP is configured via environment variables (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`). Current setup uses MailerSend; swap vars to change provider with no code changes.
+Email is sent via the **MailerSend SDK** (`mailersend` npm package, ESM-only — loaded via `await import('mailersend')` cached in a module-level variable). Configure `MAILERSEND_API_KEY`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME` in `.env`. In non-production mode, email failures are non-fatal — the OTP is logged to the console.
 
 ---
 

@@ -9,6 +9,7 @@
     "init-db": "node scripts/init-db.js",
     "seed": "node scripts/seed.js",
     "clean-db": "rm -f data/votetext.db data/votetext.db-shm data/votetext.db-wal && npm run init-db",
+    "migrate": "node scripts/migrate.js",
     "test": "node --test tests/api.test.js"
   },
   "keywords": [
@@ -26,6 +27,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.1",
+    "mailersend": "^3.0.0",
     "nodemailer": "^6.9.16"
   },
   "devDependencies": {

@@ -9,7 +9,7 @@ function requireDocumentAccess(minLevel) {
         const documentId = req.params.id || req.params.documentId;
         const userId = req.user ? req.user.id : null;
 
-        const doc = getOne('SELECT * FROM documents WHERE id = ?', [documentId]);
+        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [documentId]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
 
         let settings = {};
