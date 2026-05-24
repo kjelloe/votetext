@@ -27,7 +27,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.1",
-    "mailersend": "^3.0.0"
+    "resend": "^4.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
