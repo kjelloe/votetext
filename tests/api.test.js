@@ -815,7 +815,7 @@ test('GET /variants/:id/relations → 200, both sides returned', async () => {
 // ── DOCUMENT SIZE LIMIT (B5) ──────────────────────────────────────────────────
 
 test('POST /documents — text exceeding MAX_DOCUMENT_CHARS → 400', async () => {
-    const maxChars = parseInt(process.env.MAX_DOCUMENT_CHARS || '500000');
+    const maxChars = parseInt(process.env.MAX_DOCUMENT_CHARS || '1000000');
     const r = await req('POST', '/documents', {
         body: { title: 'Too big', text: 'x'.repeat(maxChars + 1) },
         cookie: sessionCookie,

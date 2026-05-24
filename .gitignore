@@ -71,6 +71,7 @@ web_modules/
 
 # dotenv environment variable files
 .env
+<<<<<<< HEAD
 .env.*
 !.env.example
 
@@ -145,3 +146,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Extras
+archive/

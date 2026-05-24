@@ -40,7 +40,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Import from `.txt` or `.md` files
 - Automatic page/line structuring (configurable lines per page, default 30)
 - Preserve existing line numbers or auto-generate
-- Documents support 1–200 pages, 27–40 lines per page
+- Documents support 1–200 pages, 27–60 lines per page
 - Document status lifecycle: `draft → open → voting → resolved → archived`
 
 #### Variant Proposals

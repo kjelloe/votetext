@@ -211,7 +211,7 @@ When a document is created, the raw text body is split into lines and inserted i
 
 ```
 Input: raw text string
-       settings.lines_per_page (default: 30, range: 27–40)
+       settings.lines_per_page (default: 30, range: 27–60)
 
 For each line i (0-indexed):
     page_num          = floor(i / linesPerPage) + 1

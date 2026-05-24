@@ -251,7 +251,18 @@ function openCreateDocModal() {
     openModal(`
         <div class="form-group"><label>Title</label><input type="text" id="new-doc-title" placeholder="Document title"></div>
         <div class="form-group"><label>Description <small class="text-muted">(optional)</small></label><input type="text" id="new-doc-desc" placeholder="Brief description"></div>
-        <div class="form-group"><label>Document text</label><textarea id="new-doc-text" placeholder="Paste your document text here…" style="min-height:200px"></textarea></div>
+        <div class="form-group">
+            <label>Document text</label>
+            <div id="new-doc-dropzone" class="dropzone">
+                Drop a .txt or .md file here, or <label for="new-doc-file" class="link-style">browse</label>
+                <input type="file" id="new-doc-file" accept=".txt,.md" style="display:none">
+            </div>
+            <textarea id="new-doc-text" placeholder="…or paste your document text here" style="min-height:200px"></textarea>
+            <div id="new-doc-format-notice" class="format-notice" style="display:none">
+                <span id="new-doc-format-label">Numbered lines detected</span>
+                <label><input type="checkbox" id="new-doc-strip" checked> Strip leading line numbers</label>
+            </div>
+        </div>
         <div class="form-group">
             <label>Lines per page</label>
             <select id="new-doc-lpp">
@@ -259,6 +270,8 @@ function openCreateDocModal() {
                 <option value="30" selected>30</option>
                 <option value="35">35</option>
                 <option value="40">40</option>
+                <option value="50">50</option>
+                <option value="60">60</option>
             </select>
         </div>
         <p id="create-doc-err" class="error-msg" style="display:none"></p>
@@ -268,16 +281,59 @@ function openCreateDocModal() {
         </div>
     `, 'New Document');
 
+    const textarea = document.getElementById('new-doc-text');
+    const dropzone = document.getElementById('new-doc-dropzone');
+    const fileInput = document.getElementById('new-doc-file');
+    const formatNotice = document.getElementById('new-doc-format-notice');
+    const stripCb = document.getElementById('new-doc-strip');
+    const errEl = document.getElementById('create-doc-err');
+
+    function isNumbered(text) {
+        const lines = text.split('\n').filter(l => l.trim().length > 0);
+        if (lines.length < 3) return false;
+        return lines.filter(l => /^\s*\d+\s/.test(l)).length / lines.length >= 0.5;
+    }
+
+    function runDetect() {
+        formatNotice.style.display = isNumbered(textarea.value) ? '' : 'none';
+    }
+
+    function loadFile(file) {
+        if (!/\.(txt|md)$/i.test(file.name)) {
+            errEl.textContent = 'Only .txt and .md files are supported';
+            errEl.style.display = '';
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = ev => { textarea.value = ev.target.result; runDetect(); };
+        reader.readAsText(file);
+    }
+
+    textarea.addEventListener('input', runDetect);
+    textarea.addEventListener('paste', () => setTimeout(runDetect, 0));
+
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+    dropzone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropzone.classList.remove('drag-over');
+        if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
+
     document.getElementById('create-doc-submit').addEventListener('click', async () => {
-        const errEl = document.getElementById('create-doc-err');
         errEl.style.display = 'none';
         const title = document.getElementById('new-doc-title').value.trim();
-        const text = document.getElementById('new-doc-text').value;
+        let text = textarea.value;
         const description = document.getElementById('new-doc-desc').value.trim();
         const linesPerPage = parseInt(document.getElementById('new-doc-lpp').value);
 
         if (!title) { errEl.textContent = 'Title required'; errEl.style.display = ''; return; }
         if (!text.trim()) { errEl.textContent = 'Text content required'; errEl.style.display = ''; return; }
+
+        if (formatNotice.style.display !== 'none' && stripCb.checked) {
+            text = text.split('\n').map(l => l.replace(/^\s*\d+\s+/, '')).join('\n');
+        }
 
         const btn = document.getElementById('create-doc-submit');
         btn.disabled = true; btn.textContent = 'Creating…';
@@ -384,16 +440,15 @@ async function viewDocument(docId) {
     });
 
     // Pagination
-    textPanel.querySelector('#doc-pagination').addEventListener('click', async e => {
-        const btn = e.target.closest('button[data-page]');
-        if (!btn) return;
-        const page = parseInt(btn.dataset.page);
+    const paginationEl = textPanel.querySelector('#doc-pagination');
+
+    async function navigatePage(page) {
+        page = Math.max(1, Math.min(doc.total_pages, page));
         currentPage = page;
         const ld = await api('GET', `/documents/${docId}/lines?page=${page}`);
         state.docLines[docId][page] = ld.lines;
         renderLines(textPanel.querySelector('#doc-lines-container'), ld.lines, variants);
-        renderPagination(textPanel.querySelector('#doc-pagination'), page, doc.total_pages, docId);
-        // Update sidebar variants
+        renderPagination(paginationEl, page, doc.total_pages, docId);
         const newPageVars = variants.filter(v => {
             if (!ld.lines.length) return false;
             const fl = ld.lines[0], ll = ld.lines[ld.lines.length - 1];
@@ -402,6 +457,21 @@ async function viewDocument(docId) {
         const vl = wrap.querySelector('#variants-list');
         if (vl) vl.innerHTML = newPageVars.length === 0 ? '<p class="text-muted">No variants on this page.</p>' :
             newPageVars.map(v => renderVariantCard(v)).join('');
+    }
+
+    paginationEl.addEventListener('click', async e => {
+        const btn = e.target.closest('button[data-page]');
+        if (btn) { await navigatePage(parseInt(btn.dataset.page)); return; }
+        if (e.target.closest('button[data-action="jump"]')) {
+            const input = paginationEl.querySelector('#page-jump-input');
+            await navigatePage(parseInt(input.value) || currentPage);
+        }
+    });
+
+    paginationEl.addEventListener('keydown', async e => {
+        if (e.key === 'Enter' && e.target.id === 'page-jump-input') {
+            await navigatePage(parseInt(e.target.value) || currentPage);
+        }
     });
 
     // Settings button
@@ -448,10 +518,15 @@ function renderLines(container, lines, variants) {
 
 function renderPagination(container, currentPage, totalPages, docId) {
     if (totalPages <= 1) { container.innerHTML = ''; return; }
+    const jumpControl = totalPages > 10
+        ? `<input id="page-jump-input" type="number" min="1" max="${totalPages}" value="${currentPage}" style="width:4rem;padding:.25rem .4rem;border:1px solid var(--color-border);border-radius:var(--radius);font-size:.875rem;text-align:center">
+           <button class="btn btn-ghost btn-sm" data-action="jump">Go</button>`
+        : '';
     container.innerHTML = `
         <button class="btn btn-ghost btn-sm" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>← Prev</button>
         <span class="pagination-info">Page ${currentPage} of ${totalPages}</span>
         <button class="btn btn-ghost btn-sm" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
+        ${jumpControl}
     `;
 }
 

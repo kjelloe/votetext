@@ -60,7 +60,7 @@ router.post('/', requireAuth, (req, res, next) => {
         if (!title || !title.trim()) return res.status(400).json({ error: 'Title required' });
         if (!text || !text.trim()) return res.status(400).json({ error: 'Text content required' });
 
-        const maxChars = parseInt(process.env.MAX_DOCUMENT_CHARS || '500000');
+        const maxChars = parseInt(process.env.MAX_DOCUMENT_CHARS || '1000000');
         if (text.length > maxChars) return res.status(400).json({ error: `Document too large (max ${maxChars} chars)` });
 
         const parsedSettings = (settings && typeof settings === 'object') ? settings : {};
