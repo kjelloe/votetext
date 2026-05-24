@@ -285,8 +285,11 @@ function openCreateDocModal() {
     const dropzone = document.getElementById('new-doc-dropzone');
     const fileInput = document.getElementById('new-doc-file');
     const formatNotice = document.getElementById('new-doc-format-notice');
+    const formatLabel = document.getElementById('new-doc-format-label');
     const stripCb = document.getElementById('new-doc-strip');
     const errEl = document.getElementById('create-doc-err');
+
+    let detectedFormat = 'plain'; // 'plain' | 'numbered' | 'paged'
 
     function isNumbered(text) {
         const lines = text.split('\n').filter(l => l.trim().length > 0);
@@ -294,8 +297,57 @@ function openCreateDocModal() {
         return lines.filter(l => /^\s*\d+\s/.test(l)).length / lines.length >= 0.5;
     }
 
+    function detectPagedLpp(text) {
+        const sections = text.split(/^---$/m);
+        if (sections.length < 2) return null;
+        for (const section of sections) {
+            const n = section.split('\n').filter(l => /^\s*\d+\s/.test(l)).length;
+            if (n >= 5) return n;
+        }
+        return null;
+    }
+
+    function setLpp(n) {
+        const sel = document.getElementById('new-doc-lpp');
+        const prev = sel.querySelector('option[data-detected]');
+        if (prev) prev.remove();
+        const match = Array.from(sel.options).find(o => parseInt(o.value) === n);
+        if (match) {
+            sel.value = n;
+        } else {
+            const opt = document.createElement('option');
+            opt.value = n; opt.textContent = `${n} (detected)`; opt.dataset.detected = '1'; opt.selected = true;
+            const before = Array.from(sel.options).find(o => parseInt(o.value) > n);
+            if (before) sel.insertBefore(opt, before); else sel.appendChild(opt);
+        }
+    }
+
+    function clearLpp() {
+        const sel = document.getElementById('new-doc-lpp');
+        const prev = sel.querySelector('option[data-detected]');
+        if (prev) { prev.remove(); sel.value = '30'; }
+    }
+
     function runDetect() {
-        formatNotice.style.display = isNumbered(textarea.value) ? '' : 'none';
+        const text = textarea.value;
+        const pagedLpp = detectPagedLpp(text);
+        if (pagedLpp !== null) {
+            detectedFormat = 'paged';
+            formatLabel.textContent = `Page breaks detected — ${pagedLpp} lines/page`;
+            stripCb.parentElement.style.display = 'none';
+            formatNotice.style.display = '';
+            setLpp(pagedLpp);
+        } else if (isNumbered(text)) {
+            detectedFormat = 'numbered';
+            formatLabel.textContent = 'Numbered lines detected';
+            stripCb.parentElement.style.display = '';
+            formatNotice.style.display = '';
+            clearLpp();
+        } else {
+            detectedFormat = 'plain';
+            formatNotice.style.display = 'none';
+            clearLpp();
+        }
     }
 
     function loadFile(file) {
@@ -331,7 +383,12 @@ function openCreateDocModal() {
         if (!title) { errEl.textContent = 'Title required'; errEl.style.display = ''; return; }
         if (!text.trim()) { errEl.textContent = 'Text content required'; errEl.style.display = ''; return; }
 
-        if (formatNotice.style.display !== 'none' && stripCb.checked) {
+        if (detectedFormat === 'paged') {
+            text = text.split('\n')
+                .filter(l => { const t = l.trim(); return t !== '---' && !/^\*Page \d+/.test(t); })
+                .join('\n').replace(/\n{3,}/g, '\n\n').trim();
+            text = text.split('\n').map(l => l.replace(/^\s*\d+\s+/, '')).join('\n');
+        } else if (detectedFormat === 'numbered' && stripCb.checked) {
             text = text.split('\n').map(l => l.replace(/^\s*\d+\s+/, '')).join('\n');
         }
 

@@ -207,6 +207,20 @@ All write endpoints (except logout) require a valid session cookie. Read endpoin
 
 ## Text Import
 
+### Client-side pre-processing (in `public/app.js` → `openCreateDocModal`)
+
+Before the text is sent to the server, the browser detects the format and pre-processes the content:
+
+| Detected format | Trigger | Action |
+|----------------|---------|--------|
+| **Paged markdown** | `---` lines present and ≥1 section has ≥5 numbered lines | Strip `---` separators, strip `*Page N*` / `*Page N - …*` headers, strip leading line-number prefixes, collapse excess blank lines; set `lines_per_page` to the line count of the first content page |
+| **Pre-numbered** | ≥50% of non-empty lines match `/^\s*\d+\s/` | Optionally strip leading line-number prefixes (user toggle, default on) |
+| **Plain text** | Neither above | No transformation |
+
+The `lines_per_page` selector auto-populates with the detected value (added as a dynamic option if not already in the preset list). The user can override before submitting.
+
+### Server-side import
+
 When a document is created, the raw text body is split into lines and inserted into `document_lines`:
 
 ```

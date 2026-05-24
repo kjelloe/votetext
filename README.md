@@ -37,9 +37,11 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 ### Features
 
 #### Document Management
-- Import from `.txt` or `.md` files
+- Import from `.txt` or `.md` files via drag-and-drop, file picker, or paste
+- Auto-detects format: paged markdown (`---` page breaks), pre-numbered lines, or plain text
+- Paged markdown: strips separators and line-number prefixes, infers lines-per-page from page structure
+- Pre-numbered text: optional strip of leading line numbers before import
 - Automatic page/line structuring (configurable lines per page, default 30)
-- Preserve existing line numbers or auto-generate
 - Documents support 1–200 pages, 27–60 lines per page
 - Document status lifecycle: `draft → open → voting → resolved → archived`
 
