@@ -526,6 +526,25 @@ textarea { resize: vertical; min-height: 120px; }
     margin: 0;
 }
 
+/* ===== Variant card extras ===== */
+.variant-num { font-size: 0.75rem; font-weight: 600; color: var(--color-text-muted); }
+.author-tip { cursor: default; border-bottom: 1px dotted var(--color-text-muted); }
+.variant-card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 0.25rem; }
+.goto-link {
+    font-size: 0.75rem;
+    color: var(--color-primary);
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.goto-link:hover { text-decoration: underline; }
+.line-text.hover-highlight {
+    background: rgba(37, 99, 235, 0.18);
+    outline: 1px solid var(--color-primary);
+    border-radius: 2px;
+    cursor: default;
+}
+
 /* ===== Selection info (propose modal) ===== */
 .selection-info {
     font-size: 0.8125rem;

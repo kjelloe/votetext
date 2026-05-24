@@ -276,6 +276,11 @@ test('GET /documents/:id/variants — lists all variants → 200', async () => {
     const r = await req('GET', `/documents/${docId}/variants`, { cookie: sessionCookie });
     assert.equal(r.status, 200);
     assert.ok(r.data.variants.length >= 3);
+    const v = r.data.variants[0];
+    assert.ok('proposer_org' in v, 'proposer_org field present');
+    assert.ok('line_start' in v, 'line_start field present');
+    assert.ok('line_end' in v, 'line_end field present');
+    assert.ok(v.line_start >= 1, 'line_start is a valid line number');
 });
 
 test('GET /variants/:id — → 200 with proposer name', async () => {

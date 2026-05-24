@@ -281,6 +281,19 @@ Single HTML page (`public/index.html`) with hash-based routing:
 - **Event delegation** — one listener on a container, not per-item
 - **Minimal client state** — only `state.user`, `state.docLines` (line cache per document), `state.docCache`. Fresh fetch on every view render
 
+### Proposals sidebar
+
+The sidebar always shows **all** variants for the document (not filtered by page). Each card carries `data-char-start`, `data-char-end`, and `data-line-start` attributes. A `mouseover`/`mouseout` delegation listener on the list:
+
+- **On-page variant** (char range overlaps `state.docLines[docId][currentPage]`): adds `.hover-highlight` to matching `.line-text` spans (blue outline + tint); removed on leave.
+- **Off-page variant**: shows a `↗ p.N` goto-link in the card footer; clicking it calls `navigatePage(N, lineStart)` which fetches the page and calls `scrollIntoView({ behavior: 'smooth', block: 'center' })` on the target `.doc-line[data-line-num]` element.
+
+`GET /api/documents/:id/variants` enriches each row with:
+- `proposer_org` (joined from `users`)
+- `line_start` / `line_end` — correlated `MIN`/`MAX` subqueries on `document_lines` matching the variant's char range
+
+Proposal numbers (`#1`, `#2` …) are assigned client-side: variants are sorted by `id` ascending and numbered sequentially.
+
 ### Text selection → variant proposal
 
 Each rendered line span (`<span class="line-text">`) carries `data-char-start` and `data-char-end` (absolute byte offsets from the DB). On `mouseup` in `#doc-lines-container`, `resolveSelectionOffset` maps the browser's `Selection` anchor/focus nodes to document offsets:

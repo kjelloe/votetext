@@ -215,7 +215,12 @@ router.get('/:id/variants', (req, res, next) => {
         if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
 
         const variants = getAll(
-            "SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn' ORDER BY v.created_at DESC",
+            `SELECT v.*, u.display_name as proposer_name, u.organization as proposer_org,
+                (SELECT MIN(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_start,
+                (SELECT MAX(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_end
+             FROM variants v JOIN users u ON u.id = v.proposed_by
+             WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn'
+             ORDER BY v.created_at DESC`,
             [doc.id]
         );
         res.json({ variants });

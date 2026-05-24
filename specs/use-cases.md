@@ -62,7 +62,7 @@ The lines-per-page selector auto-populates with the detected value. A `(detected
 1. User reads through the document text on the current page.
 2. User clicks and drags to select the passage they want to target.
    - Selection is captured on `mouseup`; the system resolves it to absolute character offsets using `data-char-start` / `data-char-end` on each rendered line span.
-3. User clicks "Propose" in the sidebar.
+3. User clicks "Propose" in the Proposals sidebar.
 4. "Propose variant" modal opens:
    - **Collapsible "Selected text" panel** (open by default) shows the raw selected text in monospace. User can collapse it.
    - **Operation** selector: Replace / Insert / Delete.
@@ -98,12 +98,40 @@ Each `<span class="line-text">` carries `data-char-start` and `data-char-end` (a
 1. Document loads on page 1.
 2. User uses "← Prev" / "Next →" buttons to step through pages.
 3. For documents with more than 10 pages, a numeric input and "Go" button appear. User types a page number and presses Enter or clicks Go; the view jumps directly to that page.
-4. Variant highlights and sidebar variant list update to reflect the current page.
+4. The text panel re-renders for the new page; the Proposals sidebar remains unchanged (it always shows all proposals for the document).
+
+---
+
+## UC-4: Browse and locate proposals
+
+**Actor:** Any user with at least `viewer` access  
+**Entry point:** Document viewer — Proposals sidebar
+
+### Proposal card contents
+
+Each card in the sidebar shows:
+- **#N** — sequential proposal number within the document (assigned client-side, ordered by creation)
+- **Title** (or operation + char offset if untitled)
+- **Status badge · lines X–Y · by [Author]** — line range is resolved server-side via correlated subqueries on `document_lines`; author name has a dotted underline with a tooltip showing `Display Name · Organisation`
+- **Vote tallies** (▲ for / ▼ against / ◆ abstain)
+
+### Hover — proposal on the current page
+
+When the user hovers a proposal card whose char range overlaps any line on the current page:
+- All matching `.line-text` spans receive a blue highlight outline and tint.
+- Highlight is removed when the cursor leaves the card boundary.
+
+### Hover — proposal on a different page
+
+When the user hovers a proposal card whose char range does not overlap the current page:
+- A **↗ p.N** link appears in the lower-right of the card footer (same row as the vote tallies).
+- Clicking the link navigates to page N and scrolls the first line of the proposal into the centre of the viewport (`scrollIntoView({ behavior: 'smooth', block: 'center' })`).
+- The link disappears when the cursor leaves the card.
 
 ---
 
 ## Planned / future use cases
 
-- **UC-4:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
-- **UC-5:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-6:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-5:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
+- **UC-6:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-7:** Anonymous viewing — public document accessible without login; read-only.

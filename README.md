@@ -50,6 +50,8 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Propose modal shows the selected text in a collapsible read-only preview
 - Three operations: **INSERT**, **REPLACE**, **DELETE**
 - Title and rationale fields for context
+- Proposals sidebar shows all proposals with sequential numbers, line ranges, and author tooltips (name + organisation)
+- Hovering a proposal highlights its lines if on the current page, or shows a go-to-page link that navigates and scrolls the line into view
 - Variant relationships: `based_on`, `overlaps`, `conflicts`, `supersedes`
 - Withdraw your own proposals
 

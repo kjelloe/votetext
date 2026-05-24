@@ -413,7 +413,9 @@ async function viewDocument(docId) {
     ]);
 
     const doc = docData.document;
-    const variants = variantData.variants || [];
+    const rawVariants = variantData.variants || [];
+    const idOrder = Object.fromEntries([...rawVariants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
+    const variants = rawVariants.map(v => ({ ...v, proposal_num: idOrder[v.id] }));
     state.docCache[docId] = doc;
 
     let currentPage = parseInt(new URLSearchParams(location.hash.split('?')[1] || '').get('page') || '1');
@@ -460,23 +462,21 @@ async function viewDocument(docId) {
         </div>
     `;
 
-    // Variants sidebar
-    const varSection = el('div', { class: 'sidebar-section' });
-    const pageVariants = variants.filter(v => {
-        if (!lines.length) return true;
-        const firstLine = lines[0];
-        const lastLine = lines[lines.length - 1];
-        return v.char_start < lastLine.char_offset_end && v.char_end > firstLine.char_offset_start;
-    });
+    // Parse settings once for use in hover handler
+    let parsedSettings = {};
+    try { parsedSettings = typeof doc.settings === 'object' ? doc.settings : JSON.parse(doc.settings || '{}'); } catch {}
+    const linesPerPage = parsedSettings.lines_per_page || 30;
 
+    // Variants sidebar — all proposals, not just current page
+    const varSection = el('div', { class: 'sidebar-section' });
     varSection.innerHTML = `
         <div class="sidebar-header">
-            Variants on this page <span class="text-muted">(${pageVariants.length})</span>
+            Proposals <span class="text-muted">(${variants.length})</span>
             ${state.user ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
         </div>
         <div class="sidebar-body" id="variants-list">
-            ${pageVariants.length === 0 ? '<p class="text-muted">No variants on this page.</p>' :
-                pageVariants.map(v => renderVariantCard(v)).join('')}
+            ${variants.length === 0 ? '<p class="text-muted">No proposals yet.</p>' :
+                variants.map(v => renderVariantCard(v)).join('')}
         </div>
     `;
 
@@ -484,11 +484,52 @@ async function viewDocument(docId) {
     wrap.append(textPanel, sidebar);
     setMain(wrap);
 
-    // Event: clicking a variant card
-    wrap.querySelector('#variants-list') && wrap.querySelector('#variants-list').addEventListener('click', e => {
-        const card = e.target.closest('.variant-card[data-id]');
-        if (card) location.hash = `#/variants/${card.dataset.id}`;
-    });
+    // Events: variant list — click, hover highlight, goto-page
+    const variantsList = wrap.querySelector('#variants-list');
+    if (variantsList) {
+        variantsList.addEventListener('click', async e => {
+            const link = e.target.closest('.goto-link[data-page]');
+            if (link) {
+                e.stopPropagation();
+                const card = link.closest('.variant-card');
+                const lineStart = card ? parseInt(card.dataset.lineStart) : NaN;
+                await navigatePage(parseInt(link.dataset.page), isNaN(lineStart) ? null : lineStart);
+                return;
+            }
+            const card = e.target.closest('.variant-card[data-id]');
+            if (card) location.hash = `#/variants/${card.dataset.id}`;
+        });
+
+        variantsList.addEventListener('mouseover', e => {
+            const card = e.target.closest('.variant-card[data-id]');
+            if (!card) return;
+            const charStart = parseInt(card.dataset.charStart);
+            const charEnd = parseInt(card.dataset.charEnd);
+            const currentLines = (state.docLines[docId] || {})[currentPage] || [];
+            const onPage = currentLines.some(l => l.char_offset_start < charEnd && l.char_offset_end > charStart);
+            if (onPage) {
+                textPanel.querySelector('#doc-lines-container').querySelectorAll('.line-text').forEach(span => {
+                    const cs = parseInt(span.dataset.charStart), ce = parseInt(span.dataset.charEnd);
+                    if (cs < charEnd && ce > charStart) span.classList.add('hover-highlight');
+                });
+            } else {
+                const lineStart = parseInt(card.dataset.lineStart);
+                if (!isNaN(lineStart)) {
+                    const targetPage = Math.max(1, Math.ceil(lineStart / linesPerPage));
+                    const gotoLink = card.querySelector('.goto-link');
+                    if (gotoLink) { gotoLink.textContent = `↗ p.${targetPage}`; gotoLink.dataset.page = targetPage; gotoLink.style.display = ''; }
+                }
+            }
+        });
+
+        variantsList.addEventListener('mouseout', e => {
+            const card = e.target.closest('.variant-card[data-id]');
+            if (!card || card.contains(e.relatedTarget)) return;
+            textPanel.querySelector('#doc-lines-container').querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
+            const gotoLink = card.querySelector('.goto-link');
+            if (gotoLink) { gotoLink.style.display = 'none'; delete gotoLink.dataset.page; }
+        });
+    }
 
     // Event: clicking a highlighted line
     textPanel.querySelector('#doc-lines-container').addEventListener('click', e => {
@@ -499,21 +540,19 @@ async function viewDocument(docId) {
     // Pagination
     const paginationEl = textPanel.querySelector('#doc-pagination');
 
-    async function navigatePage(page) {
+    async function navigatePage(page, scrollToLine) {
         page = Math.max(1, Math.min(doc.total_pages, page));
         currentPage = page;
         const ld = await api('GET', `/documents/${docId}/lines?page=${page}`);
         state.docLines[docId][page] = ld.lines;
-        renderLines(textPanel.querySelector('#doc-lines-container'), ld.lines, variants);
+        const lc = textPanel.querySelector('#doc-lines-container');
+        lc.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
+        renderLines(lc, ld.lines, variants);
         renderPagination(paginationEl, page, doc.total_pages, docId);
-        const newPageVars = variants.filter(v => {
-            if (!ld.lines.length) return false;
-            const fl = ld.lines[0], ll = ld.lines[ld.lines.length - 1];
-            return v.char_start < ll.char_offset_end && v.char_end > fl.char_offset_start;
-        });
-        const vl = wrap.querySelector('#variants-list');
-        if (vl) vl.innerHTML = newPageVars.length === 0 ? '<p class="text-muted">No variants on this page.</p>' :
-            newPageVars.map(v => renderVariantCard(v)).join('');
+        if (scrollToLine) {
+            const target = lc.querySelector(`.doc-line[data-line-num="${scrollToLine}"]`);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
     }
 
     paginationEl.addEventListener('click', async e => {
@@ -571,7 +610,7 @@ function renderLines(container, lines, variants) {
             v.char_start < line.char_offset_end &&
             v.char_end > line.char_offset_start
         );
-        const lineEl = el('div', { class: 'doc-line' });
+        const lineEl = el('div', { class: 'doc-line', 'data-line-num': String(line.line_num) });
         const numEl = el('span', { class: 'line-num' }, String(line.line_num));
 
         const firstVariant = overlapping[0];
@@ -605,16 +644,24 @@ function renderPagination(container, currentPage, totalPages, docId) {
 }
 
 function renderVariantCard(v) {
+    const numPrefix = v.proposal_num ? `<span class="variant-num">#${esc(v.proposal_num)}</span> ` : '';
+    const lineRange = v.line_start != null
+        ? (v.line_start === v.line_end ? `line ${esc(v.line_start)}` : `lines ${esc(v.line_start)}–${esc(v.line_end)}`)
+        : '';
+    const authorTip = esc([v.proposer_name, v.proposer_org].filter(Boolean).join(' · '));
+    const author = `<span class="author-tip" title="${authorTip}">by ${esc(v.proposer_name)}</span>`;
+    const meta = [statusBadge(v.status), lineRange, author, timeAgo(v.created_at)].filter(Boolean).join(' · ');
     return `
-        <div class="variant-card" data-id="${esc(v.id)}">
-            <div class="variant-card-title">${esc(v.title) || esc(v.operation) + ' at ' + esc(v.char_start)}</div>
-            <div class="variant-card-meta">
-                ${statusBadge(v.status)} · by ${esc(v.proposer_name)} · ${timeAgo(v.created_at)}
-            </div>
-            <div class="vote-mini">
-                <span class="vote-mini-for">▲ ${esc(v.votes_for)}</span>
-                <span class="vote-mini-against">▼ ${esc(v.votes_against)}</span>
-                <span class="vote-mini-abstain">◆ ${esc(v.votes_abstain)}</span>
+        <div class="variant-card" data-id="${esc(v.id)}" data-char-start="${esc(v.char_start)}" data-char-end="${esc(v.char_end)}" data-line-start="${esc(v.line_start ?? '')}">
+            <div class="variant-card-title">${numPrefix}${esc(v.title) || esc(v.operation) + ' at ' + esc(v.char_start)}</div>
+            <div class="variant-card-meta">${meta}</div>
+            <div class="variant-card-footer">
+                <div class="vote-mini">
+                    <span class="vote-mini-for">▲ ${esc(v.votes_for)}</span>
+                    <span class="vote-mini-against">▼ ${esc(v.votes_against)}</span>
+                    <span class="vote-mini-abstain">◆ ${esc(v.votes_abstain)}</span>
+                </div>
+                <a class="goto-link" style="display:none" title="Go to page"></a>
             </div>
         </div>`;
 }
