@@ -525,6 +525,150 @@ test('POST /variants/:id/relations — duplicate → 409', async () => {
     assert.equal(r.status, 409);
 });
 
+// ── SOFT DELETE (G14) ─────────────────────────────────────────────────────────
+
+test('DELETE /documents/:id — soft-deletes; subsequent GET → 404', async () => {
+    const newDoc = await req('POST', '/documents', { body: { title: 'To delete', text: 'temporary' }, cookie: sessionCookie });
+    const newDocId = newDoc.data.document.id;
+
+    const del = await req('DELETE', `/documents/${newDocId}`, { cookie: sessionCookie });
+    assert.equal(del.status, 204);
+
+    const get = await req('GET', `/documents/${newDocId}`, { cookie: sessionCookie });
+    assert.equal(get.status, 404);
+});
+
+// ── PRIVATE DOCUMENT — UNAUTHENTICATED ACCESS (G11–G13) ──────────────────────
+// docId has allow_anonymous_view = false (set in the PATCH test above)
+
+test('GET /variants/:id/comments — private doc, no auth → 403', async () => {
+    const r = await req('GET', `/variants/${variantId}/comments`);
+    assert.equal(r.status, 403);
+});
+
+test('GET /variants/:id/votes — private doc, no auth → 403', async () => {
+    const r = await req('GET', `/variants/${variantId}/votes`);
+    assert.equal(r.status, 403);
+});
+
+test('GET /variants/:id/relations — private doc, no auth → 403', async () => {
+    const r = await req('GET', `/variants/${variantId}/relations`);
+    assert.equal(r.status, 403);
+});
+
+// ── WITHDRAW VARIANT (C10 / C11) ──────────────────────────────────────────────
+
+let withdrawDocId, withdrawVarId;
+
+test('DELETE /variants/:id — withdraw → status = withdrawn', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Withdraw test', text: 'abc def ghi' }, cookie: sessionCookie });
+    withdrawDocId = d.data.document.id;
+    await req('POST', `/documents/${withdrawDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+
+    const v = await req('POST', `/documents/${withdrawDocId}/variants`, {
+        body: { char_start: 0, char_end: 3, operation: 'replace', new_text: 'xyz', title: 'to withdraw' },
+        cookie: sessionCookie,
+    });
+    withdrawVarId = v.data.variant.id;
+
+    const r = await req('DELETE', `/variants/${withdrawVarId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+
+    const check = await req('GET', `/variants/${withdrawVarId}`, { cookie: sessionCookie });
+    assert.equal(check.data.variant.status, 'withdrawn');
+});
+
+test('GET /documents/:id/variants — withdrawn variant excluded from list', async () => {
+    const r = await req('GET', `/documents/${withdrawDocId}/variants`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(!r.data.variants.some(v => v.id === withdrawVarId), 'Withdrawn variant must not appear in list');
+});
+
+// ── COMMENT PATCH (F5 / F6 / F8) ─────────────────────────────────────────────
+
+let commentPatchVariantId, aliceCommentId, bobCommentId2;
+
+test('Setup: doc + variant + comments for comment-patch tests', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Comment patch test', text: 'some text here' }, cookie: sessionCookie });
+    const commentPatchDocId = d.data.document.id;
+    await req('POST', `/documents/${commentPatchDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${commentPatchDocId}/access`, {
+        body: { email: 'bob@test.com', access_level: 'commenter' },
+        cookie: sessionCookie,
+    });
+
+    const v = await req('POST', `/documents/${commentPatchDocId}/variants`, {
+        body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'other', title: 'patch variant' },
+        cookie: sessionCookie,
+    });
+    commentPatchVariantId = v.data.variant.id;
+
+    const ac = await req('POST', `/variants/${commentPatchVariantId}/comments`, { body: { text: 'original text' }, cookie: sessionCookie });
+    aliceCommentId = ac.data.comment.id;
+
+    const bc = await req('POST', `/variants/${commentPatchVariantId}/comments`, { body: { text: 'bob original' }, cookie: viewerCookie });
+    bobCommentId2 = bc.data.comment.id;
+});
+
+test('PATCH /comments/:id — author within edit window → 200', async () => {
+    const r = await req('PATCH', `/comments/${aliceCommentId}`, { body: { text: 'edited text' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.comment.text, 'edited text');
+});
+
+test('PATCH /comments/:id — non-author → 403', async () => {
+    const r = await req('PATCH', `/comments/${aliceCommentId}`, { body: { text: 'bob hacking' }, cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('DELETE /comments/:id — document admin deletes another user\'s comment → 204', async () => {
+    const r = await req('DELETE', `/comments/${bobCommentId2}`, { cookie: sessionCookie });
+    assert.equal(r.status, 204);
+});
+
+// ── ACTIVITY MINE FILTER (I2) ─────────────────────────────────────────────────
+
+test('GET /activity?mine=true — returns only own actions', async () => {
+    const all = await req('GET', '/activity', { cookie: sessionCookie });
+    const mine = await req('GET', '/activity?mine=true', { cookie: sessionCookie });
+    assert.equal(mine.status, 200);
+    assert.ok(Array.isArray(mine.data.activity));
+    assert.ok(all.data.activity.length >= mine.data.activity.length, 'Mine feed must be subset of all feed');
+    const aliceUser = db.prepare("SELECT id FROM users WHERE email = 'alice@test.com'").get();
+    assert.ok(
+        mine.data.activity.every(a => a.user_id === aliceUser.id),
+        'Every item in mine feed must belong to Alice'
+    );
+});
+
+// ── STATUS LIFECYCLE EDGE CASES (H7 / H9) ────────────────────────────────────
+// docId is archived at this point in the test sequence
+
+test('POST /documents/:id/status — archived → any → 422', async () => {
+    const r = await req('POST', `/documents/${docId}/status`, { body: { status: 'resolved' }, cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+test('POST /documents/:id/variants — propose on archived document → 422', async () => {
+    const r = await req('POST', `/documents/${docId}/variants`, {
+        body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'x', title: 'on archived' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+// ── OTP RATE LIMIT (A9) ───────────────────────────────────────────────────────
+
+test('POST /auth/request-otp — 6th request in window → 429', async () => {
+    const email = 'ratelimit@test.com';
+    const max = parseInt(process.env.OTP_MAX_ATTEMPTS || '5');
+    for (let i = 0; i < max; i++) {
+        await req('POST', '/auth/request-otp', { body: { email } });
+    }
+    const r = await req('POST', '/auth/request-otp', { body: { email } });
+    assert.equal(r.status, 429);
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

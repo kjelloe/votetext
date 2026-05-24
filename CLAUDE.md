@@ -128,11 +128,11 @@ Tests live in `tests/api.test.js` and use `node:test` (no extra deps). Key conve
 
 ## Email
 
-Uses the **MailerSend SDK** (`mailersend` npm package). Set `MAILERSEND_API_KEY`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME` in `.env`.
+Uses the **Resend SDK** (`resend` npm package, CJS-compatible). Set `RESEND_API_KEY`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME` in `.env`. Domain `kjell.solutions` is verified in Resend (eu-west-1).
+
+`auth.js` loads it with a plain `require('resend')` at the top. The send call returns `{ data, error }` — check `error` explicitly rather than relying on a throw.
 
 In `NODE_ENV !== 'production'`, email failures are non-fatal — the OTP is saved to the DB and logged to the console. Dev/test flows work without a live API key.
-
-The SDK is ESM-only; `auth.js` loads it via a lazy `await import('mailersend')` call cached in `_ms`. Do not switch to a static `require()`.
 
 ## Soft delete
 

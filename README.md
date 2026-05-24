@@ -27,7 +27,7 @@ VoteText follows a **minimal stack philosophy**:
 | Backend | **Node.js + Express** | Simple, well-understood, minimal overhead |
 | Database | **SQLite** (via better-sqlite3) | Zero-config, single-file, fast for read-heavy workloads |
 | Frontend | **Vanilla JS + HTML + CSS** | No build step, no framework churn, works everywhere |
-| Auth | **Email OTP** (via MailerSend SDK) | No passwords to store or leak |
+| Auth | **Email OTP** (via Resend SDK) | No passwords to store or leak |
 | Deployment | **Single VPS** (Hetzner cx23) | €4.5/month, 2 vCPU, 4 GB RAM — more than enough |
 
 There is **no bundler, no transpiler, no framework**. The frontend is a single HTML page with progressive enhancement. The backend is a thin REST API that serves JSON + static files.
@@ -177,7 +177,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Prerequisites
 - **Node.js** ≥ 18.x
 - **npm** ≥ 9.x
-- A [MailerSend](https://www.mailersend.com/) account with a verified sender domain (for production email; not required for local dev)
+- A [Resend](https://resend.com/) account with a verified sender domain (for production email; not required for local dev)
 
 #### Installation
 
