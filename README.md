@@ -27,7 +27,7 @@ VoteText follows a **minimal stack philosophy**:
 | Backend | **Node.js + Express** | Simple, well-understood, minimal overhead |
 | Database | **SQLite** (via better-sqlite3) | Zero-config, single-file, fast for read-heavy workloads |
 | Frontend | **Vanilla JS + HTML + CSS** | No build step, no framework churn, works everywhere |
-| Auth | **Email OTP** (via Nodemailer) | No passwords to store or leak |
+| Auth | **Email OTP** (via MailerSend SDK) | No passwords to store or leak |
 | Deployment | **Single VPS** (Hetzner cx23) | €4.5/month, 2 vCPU, 4 GB RAM — more than enough |
 
 There is **no bundler, no transpiler, no framework**. The frontend is a single HTML page with progressive enhancement. The backend is a thin REST API that serves JSON + static files.
@@ -67,7 +67,8 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Document owner controls all settings
 
 #### User Activity Feed
-- "My proposals and comments" view
+- Default view: all activity on documents you own or have access to
+- `?mine=true` filter: only your own actions
 - Activity log tracking all significant events
 - Configurable polling interval for real-time-ish updates
 
@@ -158,7 +159,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Activity Feed
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/activity` | Current user's activity feed |
+| `GET` | `/api/activity` | Activity feed (all docs user owns/has access to; `?mine=true` for own actions) |
 | `GET` | `/api/documents/:id/activity` | Activity feed for a specific document |
 
 #### Access Control
@@ -176,7 +177,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Prerequisites
 - **Node.js** ≥ 18.x
 - **npm** ≥ 9.x
-- An SMTP server for sending OTP emails (or use a dev tool like [Ethereal](https://ethereal.email/) for testing)
+- A [MailerSend](https://www.mailersend.com/) account with a verified sender domain (for production email; not required for local dev)
 
 #### Installation
 
@@ -188,9 +189,9 @@ cd votetext
 # Install dependencies
 npm install
 
-# Configure environment
-cp .env.example .env
-# Edit .env with your SMTP credentials and a random SESSION_SECRET
+# Configure environment — fill in SESSION_SECRET and MAILERSEND_API_KEY
+# cp .env.prod .env   ← for production
+# (dev .env is already present with safe defaults)
 
 # Initialize the database
 npm run init-db
@@ -207,12 +208,15 @@ The application will be available at `http://localhost:3000`.
 votetext/
 ├── schema.sql              # Database schema definition
 ├── package.json            # Dependencies and scripts
-├── .env.example            # Environment template
+├── .env                    # Dev environment (gitignored)
+├── .env.prod               # Production environment template (gitignored)
 ├── .gitignore
+├── cloud-init.yaml         # Hetzner server provisioning
 ├── data/                   # SQLite database (gitignored)
 │   └── votetext.db
 ├── scripts/
-│   ├── init-db.js          # Create/migrate database
+│   ├── init-db.js          # Create database from schema.sql
+│   ├── migrate.js          # Add columns to existing databases (idempotent)
 │   └── seed.js             # Optional: seed with sample data
 ├── src/
 │   ├── server.js           # Express app entry point
@@ -222,13 +226,11 @@ votetext/
 │   │   ├── access.js       # Document access control
 │   │   └── errors.js       # Error handling middleware
 │   └── routes/
-│       ├── auth.js         # OTP login/logout
-│       ├── documents.js    # Document CRUD + import
-│       ├── variants.js     # Variant proposals + relations
-│       ├── votes.js        # Voting
-│       ├── comments.js     # Discussion threads
-│       ├── activity.js     # Activity feed
-│       └── access.js       # User access management
+│       ├── auth.js         # OTP login/logout + profile
+│       ├── documents.js    # Document CRUD + import + access sub-routes
+│       ├── variants.js     # Variant proposals, relations, voting, comments
+│       ├── comments.js     # Comment edit/delete (standalone path)
+│       └── activity.js     # Activity feed
 └── public/
     ├── index.html          # Single-page application shell
     ├── app.js              # Client-side logic (vanilla JS)
@@ -251,86 +253,43 @@ sqlite3 data/votetext.db ".tables"
 sqlite3 data/votetext.db "SELECT * FROM users;"
 ```
 
-#### Dev SMTP
+#### Dev email
 
-For local development without a real SMTP server, use [Ethereal](https://ethereal.email/):
-
-1. Go to https://ethereal.email/ and create a free account
-2. Use the provided SMTP credentials in your `.env`
-3. OTP emails will appear in Ethereal's web inbox
+No email account is needed for local development. When `NODE_ENV` is not `production`, email failures are non-fatal — the OTP code is saved to the database and printed to the console (`console.warn`). Copy it from the terminal to log in.
 
 ---
 
-### Deployment (Hetzner cx23)
+### Deployment (Hetzner CX23)
 
-The application is designed to run on a single Hetzner cx23 VPS (2 vCPU, 4 GB RAM, €4.51/month).
+The application is designed to run on a single Hetzner CX23 VPS (2 vCPU, 4 GB RAM, ~€4.5/month).
 
-#### Server Setup
+Server provisioning is handled by `cloud-init.yaml` — paste it into the Hetzner console when creating the server. It installs Node.js 22 LTS, nginx, certbot, fail2ban, ufw, and configures the systemd service automatically.
 
-```bash
-# On the VPS (Ubuntu 22.04+)
-sudo apt update && sudo apt upgrade -y
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs nginx certbot python3-certbot-nginx
-
-# Clone and install
-git clone <repo-url> /opt/votetext
-cd /opt/votetext
-npm ci --production
-cp .env.example .env
-# Edit .env for production settings
-
-# Initialize database
-npm run init-db
-
-# Create systemd service
-sudo tee /etc/systemd/system/votetext.service << 'EOF'
-[Unit]
-Description=VoteText
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/opt/votetext
-ExecStart=/usr/bin/node src/server.js
-Restart=on-failure
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl enable votetext
-sudo systemctl start votetext
-```
-
-#### Nginx Reverse Proxy
-
-```nginx
-server {
-    server_name votetext.example.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
+#### First deploy (after server boot)
 
 ```bash
-# Enable HTTPS
-sudo certbot --nginx -d votetext.example.com
+# 1. Copy code (excluding node_modules, data, and env files)
+rsync -av --exclude node_modules --exclude data --exclude .env --exclude .env.prod \
+  -e "ssh -p 2222" \
+  . kjelloe@votetext.kjell.solutions:/opt/votetext/
+
+# 2. Copy production env
+scp -P 2222 .env.prod kjelloe@votetext.kjell.solutions:/opt/votetext/.env
+
+# 3. Point DNS A record to the server IP, then on the server:
+ssh -p 2222 kjelloe@votetext.kjell.solutions
+~/first-deploy.sh
 ```
+
+`first-deploy.sh` runs `npm install --omit=dev`, initialises the database, starts the systemd service, and obtains a Let's Encrypt certificate via certbot.
 
 #### Backups
 
+A daily cron job at 03:00 backs up the SQLite database to `/home/kjelloe/backups/` with 30-day retention (configured in `cloud-init.yaml`).
+
 ```bash
-# SQLite backup (safe with WAL mode)
-sqlite3 /opt/votetext/data/votetext.db ".backup /backup/votetext-$(date +%F).db"
+# Manual backup
+sqlite3 /opt/votetext/data/votetext.db ".backup /home/kjelloe/backups/votetext-$(date +%F).db"
 ```
 
 ---
@@ -350,23 +309,23 @@ sqlite3 /opt/votetext/data/votetext.db ".backup /backup/votetext-$(date +%F).db"
 
 ### Roadmap
 
-- [ ] Core server setup (Express, middleware, DB connection)
-- [ ] Authentication flow (OTP request → verify → session)
-- [ ] Document CRUD and text import
-- [ ] Document line parsing and pagination
-- [ ] Variant proposal creation and management
-- [ ] Variant relationship tracking
-- [ ] Voting system with tally updates
-- [ ] Comment threads (two-level)
-- [ ] User activity feed
-- [ ] Access control and invitation system
-- [ ] Frontend: document viewer with line numbers
-- [ ] Frontend: variant overlay / diff display
-- [ ] Frontend: voting interface
-- [ ] Frontend: comment threads
-- [ ] Frontend: activity feed
-- [ ] Moderation tools
-- [ ] Resolution workflow
+- [x] Core server setup (Express, middleware, DB connection)
+- [x] Authentication flow (OTP request → verify → session)
+- [x] Document CRUD and text import
+- [x] Document line parsing and pagination
+- [x] Variant proposal creation and management
+- [x] Variant relationship tracking
+- [x] Voting system with tally updates
+- [x] Comment threads (two-level)
+- [x] User activity feed
+- [x] Access control and invitation system
+- [x] Frontend: document viewer with line numbers
+- [x] Frontend: variant overlay / diff display
+- [x] Frontend: voting interface
+- [x] Frontend: comment threads
+- [x] Frontend: activity feed
+- [x] Mobile-responsive design
+- [x] Rate limiting and security hardening
+- [ ] Resolution workflow (auto-apply winning variant to document text)
 - [ ] Export resolved document
-- [ ] Mobile-responsive design
-- [ ] Rate limiting and security hardening
+- [ ] Moderation dashboard
