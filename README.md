@@ -46,7 +46,8 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Document status lifecycle: `draft → open → voting → resolved → archived`
 
 #### Variant Proposals
-- Target specific character ranges in the original text
+- Select text in the document viewer to set the target range; character offsets are resolved automatically
+- Propose modal shows the selected text in a collapsible read-only preview
 - Three operations: **INSERT**, **REPLACE**, **DELETE**
 - Title and rationale fields for context
 - Variant relationships: `based_on`, `overlaps`, `conflicts`, `supersedes`

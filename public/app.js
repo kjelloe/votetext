@@ -543,9 +543,24 @@ async function viewDocument(docId) {
     const accessBtn = metaSection.querySelector('#access-btn');
     if (accessBtn) accessBtn.addEventListener('click', () => openAccessModal(docId));
 
+    // Text selection → char offset tracking
+    let pendingSelection = null;
+    const linesContainer = textPanel.querySelector('#doc-lines-container');
+    linesContainer.addEventListener('mouseup', () => {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.toString().trim()) { pendingSelection = null; return; }
+        const anchor = resolveSelectionOffset(sel.anchorNode, sel.anchorOffset);
+        const focus = resolveSelectionOffset(sel.focusNode, sel.focusOffset);
+        if (anchor === null || focus === null) { pendingSelection = null; return; }
+        const charStart = Math.min(anchor, focus);
+        const charEnd = Math.max(anchor, focus);
+        if (charStart >= charEnd) { pendingSelection = null; return; }
+        pendingSelection = { char_start: charStart, char_end: charEnd, text: sel.toString() };
+    });
+
     // Propose button
     const proposeBtn = varSection.querySelector('#propose-btn');
-    if (proposeBtn) proposeBtn.addEventListener('click', () => openProposeModal(doc, lines));
+    if (proposeBtn) proposeBtn.addEventListener('click', () => openProposeModal(doc, pendingSelection));
 }
 
 function renderLines(container, lines, variants) {
@@ -566,6 +581,8 @@ function renderLines(container, lines, variants) {
         }
         const textEl = el('span', { class: textClass });
         textEl.textContent = line.original_text || ' ';
+        textEl.dataset.charStart = line.char_offset_start;
+        textEl.dataset.charEnd = line.char_offset_end;
         if (firstVariant) textEl.dataset.variantId = firstVariant.id;
 
         lineEl.append(numEl, textEl);
@@ -719,8 +736,36 @@ function openAccessModal(docId) {
     });
 }
 
-function openProposeModal(doc, lines) {
+function resolveSelectionOffset(node, nodeOffset) {
+    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+    const lineTextEl = el.closest('.line-text');
+    if (lineTextEl) {
+        const cs = parseInt(lineTextEl.dataset.charStart);
+        return isNaN(cs) ? null : cs + nodeOffset;
+    }
+    const lineEl = el.closest('.doc-line');
+    if (!lineEl) return null;
+    const lt = lineEl.querySelector('.line-text');
+    if (!lt) return null;
+    const cs = parseInt(lt.dataset.charStart);
+    return isNaN(cs) ? null : cs;
+}
+
+function openProposeModal(doc, selection) {
+    const hasSelection = !!(selection && selection.char_start < selection.char_end);
+    const selInfo = hasSelection
+        ? `Selected range: chars ${selection.char_start}–${selection.char_end}`
+        : 'No text selected — select text in the document before proposing';
+
+    const selPreview = hasSelection && selection.text
+        ? `<details class="selected-text-collapsible" open>
+               <summary>Selected text</summary>
+               <pre class="selected-text-preview">${esc(selection.text)}</pre>
+           </details>`
+        : '';
+
     openModal(`
+        ${selPreview}
         <div class="form-group">
             <label>Operation</label>
             <select id="op-type">
@@ -728,14 +773,6 @@ function openProposeModal(doc, lines) {
                 <option value="insert">Insert</option>
                 <option value="delete">Delete</option>
             </select>
-        </div>
-        <div class="form-group">
-            <label>Character start <span class="text-muted">(absolute offset)</span></label>
-            <input type="number" id="char-start" min="0" max="${esc(doc.total_chars)}" value="0">
-        </div>
-        <div class="form-group">
-            <label>Character end</label>
-            <input type="number" id="char-end" min="0" max="${esc(doc.total_chars)}" value="0">
         </div>
         <div class="form-group" id="new-text-group">
             <label>New text</label>
@@ -749,12 +786,10 @@ function openProposeModal(doc, lines) {
             <label>Rationale <span class="text-muted">(optional)</span></label>
             <textarea id="var-rationale" style="min-height:80px" placeholder="Why is this change needed?"></textarea>
         </div>
-        <p class="text-muted mb-2" style="font-size:.8125rem">
-            Hint: line char ranges — ${lines.slice(0, 5).map(l => `line ${esc(l.line_num)}: ${esc(l.char_offset_start)}–${esc(l.char_offset_end)}`).join(', ')}${lines.length > 5 ? '…' : ''}
-        </p>
+        <div class="selection-info">${esc(selInfo)}</div>
         <p id="propose-err" class="error-msg" style="display:none"></p>
         <div class="form-actions">
-            <button id="propose-submit" class="btn btn-primary">Submit proposal</button>
+            <button id="propose-submit" class="btn btn-primary" ${hasSelection ? '' : 'disabled'}>Submit proposal</button>
             <button onclick="closeModal()" class="btn btn-ghost">Cancel</button>
         </div>
     `, 'Propose variant');
@@ -764,20 +799,21 @@ function openProposeModal(doc, lines) {
     });
 
     document.getElementById('propose-submit').addEventListener('click', async () => {
+        if (!hasSelection) return;
         const errEl = document.getElementById('propose-err');
         errEl.style.display = 'none';
         const operation = document.getElementById('op-type').value;
-        const char_start = parseInt(document.getElementById('char-start').value);
-        const char_end = parseInt(document.getElementById('char-end').value);
         const new_text = document.getElementById('new-text').value;
         const title = document.getElementById('var-title').value.trim();
         const rationale = document.getElementById('var-rationale').value.trim();
 
-        if (isNaN(char_start) || isNaN(char_end)) { errEl.textContent = 'Valid char range required'; errEl.style.display = ''; return; }
         const btn = document.getElementById('propose-submit');
         btn.disabled = true; btn.textContent = 'Submitting…';
         try {
-            const data = await api('POST', `/documents/${doc.id}/variants`, { char_start, char_end, operation, new_text, title, rationale });
+            const data = await api('POST', `/documents/${doc.id}/variants`, {
+                char_start: selection.char_start, char_end: selection.char_end,
+                operation, new_text, title, rationale
+            });
             closeModal();
             location.hash = `#/variants/${data.variant.id}`;
         } catch (err) {

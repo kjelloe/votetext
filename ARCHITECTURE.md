@@ -281,6 +281,17 @@ Single HTML page (`public/index.html`) with hash-based routing:
 - **Event delegation** — one listener on a container, not per-item
 - **Minimal client state** — only `state.user`, `state.docLines` (line cache per document), `state.docCache`. Fresh fetch on every view render
 
+### Text selection → variant proposal
+
+Each rendered line span (`<span class="line-text">`) carries `data-char-start` and `data-char-end` (absolute byte offsets from the DB). On `mouseup` in `#doc-lines-container`, `resolveSelectionOffset` maps the browser's `Selection` anchor/focus nodes to document offsets:
+
+- Node inside `.line-text` → `data-char-start + in-span character offset`
+- Node in the line-number gutter → clamped to the line's `data-char-start`
+
+The resolved `{ char_start, char_end, text }` is stored in `pendingSelection` and passed to `openProposeModal`. The modal shows the raw selected text in a collapsible `<details>` panel and disables submit if no selection is present.
+
+See `specs/use-cases.md` for full user-facing flows.
+
 ### XSS prevention
 
 All interpolated user values go through `esc()` before entering any innerHTML string. Trusted static HTML (from template literals with only escaped values) is safe. DOM node creation via `el()` never touches innerHTML.
