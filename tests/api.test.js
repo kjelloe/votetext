@@ -657,6 +657,172 @@ test('POST /documents/:id/variants — propose on archived document → 422', as
     assert.equal(r.status, 422);
 });
 
+// ── ANONYMOUS ACCESS (G7 / G8) ───────────────────────────────────────────────
+
+let anonDocId;
+
+test('Setup: create public + private doc for anonymous access tests', async () => {
+    const priv = await req('POST', '/documents', { body: { title: 'Private doc', text: 'secret content' }, cookie: sessionCookie });
+    anonDocId = priv.data.document.id;
+    // Leave allow_anonymous_view = false (default)
+
+    const pub = await req('POST', '/documents', {
+        body: { title: 'Public doc', text: 'open content', settings: { allow_anonymous_view: true } },
+        cookie: sessionCookie,
+    });
+    // Store public doc id temporarily for the next test
+    anonDocId = { priv: priv.data.document.id, pub: pub.data.document.id };
+});
+
+test('GET /documents/:id — private doc, no auth → 403', async () => {
+    const r = await req('GET', `/documents/${anonDocId.priv}`);
+    assert.equal(r.status, 403);
+});
+
+test('GET /documents/:id — public doc (allow_anonymous_view), no auth → 200', async () => {
+    const r = await req('GET', `/documents/${anonDocId.pub}`);
+    assert.equal(r.status, 200);
+});
+
+// ── ACCESS RECORD DELETION (G9) ──────────────────────────────────────────────
+
+test('DELETE /documents/:id/access/:userId — revoke access → 204', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Access test', text: 'abc' }, cookie: sessionCookie });
+    const dId = d.data.document.id;
+    await req('POST', `/documents/${dId}/access`, { body: { email: 'bob@test.com', access_level: 'viewer' }, cookie: sessionCookie });
+    const bobUser = db.prepare("SELECT id FROM users WHERE email = 'bob@test.com'").get();
+
+    const r = await req('DELETE', `/documents/${dId}/access/${bobUser.id}`, { cookie: sessionCookie });
+    assert.equal(r.status, 204);
+
+    // Bob can no longer access the document
+    const check = await req('GET', `/documents/${dId}`, { cookie: viewerCookie });
+    assert.equal(check.status, 403);
+});
+
+// ── NON-OWNER DOCUMENT DELETE (G10) ──────────────────────────────────────────
+
+test('DELETE /documents/:id — non-owner → 403', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Alice only', text: 'abc' }, cookie: sessionCookie });
+    const r = await req('DELETE', `/documents/${d.data.document.id}`, { cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+// ── TWO USERS VOTING (E8) ─────────────────────────────────────────────────────
+
+test('Two different users vote on same variant → count = 2', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Two voters', text: 'abc def' }, cookie: sessionCookie });
+    const dId = d.data.document.id;
+    await req('POST', `/documents/${dId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${dId}/access`, { body: { email: 'bob@test.com', access_level: 'voter' }, cookie: sessionCookie });
+
+    const v = await req('POST', `/documents/${dId}/variants`, {
+        body: { char_start: 0, char_end: 3, operation: 'replace', new_text: 'xyz', title: 'two voters variant' },
+        cookie: sessionCookie,
+    });
+    const vId = v.data.variant.id;
+
+    await req('POST', `/variants/${vId}/vote`, { body: { vote_value: 1 }, cookie: sessionCookie });
+    const r = await req('POST', `/variants/${vId}/vote`, { body: { vote_value: 1 }, cookie: viewerCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.tallies.votes_for, 2);
+});
+
+// ── VARIANT RANGE VALIDATION (C4) ─────────────────────────────────────────────
+
+test('POST /documents/:id/variants — char_end > total_chars → 400', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Range test', text: 'abc' }, cookie: sessionCookie });
+    const dId = d.data.document.id;
+    await req('POST', `/documents/${dId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+
+    const r = await req('POST', `/documents/${dId}/variants`, {
+        body: { char_start: 0, char_end: 999, operation: 'replace', new_text: 'x', title: 'out of range' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+// ── VARIANT PATCH GUARDS (C8 / C9) ────────────────────────────────────────────
+
+test('PATCH /variants/:id — non-proposer → 403', async () => {
+    const r = await req('PATCH', `/variants/${variantId}`, { body: { title: 'Bob hacking' }, cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('PATCH /variants/:id — already withdrawn → 422', async () => {
+    const r = await req('PATCH', `/variants/${withdrawVarId}`, { body: { title: 'edit withdrawn' }, cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+// ── RELATION EDGE CASES (D3 / D4 / D5 / D6) ──────────────────────────────────
+
+let relDocId, relV1Id, relV2Id;
+
+test('Setup: fresh doc + two variants for relation edge-case tests', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Rel edge', text: 'abcdefghij' }, cookie: sessionCookie });
+    relDocId = d.data.document.id;
+    await req('POST', `/documents/${relDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const v1 = await req('POST', `/documents/${relDocId}/variants`, {
+        body: { char_start: 0, char_end: 3, operation: 'replace', new_text: 'xyz', title: 'rel v1' },
+        cookie: sessionCookie,
+    });
+    const v2 = await req('POST', `/documents/${relDocId}/variants`, {
+        body: { char_start: 4, char_end: 7, operation: 'replace', new_text: 'uvw', title: 'rel v2' },
+        cookie: sessionCookie,
+    });
+    relV1Id = v1.data.variant.id;
+    relV2Id = v2.data.variant.id;
+});
+
+test('POST /variants/:id/relations — self-relation → 400', async () => {
+    const r = await req('POST', `/variants/${relV1Id}/relations`, {
+        body: { to_variant_id: relV1Id, relation_type: 'conflicts' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('POST /variants/:id/relations — invalid relation_type → 400', async () => {
+    const r = await req('POST', `/variants/${relV1Id}/relations`, {
+        body: { to_variant_id: relV2Id, relation_type: 'hates' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('POST /variants/:id/relations — cross-document → 422', async () => {
+    const r = await req('POST', `/variants/${relV1Id}/relations`, {
+        body: { to_variant_id: variantId, relation_type: 'conflicts' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('GET /variants/:id/relations → 200, both sides returned', async () => {
+    await req('POST', `/variants/${relV1Id}/relations`, {
+        body: { to_variant_id: relV2Id, relation_type: 'based_on' },
+        cookie: sessionCookie,
+    });
+    const r = await req('GET', `/variants/${relV1Id}/relations`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.relations));
+    assert.ok(r.data.relations.some(rel =>
+        (rel.from_variant_id === relV1Id && rel.to_variant_id === relV2Id) ||
+        (rel.from_variant_id === relV2Id && rel.to_variant_id === relV1Id)
+    ));
+});
+
+// ── DOCUMENT SIZE LIMIT (B5) ──────────────────────────────────────────────────
+
+test('POST /documents — text exceeding MAX_DOCUMENT_CHARS → 400', async () => {
+    const maxChars = parseInt(process.env.MAX_DOCUMENT_CHARS || '500000');
+    const r = await req('POST', '/documents', {
+        body: { title: 'Too big', text: 'x'.repeat(maxChars + 1) },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
 // ── OTP RATE LIMIT (A9) ───────────────────────────────────────────────────────
 
 test('POST /auth/request-otp — 6th request in window → 429', async () => {

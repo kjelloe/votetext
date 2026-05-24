@@ -3,20 +3,26 @@
 const { Router } = require('express');
 const { db, getOne, getAll, run, transaction, logActivity } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { ACCESS_LEVELS } = require('../middleware/access');
 
 const router = Router();
 
-function checkDocAccess(doc, req) {
+function checkDocAccess(doc, req, minLevel) {
     let settings = {};
     try { settings = JSON.parse(doc.settings || '{}'); } catch {}
     const userId = req.user ? req.user.id : null;
     if (!userId && !settings.allow_anonymous_view) return false;
     if (userId && doc.owner_id !== userId) {
         const access = getOne(
-            'SELECT blocked FROM user_document_access WHERE user_id = ? AND document_id = ?',
+            'SELECT blocked, access_level FROM user_document_access WHERE user_id = ? AND document_id = ?',
             [userId, doc.id]
         );
         if (!access || access.blocked) return false;
+        if (minLevel) {
+            const userIdx = ACCESS_LEVELS.indexOf(access.access_level);
+            const minIdx = ACCESS_LEVELS.indexOf(minLevel);
+            if (userIdx < minIdx) return false;
+        }
     }
     return true;
 }
@@ -79,6 +85,7 @@ router.delete('/:id', requireAuth, (req, res, next) => {
     try {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
+        if (variant.status === 'withdrawn') return res.status(422).json({ error: 'Already withdrawn' });
         if (variant.proposed_by !== req.user.id && req.user.role !== 'superadmin') {
             return res.status(403).json({ error: 'Not your variant' });
         }
@@ -178,6 +185,9 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc || !checkDocAccess(doc, req, 'commenter')) return res.status(403).json({ error: 'Access denied' });
+
         if (parent_comment_id) {
             const parent = getOne('SELECT * FROM comments WHERE id = ?', [parent_comment_id]);
             if (!parent || parent.variant_id !== variant.id) return res.status(422).json({ error: 'Invalid parent comment' });
@@ -201,7 +211,8 @@ router.post('/:id/vote', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT status FROM documents WHERE id = ?', [variant.document_id]);
+        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc || !checkDocAccess(doc, req, 'voter')) return res.status(403).json({ error: 'Access denied' });
         if (doc.status === 'resolved' || doc.status === 'archived') {
             return res.status(422).json({ error: 'Cannot vote on resolved or archived documents' });
         }

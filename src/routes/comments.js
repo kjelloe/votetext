@@ -26,7 +26,7 @@ router.patch('/:id', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT document_id FROM variants WHERE id = ?', [comment.variant_id]);
         logActivity(req.user.id, variant ? variant.document_id : null, comment.variant_id, 'comment_updated', { comment_id: comment.id });
 
-        res.json({ comment: getOne('SELECT * FROM comments WHERE id = ?', [comment.id]) });
+        res.json({ comment: getOne('SELECT c.*, u.display_name as author_name FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?', [comment.id]) });
     } catch (err) {
         next(err);
     }

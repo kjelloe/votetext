@@ -111,7 +111,7 @@ router.get('/:id', (req, res, next) => {
         const userId = req.user ? req.user.id : null;
 
         if (!userId) {
-            if (!settings.allow_anonymous_view) return res.status(401).json({ error: 'Authentication required' });
+            if (!settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
         } else if (doc.owner_id !== userId) {
             const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [userId, doc.id]);
             if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
@@ -193,7 +193,7 @@ router.get('/:id/lines', (req, res, next) => {
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
 
         const userId = req.user ? req.user.id : null;
-        if (!userId && !settings.allow_anonymous_view) return res.status(401).json({ error: 'Authentication required' });
+        if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
 
         const page = Math.max(1, parseInt(req.query.page || '1'));
         const lines = getAll('SELECT * FROM document_lines WHERE document_id = ? AND page_num = ? ORDER BY line_num', [doc.id, page]);
@@ -212,7 +212,7 @@ router.get('/:id/variants', (req, res, next) => {
         let settings = {};
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
         const userId = req.user ? req.user.id : null;
-        if (!userId && !settings.allow_anonymous_view) return res.status(401).json({ error: 'Authentication required' });
+        if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
 
         const variants = getAll(
             "SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn' ORDER BY v.created_at DESC",
