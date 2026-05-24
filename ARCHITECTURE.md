@@ -195,8 +195,8 @@ All write endpoints (except logout) require a valid session cookie. Read endpoin
 | 201 | Created |
 | 204 | No Content (DELETE success) |
 | 400 | Bad Request (invalid input) |
-| 401 | Unauthenticated |
-| 403 | Forbidden (wrong role/access level) |
+| 401 | Unauthenticated (no session cookie on a `requireAuth` endpoint) |
+| 403 | Forbidden — wrong role/access level, or unauthenticated access to a private document |
 | 404 | Not Found |
 | 409 | Conflict (duplicate, e.g., unique constraint) |
 | 422 | Unprocessable (business rule violation, e.g., invalid status transition) |
