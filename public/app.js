@@ -247,7 +247,7 @@ async function viewDocumentList() {
     document.getElementById('create-doc-btn').addEventListener('click', () => openCreateDocModal());
 }
 
-function openCreateDocModal() {
+function openCreateDocModal(prefill = {}) {
     openModal(`
         <div class="form-group"><label>Title</label><input type="text" id="new-doc-title" placeholder="Document title"></div>
         <div class="form-group"><label>Description <small class="text-muted">(optional)</small></label><input type="text" id="new-doc-desc" placeholder="Brief description"></div>
@@ -373,6 +373,10 @@ function openCreateDocModal() {
     });
     fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); });
 
+    if (prefill.title) document.getElementById('new-doc-title').value = prefill.title;
+    if (prefill.text) { textarea.value = prefill.text; runDetect(); }
+    if (prefill.linesPerPage) setLpp(prefill.linesPerPage);
+
     document.getElementById('create-doc-submit').addEventListener('click', async () => {
         errEl.style.display = 'none';
         const title = document.getElementById('new-doc-title').value.trim();
@@ -450,6 +454,7 @@ async function viewDocument(docId) {
             </div>
             <div class="flex gap-1 items-center">
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
+                ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
                 ${(doc.owner_id === (state.user && state.user.id)) ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
             </div>
         </div>
@@ -602,6 +607,18 @@ async function viewDocument(docId) {
     // Settings button
     const settingsBtn = textPanel.querySelector('#doc-settings-btn');
     if (settingsBtn) settingsBtn.addEventListener('click', () => openDocSettingsModal(doc));
+
+    // Copy button — opens New Document modal pre-filled with this document's text and title
+    const copyBtn = textPanel.querySelector('#doc-copy-btn');
+    if (copyBtn) copyBtn.addEventListener('click', async () => {
+        copyBtn.disabled = true; copyBtn.textContent = 'Loading…';
+        try {
+            const { text } = await api('GET', `/documents/${docId}/text`);
+            openCreateDocModal({ title: `${doc.title} (copy)`, text, linesPerPage: parsedSettings.lines_per_page });
+        } finally {
+            copyBtn.disabled = false; copyBtn.textContent = 'Copy';
+        }
+    });
 
     // Status button
     const statusBtn = textPanel.querySelector('#doc-status-btn');

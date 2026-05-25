@@ -203,6 +203,22 @@ router.get('/:id/lines', (req, res, next) => {
     }
 });
 
+// GET /api/documents/:id/text — full reconstructed document text (for copy/export)
+router.get('/:id/text', (req, res, next) => {
+    try {
+        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        let settings = {};
+        try { settings = JSON.parse(doc.settings || '{}'); } catch {}
+        const userId = req.user ? req.user.id : null;
+        if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
+        const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
+        res.json({ text: lines.map(l => l.original_text).join('\n') });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // GET /api/documents/:id/variants
 router.get('/:id/variants', (req, res, next) => {
     try {
