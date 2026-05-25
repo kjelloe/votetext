@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS users (
     organization    TEXT    NOT NULL DEFAULT '',
     role            TEXT    NOT NULL DEFAULT 'user'
                             CHECK (role IN ('user', 'admin', 'superadmin')),
-    is_active       INTEGER NOT NULL DEFAULT 1,   -- 0 = soft-deleted / banned
+    is_active           INTEGER NOT NULL DEFAULT 1,   -- 0 = soft-deleted / banned
+    is_non_searchable   INTEGER NOT NULL DEFAULT 0,   -- 1 = hidden from user search (user-controlled)
+    is_protected        INTEGER NOT NULL DEFAULT 0,   -- 1 = hidden from all searches (admin-controlled)
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

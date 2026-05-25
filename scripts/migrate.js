@@ -17,6 +17,8 @@ function addColumnIfMissing(table, column, definition) {
 }
 
 addColumnIfMissing('documents', 'deleted_at', 'TEXT');
+addColumnIfMissing('users', 'is_non_searchable', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('users', 'is_protected', 'INTEGER NOT NULL DEFAULT 0');
 
 db.close();
 console.log('Migration complete.');

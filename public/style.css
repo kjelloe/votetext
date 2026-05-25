@@ -558,6 +558,36 @@ textarea { resize: vertical; min-height: 120px; }
     cursor: default;
 }
 
+/* ===== User search dropdown (access modal) ===== */
+.user-search-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    max-height: 220px;
+    overflow-y: auto;
+}
+.user-search-result {
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--color-border);
+}
+.user-search-result:last-child { border-bottom: none; }
+.user-search-result:hover { background: var(--color-bg); }
+.user-search-name { font-size: 0.875rem; font-weight: 500; }
+.user-search-meta { font-size: 0.75rem; color: var(--color-text-muted); }
+.invite-role-select { width: auto; }
+
 /* ===== Selection info (propose modal) ===== */
 .selection-info {
     font-size: 0.8125rem;

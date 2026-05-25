@@ -108,7 +108,7 @@ router.post('/verify-otp', (req, res, next) => {
         });
 
         res.json({
-            user: { id: user.id, email: user.email, display_name: user.display_name, organization: user.organization, role: user.role },
+            user: { id: user.id, email: user.email, display_name: user.display_name, organization: user.organization, role: user.role, is_non_searchable: user.is_non_searchable || 0 },
         });
     } catch (err) {
         next(err);
@@ -128,17 +128,40 @@ router.get('/me', requireAuth, (req, res) => {
     res.json({ user: req.user });
 });
 
+// GET /api/auth/search?q=... — find users by partial email, display_name, or organization
+router.get('/search', requireAuth, (req, res, next) => {
+    try {
+        const q = (req.query.q || '').trim();
+        if (q.length < 3) return res.json({ users: [] });
+        const like = `%${q}%`;
+        const users = getAll(
+            `SELECT id, display_name, email, organization FROM users
+             WHERE (email LIKE ? OR display_name LIKE ? OR organization LIKE ?)
+               AND is_non_searchable = 0 AND is_protected = 0
+               AND id != ? AND is_active = 1
+             ORDER BY display_name, email LIMIT 10`,
+            [like, like, like, req.user.id]
+        );
+        res.json({ users });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // PATCH /api/auth/profile
 router.patch('/profile', requireAuth, (req, res, next) => {
     try {
-        const { display_name, organization } = req.body;
+        const { display_name, organization, is_non_searchable } = req.body;
         if (display_name !== undefined) {
             run("UPDATE users SET display_name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [display_name, req.user.id]);
         }
         if (organization !== undefined) {
             run("UPDATE users SET organization = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [organization, req.user.id]);
         }
-        const user = getOne('SELECT id, email, display_name, organization, role FROM users WHERE id = ?', [req.user.id]);
+        if (is_non_searchable !== undefined) {
+            run("UPDATE users SET is_non_searchable = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [is_non_searchable ? 1 : 0, req.user.id]);
+        }
+        const user = getOne('SELECT id, email, display_name, organization, role, is_non_searchable FROM users WHERE id = ?', [req.user.id]);
         res.json({ user });
     } catch (err) {
         next(err);

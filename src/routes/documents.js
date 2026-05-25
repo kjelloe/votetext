@@ -3,7 +3,9 @@
 const { Router } = require('express');
 const { db, getOne, getAll, run, transaction, logActivity } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { requireDocumentAccess } = require('../middleware/access');
+const { requireDocumentAccess, ACCESS_LEVELS } = require('../middleware/access');
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const router = Router();
 
@@ -310,7 +312,7 @@ router.get('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, res
             'SELECT uda.*, u.email, u.display_name, u.organization FROM user_document_access uda JOIN users u ON u.id = uda.user_id WHERE uda.document_id = ? ORDER BY uda.created_at',
             [req.params.id]
         );
-        res.json({ access: entries });
+        res.json({ access: entries, my_access_level: req.userAccessLevel, default_access: req.documentSettings.default_access || '' });
     } catch (err) {
         next(err);
     }
@@ -321,11 +323,14 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, re
     try {
         const { email, access_level } = req.body;
         if (!email) return res.status(400).json({ error: 'Email required' });
-        const validLevels = ['viewer', 'commenter', 'proposer', 'voter', 'editor', 'admin'];
-        if (!validLevels.includes(access_level)) return res.status(400).json({ error: 'Invalid access level' });
+        if (!ACCESS_LEVELS.includes(access_level)) return res.status(400).json({ error: 'Invalid access level' });
+        if (ACCESS_LEVELS.indexOf(access_level) > ACCESS_LEVELS.indexOf(req.userAccessLevel)) {
+            return res.status(403).json({ error: `You cannot grant ${access_level} access — your own level is ${req.userAccessLevel}` });
+        }
 
         const normalizedEmail = email.trim().toLowerCase();
         let user = getOne('SELECT * FROM users WHERE email = ?', [normalizedEmail]);
+        const isNewUser = !user;
         if (!user) {
             const r = run('INSERT INTO users (email, display_name) VALUES (?, ?)', [normalizedEmail, normalizedEmail.split('@')[0]]);
             user = getOne('SELECT * FROM users WHERE id = ?', [r.lastInsertRowid]);
@@ -337,6 +342,35 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, re
         );
 
         logActivity(req.user.id, req.params.id, null, 'user_invited', { email: normalizedEmail, access_level });
+
+        if (isNewUser) {
+            const appUrl = process.env.VOTETEXT_URL || `${req.protocol}://${req.get('host')}`;
+            const inviterName = req.user.display_name || req.user.email;
+            const docTitle = req.document.title;
+            const from = `${process.env.MAIL_FROM_NAME || 'VoteText'} <${process.env.MAIL_FROM_ADDRESS || 'votetext@kjell.solutions'}>`;
+            const subject = `You have been invited to "${docTitle}" on VoteText`;
+            const plainText =
+                `${inviterName} has invited you to participate in "${docTitle}" as a ${access_level}.\n\n` +
+                `Sign in with this email address (${normalizedEmail}) at:\n${appUrl}\n\n` +
+                `If you were not expecting this, you can safely ignore this email.`;
+            const htmlBody =
+                `<p>${inviterName} has invited you to participate in <strong>${docTitle}</strong> as a <strong>${access_level}</strong>.</p>` +
+                `<p>Sign in with this email address (${normalizedEmail}) at:<br><a href="${appUrl}">${appUrl}</a></p>` +
+                `<p style="color:#6b7280;font-size:0.875em">If you were not expecting this, you can safely ignore this email.</p>`;
+            console.log(`[invite] Sending to=${normalizedEmail} from="${from}" subject="${subject}" key=${process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.slice(0, 8) + '…' : 'MISSING'}`);
+            resend.emails.send({ from, to: normalizedEmail, subject, text: plainText, html: htmlBody })
+                .then(({ data, error: sendError }) => {
+                    if (sendError) {
+                        console.warn('[invite] Resend error:', JSON.stringify(sendError));
+                    } else {
+                        console.log('[invite] Sent OK — id:', data && data.id);
+                    }
+                })
+                .catch(err => {
+                    console.warn('[invite] Send threw:', err.message || err);
+                });
+        }
+
         res.status(201).json({ message: 'Access granted', user_id: user.id });
     } catch (err) {
         next(err);

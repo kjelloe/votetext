@@ -784,8 +784,24 @@ function openAccessModal(docId) {
 
     api('GET', `/documents/${docId}/access`).then(data => {
         const rows = data.access || [];
+        const allLevels = ['viewer', 'commenter', 'proposer', 'voter', 'editor', 'admin'];
+        const defaultAccessLevels = ['viewer', 'commenter', 'proposer', 'voter'];
+        const myIdx = allLevels.indexOf(data.my_access_level || 'admin');
+        const allowedLevels = allLevels.filter((_, i) => i <= myIdx);
+        const defaultLevel = allowedLevels.includes('proposer') ? 'proposer' : allowedLevels[allowedLevels.length - 1];
+        const currentDefault = data.default_access || '';
         document.getElementById('modal-content').innerHTML = `
             <div class="modal-title">Manage access</div>
+            <p class="mb-1" style="font-weight:600">Default access</p>
+            <div class="flex items-center gap-1 mb-1">
+                <select id="default-access-select" class="invite-role-select">
+                    <option value="">None — invite only</option>
+                    ${defaultAccessLevels.map(l => `<option value="${l}"${l === currentDefault ? ' selected' : ''}>${l}</option>`).join('')}
+                </select>
+                <span class="text-muted" style="font-size:0.8rem">Role granted to any signed-in user not explicitly invited</span>
+            </div>
+            <p id="default-access-status" style="font-size:0.75rem;min-height:1rem;margin-bottom:0.5rem"></p>
+            <hr style="margin:0.75rem 0;border:none;border-top:1px solid var(--color-border)">
             <div class="mb-2">${rows.map(r => `
                 <div class="flex items-center justify-between gap-1 mb-1">
                     <span>${esc(r.email)}</span>
@@ -795,27 +811,77 @@ function openAccessModal(docId) {
             </div>
             <hr style="margin:1rem 0;border:none;border-top:1px solid var(--color-border)">
             <p class="mb-1" style="font-weight:600">Invite user</p>
-            <div class="flex gap-1 mb-1">
-                <input type="email" id="invite-email" placeholder="user@example.com" style="flex:1">
-                <select id="invite-level">
-                    <option value="viewer">viewer</option>
-                    <option value="commenter">commenter</option>
-                    <option value="proposer" selected>proposer</option>
-                    <option value="voter">voter</option>
-                    <option value="editor">editor</option>
-                    <option value="admin">admin</option>
+            <div class="flex gap-1 mb-1" style="position:relative">
+                <div style="flex:1;position:relative">
+                    <input type="text" id="invite-search" placeholder="Search by name, email or organisation…" autocomplete="off">
+                    <ul id="invite-results" class="user-search-dropdown" style="display:none"></ul>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="invite-search-btn" title="Search">🔍</button>
+                <select id="invite-level" class="invite-role-select">
+                    ${allowedLevels.map(l => `<option value="${l}"${l === defaultLevel ? ' selected' : ''}>${l}</option>`).join('')}
                 </select>
             </div>
             <p id="invite-err" class="error-msg" style="display:none"></p>
             <button id="invite-submit" class="btn btn-primary btn-sm">Invite</button>
         `;
 
-        document.getElementById('invite-submit').addEventListener('click', async () => {
-            const errEl = document.getElementById('invite-err');
+        document.getElementById('default-access-select').addEventListener('change', async e => {
+            const statusEl = document.getElementById('default-access-status');
+            const val = e.target.value;
+            statusEl.textContent = 'Saving…'; statusEl.style.color = '';
+            try {
+                await api('PATCH', `/documents/${docId}`, { settings: { default_access: val || null } });
+                statusEl.textContent = val ? `Default set to "${val}"` : 'Set to invite only';
+                statusEl.style.color = 'var(--color-success, #16a34a)';
+            } catch (err) {
+                statusEl.textContent = err.message; statusEl.style.color = 'var(--color-error, #dc2626)';
+            }
+        });
+
+        const searchInput = document.getElementById('invite-search');
+        const resultsList = document.getElementById('invite-results');
+        const errEl = document.getElementById('invite-err');
+        let selectedEmail = '';
+
+        function hideResults() { resultsList.style.display = 'none'; resultsList.innerHTML = ''; }
+
+        async function runSearch() {
+            const q = searchInput.value.trim();
+            if (q.length < 3) { hideResults(); return; }
+            try {
+                const { users } = await api('GET', `/auth/search?q=${encodeURIComponent(q)}`);
+                if (!users.length) { hideResults(); return; }
+                resultsList.innerHTML = users.map(u => `
+                    <li class="user-search-result" data-email="${esc(u.email)}">
+                        <span class="user-search-name">${esc(u.display_name || u.email)}</span>
+                        <span class="user-search-meta">${esc([u.email, u.organization].filter(Boolean).join(' · '))}</span>
+                    </li>`).join('');
+                resultsList.style.display = '';
+            } catch { hideResults(); }
+        }
+
+        document.getElementById('invite-search-btn').addEventListener('click', runSearch);
+        searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
+        searchInput.addEventListener('input', () => { selectedEmail = ''; });
+
+        resultsList.addEventListener('click', e => {
+            const li = e.target.closest('.user-search-result');
+            if (!li) return;
+            selectedEmail = li.dataset.email;
+            searchInput.value = li.dataset.email;
+            hideResults();
             errEl.style.display = 'none';
-            const email = document.getElementById('invite-email').value.trim();
+        });
+
+        document.addEventListener('click', e => {
+            if (!e.target.closest('#invite-search') && !e.target.closest('#invite-results')) hideResults();
+        }, { once: false, capture: false });
+
+        document.getElementById('invite-submit').addEventListener('click', async () => {
+            errEl.style.display = 'none';
+            const email = (selectedEmail || searchInput.value).trim();
             const level = document.getElementById('invite-level').value;
-            if (!email) { errEl.textContent = 'Email required'; errEl.style.display = ''; return; }
+            if (!email || !email.includes('@')) { errEl.textContent = 'Select a user from results or enter a valid email address'; errEl.style.display = ''; return; }
             try {
                 await api('POST', `/documents/${docId}/access`, { email, access_level: level });
                 closeModal();
@@ -1275,6 +1341,9 @@ async function viewProfile() {
             <div class="form-group"><label>Email</label><input type="text" value="${esc(state.user.email)}" disabled></div>
             <div class="form-group"><label>Display name</label><input type="text" id="profile-name" value="${esc(state.user.display_name || '')}"></div>
             <div class="form-group"><label>Organization</label><input type="text" id="profile-org" value="${esc(state.user.organization || '')}"></div>
+            <div class="form-group">
+                <label><input type="checkbox" id="profile-nonsearchable" ${state.user.is_non_searchable ? 'checked' : ''}> Non-searchable profile — hide me from user search results</label>
+            </div>
             <p id="profile-err" class="error-msg" style="display:none"></p>
             <p id="profile-ok" class="text-success" style="display:none">Saved!</p>
             <div class="form-actions">
@@ -1292,6 +1361,7 @@ async function viewProfile() {
             const data = await api('PATCH', '/auth/profile', {
                 display_name: document.getElementById('profile-name').value.trim(),
                 organization: document.getElementById('profile-org').value.trim(),
+                is_non_searchable: document.getElementById('profile-nonsearchable').checked ? 1 : 0,
             });
             state.user = data.user;
             updateHeader();

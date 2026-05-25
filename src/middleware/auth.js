@@ -7,7 +7,7 @@ function optionalAuth(req, res, next) {
     if (!sessionId) return next();
 
     const session = getOne(
-        `SELECT s.session_id, u.id as user_id, u.email, u.display_name, u.organization, u.role, u.is_active
+        `SELECT s.session_id, u.id as user_id, u.email, u.display_name, u.organization, u.role, u.is_active, u.is_non_searchable
          FROM sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.session_id = ?
@@ -22,6 +22,7 @@ function optionalAuth(req, res, next) {
             display_name: session.display_name,
             organization: session.organization,
             role: session.role,
+            is_non_searchable: session.is_non_searchable,
         };
         req.sessionId = sessionId;
     }

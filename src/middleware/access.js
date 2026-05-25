@@ -40,10 +40,23 @@ function requireDocumentAccess(minLevel) {
         );
 
         if (access && access.blocked) return res.status(403).json({ error: 'You are blocked from this document' });
-        if (!access) return res.status(403).json({ error: 'Access denied' });
+
+        const minIdx = ACCESS_LEVELS.indexOf(minLevel);
+
+        if (!access) {
+            const defaultLevel = settings.default_access;
+            if (!defaultLevel || !ACCESS_LEVELS.includes(defaultLevel)) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
+            const defaultIdx = ACCESS_LEVELS.indexOf(defaultLevel);
+            if (defaultIdx < minIdx) return res.status(403).json({ error: 'Insufficient access level' });
+            req.document = doc;
+            req.documentSettings = settings;
+            req.userAccessLevel = defaultLevel;
+            return next();
+        }
 
         const userIdx = ACCESS_LEVELS.indexOf(access.access_level);
-        const minIdx = ACCESS_LEVELS.indexOf(minLevel);
         if (userIdx < minIdx) return res.status(403).json({ error: 'Insufficient access level' });
 
         req.document = doc;
