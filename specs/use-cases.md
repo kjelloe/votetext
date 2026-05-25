@@ -110,23 +110,30 @@ Each `<span class="line-text">` carries `data-char-start` and `data-char-end` (a
 ### Proposal card contents
 
 Each card in the sidebar shows:
-- **#N** — sequential proposal number within the document (assigned client-side, ordered by creation)
+- **#N** — sequential proposal number within the document (assigned client-side by creation order, i.e. `id` ascending)
 - **Title** (or operation + char offset if untitled)
 - **Status badge · lines X–Y · by [Author]** — line range is resolved server-side via correlated subqueries on `document_lines`; author name has a dotted underline with a tooltip showing `Display Name · Organisation`
 - **Vote tallies** (▲ for / ▼ against / ◆ abstain)
 
-### Hover — proposal on the current page
+### Card ordering
 
-When the user hovers a proposal card whose char range overlaps any line on the current page:
-- All matching `.line-text` spans receive a blue highlight outline and tint.
-- Highlight is removed when the cursor leaves the card boundary.
+Cards are displayed in **document position order** (`char_start ASC, created_at ASC`). Overlapping proposals — those whose character ranges intersect — appear adjacent to each other in the sidebar, matching the order a reader encounters them in the text.
 
-### Hover — proposal on a different page
+### Hover behaviour
 
-When the user hovers a proposal card whose char range does not overlap the current page:
-- A **↗ p.N** link appears in the lower-right of the card footer (same row as the vote tallies).
-- Clicking the link navigates to page N and scrolls the first line of the proposal into the centre of the viewport (`scrollIntoView({ behavior: 'smooth', block: 'center' })`).
-- The link disappears when the cursor leaves the card.
+When the user hovers any proposal card:
+
+1. **If the proposal's char range overlaps the current page** — all matching `.line-text` spans receive a blue highlight outline and tint. Highlight is removed when the cursor leaves the card boundary.
+2. **Always** — a **↗ p.N** goto-link appears in the lower-right of the card footer.
+   - Clicking navigates to page N (skipping the network fetch if already on that page) and scrolls the first line of the proposal to the centre of the viewport (`scrollIntoView({ behavior: 'smooth', block: 'center' })`).
+   - The link disappears when the cursor leaves the card.
+3. **If the proposal overlaps other proposals** — an **⊕ #N, #M** overlap indicator appears to the left of the goto-link.
+   - Calculated client-side from char range intersections across all variants in the document.
+   - The indicator disappears when the cursor leaves the card.
+
+### Overlap group highlight
+
+Clicking the **⊕** overlap indicator toggles an amber highlight on all cards in the overlap group (the current card plus every card it overlaps). The highlight persists across page navigation since all cards remain in the sidebar DOM. Clicking the indicator again (or clicking any indicator in the group) clears the highlight. Only one overlap group can be highlighted at a time — opening a new group automatically clears the previous one.
 
 ---
 

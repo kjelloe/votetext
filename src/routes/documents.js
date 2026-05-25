@@ -220,7 +220,7 @@ router.get('/:id/variants', (req, res, next) => {
                 (SELECT MAX(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_end
              FROM variants v JOIN users u ON u.id = v.proposed_by
              WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn'
-             ORDER BY v.created_at DESC`,
+             ORDER BY v.char_start ASC, v.created_at ASC`,
             [doc.id]
         );
         res.json({ variants });

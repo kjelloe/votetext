@@ -416,6 +416,19 @@ async function viewDocument(docId) {
     const rawVariants = variantData.variants || [];
     const idOrder = Object.fromEntries([...rawVariants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
     const variants = rawVariants.map(v => ({ ...v, proposal_num: idOrder[v.id] }));
+
+    // Build overlap map: variantId → [{id, num}] for all pairs whose char ranges intersect
+    const overlapMap = {};
+    for (let i = 0; i < variants.length; i++) {
+        const a = variants[i];
+        for (let j = i + 1; j < variants.length; j++) {
+            const b = variants[j];
+            if (a.char_start < b.char_end && a.char_end > b.char_start) {
+                (overlapMap[a.id] = overlapMap[a.id] || []).push({ id: b.id, num: b.proposal_num });
+                (overlapMap[b.id] = overlapMap[b.id] || []).push({ id: a.id, num: a.proposal_num });
+            }
+        }
+    }
     state.docCache[docId] = doc;
 
     let currentPage = parseInt(new URLSearchParams(location.hash.split('?')[1] || '').get('page') || '1');
@@ -476,7 +489,7 @@ async function viewDocument(docId) {
         </div>
         <div class="sidebar-body" id="variants-list">
             ${variants.length === 0 ? '<p class="text-muted">No proposals yet.</p>' :
-                variants.map(v => renderVariantCard(v)).join('')}
+                variants.map(v => renderVariantCard(v, overlapMap[v.id] || [])).join('')}
         </div>
     `;
 
@@ -488,6 +501,17 @@ async function viewDocument(docId) {
     const variantsList = wrap.querySelector('#variants-list');
     if (variantsList) {
         variantsList.addEventListener('click', async e => {
+            const overlapBtn = e.target.closest('.overlap-indicator');
+            if (overlapBtn) {
+                e.stopPropagation();
+                const card = overlapBtn.closest('.variant-card');
+                const ids = (overlapBtn.dataset.overlapIds || '').split(',').filter(Boolean);
+                const groupCards = [card, ...ids.map(id => variantsList.querySelector(`.variant-card[data-id="${id}"]`)).filter(Boolean)];
+                const wasHighlighted = card.classList.contains('overlap-highlight');
+                variantsList.querySelectorAll('.overlap-highlight').forEach(c => c.classList.remove('overlap-highlight'));
+                if (!wasHighlighted) groupCards.forEach(c => c.classList.add('overlap-highlight'));
+                return;
+            }
             const link = e.target.closest('.goto-link[data-page]');
             if (link) {
                 e.stopPropagation();
@@ -512,14 +536,15 @@ async function viewDocument(docId) {
                     const cs = parseInt(span.dataset.charStart), ce = parseInt(span.dataset.charEnd);
                     if (cs < charEnd && ce > charStart) span.classList.add('hover-highlight');
                 });
-            } else {
-                const lineStart = parseInt(card.dataset.lineStart);
-                if (!isNaN(lineStart)) {
-                    const targetPage = Math.max(1, Math.ceil(lineStart / linesPerPage));
-                    const gotoLink = card.querySelector('.goto-link');
-                    if (gotoLink) { gotoLink.textContent = `↗ p.${targetPage}`; gotoLink.dataset.page = targetPage; gotoLink.style.display = ''; }
-                }
             }
+            const lineStart = parseInt(card.dataset.lineStart);
+            if (!isNaN(lineStart)) {
+                const targetPage = Math.max(1, Math.ceil(lineStart / linesPerPage));
+                const gotoLink = card.querySelector('.goto-link');
+                if (gotoLink) { gotoLink.textContent = `↗ p.${targetPage}`; gotoLink.dataset.page = targetPage; gotoLink.style.display = ''; }
+            }
+            const overlapIndicator = card.querySelector('.overlap-indicator');
+            if (overlapIndicator) overlapIndicator.style.display = '';
         });
 
         variantsList.addEventListener('mouseout', e => {
@@ -528,6 +553,8 @@ async function viewDocument(docId) {
             textPanel.querySelector('#doc-lines-container').querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
             const gotoLink = card.querySelector('.goto-link');
             if (gotoLink) { gotoLink.style.display = 'none'; delete gotoLink.dataset.page; }
+            const overlapIndicator = card.querySelector('.overlap-indicator');
+            if (overlapIndicator) overlapIndicator.style.display = 'none';
         });
     }
 
@@ -542,13 +569,15 @@ async function viewDocument(docId) {
 
     async function navigatePage(page, scrollToLine) {
         page = Math.max(1, Math.min(doc.total_pages, page));
-        currentPage = page;
-        const ld = await api('GET', `/documents/${docId}/lines?page=${page}`);
-        state.docLines[docId][page] = ld.lines;
         const lc = textPanel.querySelector('#doc-lines-container');
-        lc.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
-        renderLines(lc, ld.lines, variants);
-        renderPagination(paginationEl, page, doc.total_pages, docId);
+        if (page !== currentPage) {
+            currentPage = page;
+            const ld = await api('GET', `/documents/${docId}/lines?page=${page}`);
+            state.docLines[docId][page] = ld.lines;
+            lc.querySelectorAll('.hover-highlight').forEach(el => el.classList.remove('hover-highlight'));
+            renderLines(lc, ld.lines, variants);
+            renderPagination(paginationEl, page, doc.total_pages, docId);
+        }
         if (scrollToLine) {
             const target = lc.querySelector(`.doc-line[data-line-num="${scrollToLine}"]`);
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -643,7 +672,7 @@ function renderPagination(container, currentPage, totalPages, docId) {
     `;
 }
 
-function renderVariantCard(v) {
+function renderVariantCard(v, overlaps = []) {
     const numPrefix = v.proposal_num ? `<span class="variant-num">#${esc(v.proposal_num)}</span> ` : '';
     const lineRange = v.line_start != null
         ? (v.line_start === v.line_end ? `line ${esc(v.line_start)}` : `lines ${esc(v.line_start)}–${esc(v.line_end)}`)
@@ -651,6 +680,10 @@ function renderVariantCard(v) {
     const authorTip = esc([v.proposer_name, v.proposer_org].filter(Boolean).join(' · '));
     const author = `<span class="author-tip" title="${authorTip}">by ${esc(v.proposer_name)}</span>`;
     const meta = [statusBadge(v.status), lineRange, author, timeAgo(v.created_at)].filter(Boolean).join(' · ');
+    const overlapNums = overlaps.map(o => `#${o.num}`).join(', ');
+    const overlapIndicator = overlaps.length
+        ? `<span class="overlap-indicator" style="display:none" data-overlap-ids="${esc(overlaps.map(o => o.id).join(','))}" title="Overlaps with ${esc(overlapNums)}">⊕ ${esc(overlapNums)}</span>`
+        : '';
     return `
         <div class="variant-card" data-id="${esc(v.id)}" data-char-start="${esc(v.char_start)}" data-char-end="${esc(v.char_end)}" data-line-start="${esc(v.line_start ?? '')}">
             <div class="variant-card-title">${numPrefix}${esc(v.title) || esc(v.operation) + ' at ' + esc(v.char_start)}</div>
@@ -661,7 +694,10 @@ function renderVariantCard(v) {
                     <span class="vote-mini-against">▼ ${esc(v.votes_against)}</span>
                     <span class="vote-mini-abstain">◆ ${esc(v.votes_abstain)}</span>
                 </div>
-                <a class="goto-link" style="display:none" title="Go to page"></a>
+                <div class="card-footer-right">
+                    ${overlapIndicator}
+                    <a class="goto-link" style="display:none" title="Go to page"></a>
+                </div>
             </div>
         </div>`;
 }

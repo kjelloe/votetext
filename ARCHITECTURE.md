@@ -283,16 +283,17 @@ Single HTML page (`public/index.html`) with hash-based routing:
 
 ### Proposals sidebar
 
-The sidebar always shows **all** variants for the document (not filtered by page). Each card carries `data-char-start`, `data-char-end`, and `data-line-start` attributes. A `mouseover`/`mouseout` delegation listener on the list:
+The sidebar always shows **all** variants for the document (not filtered by page). Cards are ordered by `char_start ASC, created_at ASC` so overlapping proposals appear adjacent, matching document reading order. Each card carries `data-char-start`, `data-char-end`, and `data-line-start` attributes. A `mouseover`/`mouseout` delegation listener on the list:
 
 - **On-page variant** (char range overlaps `state.docLines[docId][currentPage]`): adds `.hover-highlight` to matching `.line-text` spans (blue outline + tint); removed on leave.
-- **Off-page variant**: shows a `↗ p.N` goto-link in the card footer; clicking it calls `navigatePage(N, lineStart)` which fetches the page and calls `scrollIntoView({ behavior: 'smooth', block: 'center' })` on the target `.doc-line[data-line-num]` element.
+- **All variants on hover**: shows a `↗ p.N` goto-link in the card footer. Clicking calls `navigatePage(N, lineStart)` — if already on page N the API fetch is skipped and only the scroll is performed; otherwise the page is fetched, rendered, then scrolled via `scrollIntoView({ behavior: 'smooth', block: 'center' })` on the target `.doc-line[data-line-num]`.
+- **Overlapping variants on hover**: shows a `⊕ #N, #M` overlap indicator to the left of the goto-link. Overlaps are computed client-side with an O(n²) char-range intersection pass after variants load and stored in `overlapMap: { id → [{id, num}] }`. Clicking the indicator toggles `.overlap-highlight` (amber border + cream background) on all cards in the overlap group; clicking again or opening a different group clears it.
 
 `GET /api/documents/:id/variants` enriches each row with:
 - `proposer_org` (joined from `users`)
 - `line_start` / `line_end` — correlated `MIN`/`MAX` subqueries on `document_lines` matching the variant's char range
 
-Proposal numbers (`#1`, `#2` …) are assigned client-side: variants are sorted by `id` ascending and numbered sequentially.
+Proposal numbers (`#1`, `#2` …) are assigned client-side in creation order (`id` ascending) and are stable regardless of document-position sort.
 
 ### Text selection → variant proposal
 

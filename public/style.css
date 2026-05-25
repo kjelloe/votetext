@@ -530,6 +530,7 @@ textarea { resize: vertical; min-height: 120px; }
 .variant-num { font-size: 0.75rem; font-weight: 600; color: var(--color-text-muted); }
 .author-tip { cursor: default; border-bottom: 1px dotted var(--color-text-muted); }
 .variant-card-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 0.25rem; }
+.card-footer-right { display: flex; align-items: center; gap: 0.5rem; }
 .goto-link {
     font-size: 0.75rem;
     color: var(--color-primary);
@@ -538,6 +539,18 @@ textarea { resize: vertical; min-height: 120px; }
     white-space: nowrap;
 }
 .goto-link:hover { text-decoration: underline; }
+.overlap-indicator {
+    font-size: 0.7rem;
+    color: #b45309;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.overlap-indicator:hover { text-decoration: underline; }
+.variant-card.overlap-highlight {
+    border-color: #d97706;
+    background: #fffbeb;
+    box-shadow: 0 0 0 2px #fde68a;
+}
 .line-text.hover-highlight {
     background: rgba(37, 99, 235, 0.18);
     outline: 1px solid var(--color-primary);

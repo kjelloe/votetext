@@ -281,6 +281,11 @@ test('GET /documents/:id/variants — lists all variants → 200', async () => {
     assert.ok('line_start' in v, 'line_start field present');
     assert.ok('line_end' in v, 'line_end field present');
     assert.ok(v.line_start >= 1, 'line_start is a valid line number');
+    // variants must be returned in document position order
+    const charStarts = r.data.variants.map(x => x.char_start);
+    for (let i = 1; i < charStarts.length; i++) {
+        assert.ok(charStarts[i] >= charStarts[i - 1], 'variants ordered by char_start ASC');
+    }
 });
 
 test('GET /variants/:id — → 200 with proposer name', async () => {
