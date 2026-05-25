@@ -173,6 +173,10 @@ When the invited email has no prior account, an invitation email is sent via Res
 - Plain text + minimal HTML, no images, no tracking
 - Email is fire-and-forget — a send failure does not roll back the access grant
 
+### Remove user access
+
+Each row in the access list has a **Remove** button. Clicking it replaces the button inline with **OK** (red) and **Cancel** — no browser confirm dialog. Clicking OK calls `DELETE /api/documents/:id/access/:userId` and refreshes the list; Cancel restores the Remove button. This allows multiple removals in quick succession without repeated native prompts.
+
 ### Role cap
 
 An inviter can never assign a level higher than their own. The role dropdown only shows permitted levels; the backend enforces the cap with 403.

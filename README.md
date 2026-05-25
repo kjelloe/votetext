@@ -267,7 +267,7 @@ sqlite3 data/votetext.db "SELECT * FROM users;"
 
 #### Dev email
 
-No email account is needed for local development. When `NODE_ENV` is not `production`, email failures are non-fatal — the OTP code is saved to the database and printed to the console (`console.warn`). Copy it from the terminal to log in.
+No email account is needed for local development. In `development` mode, the OTP code and invite details are always printed to the console via `console.debug` before the send attempt — copy the code from the terminal to log in. Send failures are non-fatal and logged. In `test` mode (`npm test`), email sending is skipped entirely; tests read OTPs directly from the database.
 
 ---
 

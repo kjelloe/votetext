@@ -806,7 +806,7 @@ function openAccessModal(docId) {
                 <div class="flex items-center justify-between gap-1 mb-1">
                     <span>${esc(r.email)}</span>
                     <span class="text-muted">${esc(r.access_level)}</span>
-                    <button class="btn btn-ghost btn-sm" data-remove="${esc(r.user_id)}">Remove</button>
+                    <span class="row-actions"><button class="btn btn-ghost btn-sm" data-remove="${esc(r.user_id)}">Remove</button></span>
                 </div>`).join('') || '<p class="text-muted">No explicit access records.</p>'}
             </div>
             <hr style="margin:1rem 0;border:none;border-top:1px solid var(--color-border)">
@@ -891,13 +891,28 @@ function openAccessModal(docId) {
 
         document.getElementById('modal-content').addEventListener('click', async e => {
             const removeBtn = e.target.closest('button[data-remove]');
-            if (!removeBtn) return;
-            if (!confirm('Remove this user\'s access?')) return;
-            try {
-                await api('DELETE', `/documents/${docId}/access/${removeBtn.dataset.remove}`);
-                closeModal();
-                openAccessModal(docId);
-            } catch (err) { alert(err.message); }
+            if (removeBtn) {
+                const actions = removeBtn.closest('.row-actions');
+                const userId = removeBtn.dataset.remove;
+                actions.innerHTML =
+                    `<button class="btn btn-danger btn-sm" data-confirm-remove="${esc(userId)}">OK</button>` +
+                    `<button class="btn btn-ghost btn-sm" data-cancel-remove="${esc(userId)}">Cancel</button>`;
+                return;
+            }
+            const cancelBtn = e.target.closest('button[data-cancel-remove]');
+            if (cancelBtn) {
+                const actions = cancelBtn.closest('.row-actions');
+                actions.innerHTML = `<button class="btn btn-ghost btn-sm" data-remove="${esc(cancelBtn.dataset.cancelRemove)}">Remove</button>`;
+                return;
+            }
+            const confirmBtn = e.target.closest('button[data-confirm-remove]');
+            if (confirmBtn) {
+                try {
+                    await api('DELETE', `/documents/${docId}/access/${confirmBtn.dataset.confirmRemove}`);
+                    closeModal();
+                    openAccessModal(docId);
+                } catch (err) { alert(err.message); }
+            }
         });
     });
 }

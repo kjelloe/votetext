@@ -345,7 +345,17 @@ certbot → TLS via Let's Encrypt
 
 SQLite backups via `sqlite3 data/votetext.db ".backup /backup/votetext-$(date +%F).db"` — safe with WAL mode active.
 
-Email is sent via the **Resend SDK** (`resend` npm package, CJS-compatible — loaded with `require('resend')`). Configure `RESEND_API_KEY`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME` in `.env`. Domain `kjell.solutions` is verified in Resend (eu-west-1). In non-production mode, email failures are non-fatal — the OTP is logged to the console.
+Email is sent via the **Resend SDK** (`resend` npm package, CJS-compatible — loaded with `require('resend')`). Configure `RESEND_API_KEY`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME` in `.env`. Domain `kjell.solutions` is verified in Resend (eu-west-1).
+
+Email behaviour by environment:
+
+| `NODE_ENV` | OTP email | Invite email |
+|------------|-----------|--------------|
+| `production` | Sent; failure throws and returns 500 | Sent fire-and-forget; failure logged |
+| `development` (default) | OTP logged via `console.debug` before send; send failure is non-fatal and logged | Invite details logged via `console.debug` before send; send failure logged |
+| `test` | Send skipped entirely; OTP logged via `console.warn` | Send skipped entirely; logged via `console.warn` |
+
+The `test` skip prevents real Resend API calls during `npm test`. Tests read OTPs directly from the database.
 
 ---
 
