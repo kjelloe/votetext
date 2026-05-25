@@ -358,18 +358,25 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, re
                 `<p>${inviterName} has invited you to participate in <strong>${docTitle}</strong> as a <strong>${access_level}</strong>.</p>` +
                 `<p>Sign in with this email address (${normalizedEmail}) at:<br><a href="${appUrl}">${appUrl}</a></p>` +
                 `<p style="color:#6b7280;font-size:0.875em">If you were not expecting this, you can safely ignore this email.</p>`;
-            console.log(`[invite] Sending to=${normalizedEmail} from="${from}" subject="${subject}" key=${process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.slice(0, 8) + '…' : 'MISSING'}`);
-            resend.emails.send({ from, to: normalizedEmail, subject, text: plainText, html: htmlBody })
-                .then(({ data, error: sendError }) => {
-                    if (sendError) {
-                        console.warn('[invite] Resend error:', JSON.stringify(sendError));
-                    } else {
-                        console.log('[invite] Sent OK — id:', data && data.id);
-                    }
-                })
-                .catch(err => {
-                    console.warn('[invite] Send threw:', err.message || err);
-                });
+            if (process.env.NODE_ENV === 'test') {
+                console.warn(`[test] Invite email skipped — to=${normalizedEmail} role=${access_level}`);
+            } else {
+                if (process.env.NODE_ENV !== 'production') {
+                    console.debug(`[dev] Invite to=${normalizedEmail} role=${access_level} doc="${docTitle}"`);
+                }
+                console.log(`[invite] Sending to=${normalizedEmail} from="${from}" subject="${subject}" key=${process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.slice(0, 8) + '…' : 'MISSING'}`);
+                resend.emails.send({ from, to: normalizedEmail, subject, text: plainText, html: htmlBody })
+                    .then(({ data, error: sendError }) => {
+                        if (sendError) {
+                            console.warn('[invite] Resend error:', JSON.stringify(sendError));
+                        } else {
+                            console.log('[invite] Sent OK — id:', data && data.id);
+                        }
+                    })
+                    .catch(err => {
+                        console.warn('[invite] Send threw:', err.message || err);
+                    });
+            }
         }
 
         res.status(201).json({ message: 'Access granted', user_id: user.id });

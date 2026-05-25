@@ -41,20 +41,27 @@ router.post('/request-otp', async (req, res, next) => {
 
         run('INSERT INTO otp_codes (email, code, expires_at) VALUES (?, ?, ?)', [normalizedEmail, code, expiresAt]);
 
-        try {
-            const expMins = process.env.OTP_EXPIRY_MINUTES || 10;
-            const from = `${process.env.MAIL_FROM_NAME || 'VoteText'} <${process.env.MAIL_FROM_ADDRESS || 'votetext@kjell.solutions'}>`;
-            const { error: sendError } = await resend.emails.send({
-                from,
-                to: normalizedEmail,
-                subject: 'Your VoteText login code',
-                text: `Your login code is: ${code}\n\nExpires in ${expMins} minutes.\n\nIf you didn't request this, ignore this email.`,
-                html: `<p>Your VoteText login code:</p><h2 style="letter-spacing:4px">${code}</h2><p>Expires in ${expMins} minutes.</p>`,
-            });
-            if (sendError) throw sendError;
-        } catch (emailErr) {
-            if (process.env.NODE_ENV === 'production') throw emailErr;
-            console.warn(`[dev] Email failed — OTP for ${normalizedEmail}: ${code}`, emailErr?.message || emailErr);
+        if (process.env.NODE_ENV === 'test') {
+            console.warn(`[test] OTP for ${normalizedEmail}: ${code}`);
+        } else {
+            if (process.env.NODE_ENV !== 'production') {
+                console.debug(`[dev] OTP for ${normalizedEmail}: ${code}`);
+            }
+            try {
+                const expMins = process.env.OTP_EXPIRY_MINUTES || 10;
+                const from = `${process.env.MAIL_FROM_NAME || 'VoteText'} <${process.env.MAIL_FROM_ADDRESS || 'votetext@kjell.solutions'}>`;
+                const { error: sendError } = await resend.emails.send({
+                    from,
+                    to: normalizedEmail,
+                    subject: 'Your VoteText login code',
+                    text: `Your login code is: ${code}\n\nExpires in ${expMins} minutes.\n\nIf you didn't request this, ignore this email.`,
+                    html: `<p>Your VoteText login code:</p><h2 style="letter-spacing:4px">${code}</h2><p>Expires in ${expMins} minutes.</p>`,
+                });
+                if (sendError) throw sendError;
+            } catch (emailErr) {
+                if (process.env.NODE_ENV === 'production') throw emailErr;
+                console.warn(`[dev] Email send failed — OTP for ${normalizedEmail}: ${code}`, emailErr?.message || emailErr);
+            }
         }
 
         res.json({ message: 'Code sent' });
