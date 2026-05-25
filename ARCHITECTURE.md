@@ -160,8 +160,27 @@ Each level includes all permissions of lower levels:
 
 1. Document owner always resolves to `admin`
 2. Anonymous users can access at `viewer` level if `settings.allow_anonymous_view = true`
-3. Blocked users receive 403 regardless of their access level
-4. Users with no explicit access record receive 403
+3. Blocked users (explicit record with `blocked = 1`) receive 403 regardless of default access
+4. Users with an explicit access record use that level; level must meet the route's `minLevel`
+5. Users with **no** explicit record fall back to `settings.default_access` (if set and a valid level); if not set or insufficient, 403
+
+`GET /api/documents/:id` has an equivalent inline check (it does not use `requireDocumentAccess`).
+
+### Default access
+
+`documents.settings.default_access` stores a per-document open-access level (`viewer` / `commenter` / `proposer` / `voter`; `editor` and `admin` cannot be defaults). When set, any authenticated non-blocked user without an explicit access record is granted that effective level. Document admins control this via the Manage Access modal (saved with `PATCH /api/documents/:id`).
+
+### Invite cap
+
+`POST /api/documents/:id/access` enforces that the assigned `access_level` index ≤ the inviter's own level index (`ACCESS_LEVELS` from `src/middleware/access.js`). Returns 403 with a descriptive message if exceeded.
+
+### User searchability
+
+`users.is_non_searchable` (user-controlled via `PATCH /api/auth/profile`) and `users.is_protected` (admin-controlled, no UI yet) exclude users from `GET /api/auth/search`. Both columns default to 0. Excluded users can still be invited by exact email.
+
+### Invite email
+
+When an invited email has no existing account, `POST /api/documents/:id/access` sends a fire-and-forget invitation email via Resend (same SDK as OTP). The email names the inviter, the document, the role, and the app URL (`VOTETEXT_URL` env var). Email failure does not roll back the access grant.
 
 ### Global roles
 
@@ -177,7 +196,9 @@ Routes are grouped by resource and mounted in `server.js`:
 
 ```
 /api/auth/*        → src/routes/auth.js
+                       (includes GET /search — user lookup, excludes non-searchable/protected)
 /api/documents/*   → src/routes/documents.js
+                       (includes GET /:id/text — full reconstructed text for copy/export)
                        (includes /variants, /access, /activity sub-routes)
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)

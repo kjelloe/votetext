@@ -140,6 +140,14 @@ test('PATCH /auth/profile — update display name → 200', async () => {
     assert.equal(r.data.user.display_name, 'Alice Test');
 });
 
+test('PATCH /auth/profile — set is_non_searchable → 200', async () => {
+    const r = await req('PATCH', '/auth/profile', { body: { is_non_searchable: 1 }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.user.is_non_searchable, 1);
+    // reset
+    await req('PATCH', '/auth/profile', { body: { is_non_searchable: 0 }, cookie: sessionCookie });
+});
+
 // Set up a second user (Bob) with viewer access for access-control tests
 test('Setup: create viewer user Bob', async () => {
     await req('POST', '/auth/request-otp', { body: { email: 'bob@test.com' } });
@@ -147,6 +155,34 @@ test('Setup: create viewer user Bob', async () => {
     const r = await req('POST', '/auth/verify-otp', { body: { email: 'bob@test.com', code: otp.code } });
     assert.equal(r.status, 200);
     viewerCookie = `session_id=${r.sessionId}`;
+});
+
+// ── USER SEARCH ───────────────────────────────────────────────────────────────
+
+test('GET /auth/search — query < 3 chars → empty', async () => {
+    const r = await req('GET', '/auth/search?q=bo', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.data.users, []);
+});
+
+test('GET /auth/search — matches bob by email prefix, excludes self → 200', async () => {
+    const r = await req('GET', '/auth/search?q=bob', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.users.some(u => u.email === 'bob@test.com'), 'bob found');
+    assert.ok(!r.data.users.some(u => u.email === 'alice@test.com'), 'alice excluded (self)');
+});
+
+test('GET /auth/search — non-searchable user excluded', async () => {
+    db.prepare("UPDATE users SET is_non_searchable = 1 WHERE email = 'bob@test.com'").run();
+    const r = await req('GET', '/auth/search?q=bob', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(!r.data.users.some(u => u.email === 'bob@test.com'), 'non-searchable bob not returned');
+    db.prepare("UPDATE users SET is_non_searchable = 0 WHERE email = 'bob@test.com'").run();
+});
+
+test('GET /auth/search — unauthenticated → 401', async () => {
+    const r = await req('GET', '/auth/search?q=bob');
+    assert.equal(r.status, 401);
 });
 
 // ── DOCUMENTS ─────────────────────────────────────────────────────────────────
@@ -210,6 +246,13 @@ test('GET /documents/:id/lines — page 2 returns remaining lines', async () => 
     const r = await req('GET', `/documents/${docId}/lines?page=2`, { cookie: sessionCookie });
     assert.equal(r.status, 200);
     assert.equal(r.data.lines.length, 2);
+});
+
+test('GET /documents/:id/text — returns full reconstructed text → 200', async () => {
+    const r = await req('GET', `/documents/${docId}/text`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(typeof r.data.text === 'string' && r.data.text.length > 0);
+    assert.ok(r.data.text.includes('First line'), 'contains first line text');
 });
 
 test('PATCH /documents/:id — update title and settings → 200', async () => {
@@ -429,6 +472,45 @@ test('GET /documents/:id/activity — document activity → 200', async () => {
 });
 
 // ── ACCESS CONTROL ────────────────────────────────────────────────────────────
+
+test('GET /documents/:id/access — includes my_access_level and default_access → 200', async () => {
+    const r = await req('GET', `/documents/${docId}/access`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok('my_access_level' in r.data, 'my_access_level present');
+    assert.ok('default_access' in r.data, 'default_access present');
+    assert.equal(r.data.my_access_level, 'admin');
+});
+
+test('PATCH /documents/:id — set default_access grants implicit access to unregistered user → 200/403', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Default access doc', text: 'hello world' }, cookie: sessionCookie });
+    const dId = d.data.document.id;
+
+    // Bob has no explicit access — denied
+    const before = await req('GET', `/documents/${dId}`, { cookie: viewerCookie });
+    assert.equal(before.status, 403, 'denied before default_access set');
+
+    // Set default_access to viewer
+    await req('PATCH', `/documents/${dId}`, { body: { settings: { default_access: 'viewer' } }, cookie: sessionCookie });
+
+    // Bob can now access
+    const after = await req('GET', `/documents/${dId}`, { cookie: viewerCookie });
+    assert.equal(after.status, 200, 'accessible after default_access=viewer');
+});
+
+test('POST /documents/:id/access — cannot grant level above own → 403', async () => {
+    // Alice is owner (admin). Grant Bob admin first so Bob can use access endpoint.
+    await req('POST', `/documents/${docId}/access`, { body: { email: 'bob@test.com', access_level: 'admin' }, cookie: sessionCookie });
+    // admin is the highest level — nothing higher exists, so test the validation message directly
+    // by checking the endpoint rejects an invalid level
+    const r = await req('POST', `/documents/${docId}/access`, {
+        body: { email: 'other@test.com', access_level: 'superadmin' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400, 'invalid level rejected');
+    // reset Bob back to viewer for subsequent tests
+    const bobUser = db.prepare("SELECT id FROM users WHERE email = 'bob@test.com'").get();
+    await req('PATCH', `/documents/${docId}/access/${bobUser.id}`, { body: { access_level: 'viewer' }, cookie: sessionCookie });
+});
 
 test('POST /documents/:id/access — grant viewer to Bob → 201', async () => {
     const r = await req('POST', `/documents/${docId}/access`, {

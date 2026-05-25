@@ -44,6 +44,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Automatic page/line structuring (configurable lines per page, default 30)
 - Documents support 1–200 pages, 27–60 lines per page
 - Document status lifecycle: `draft → open → voting → resolved → archived`
+- **Copy document** — owner can duplicate a document (same title + " (copy)", same text, no proposals) from the viewer toolbar
 
 #### Variant Proposals
 - Select text in the document viewer to set the target range; character offsets are resolved automatically
@@ -68,6 +69,10 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 
 #### Access Control
 - Per-document access levels: viewer, commenter, proposer, voter, editor, admin
+- **Default access** — set a fallback role (viewer–voter) granted to any signed-in user not explicitly invited; invite-only when unset
+- Invite users by searching name, email, or organisation (3+ chars); non-searchable/protected users excluded from search but invitable by exact email
+- Invitation email sent to new users (fire-and-forget via Resend); names inviter, document, and role
+- Inviters cannot assign a level higher than their own
 - Configurable anonymous/read-only viewing
 - User blocking per document
 - Document owner controls all settings
@@ -82,6 +87,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Passwordless email OTP login
 - Session-based auth with secure cookies
 - OTP rate limiting and lockout protection
+- **Non-searchable profile** — users can opt out of appearing in user search results (profile toggle)
 
 ---
 

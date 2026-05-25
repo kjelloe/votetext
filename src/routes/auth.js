@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const { Router } = require('express');
-const { getOne, run } = require('../db');
+const { getOne, getAll, run } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
 const { Resend } = require('resend');

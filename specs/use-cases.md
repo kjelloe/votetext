@@ -137,8 +137,68 @@ Clicking the **⊕** overlap indicator toggles an amber highlight on all cards i
 
 ---
 
+---
+
+## UC-5: Manage document access
+
+**Actor:** Document owner or admin-level user  
+**Entry point:** Document viewer → Settings sidebar → "Manage access"
+
+### Default access
+
+At the top of the modal a **Default access** selector sets the role granted to any signed-in user who visits the document without being explicitly invited. Valid values: `viewer`, `commenter`, `proposer`, `voter` (not `editor` or `admin` — those must be explicitly invited). Changing the selector saves immediately via `PATCH /api/documents/:id`.
+
+When a user with no explicit access record requests any document endpoint:
+- If `default_access` is set to a valid level, that level is used as the effective access for this request.
+- If not set (invite-only), the request is denied with 403.
+- Explicitly blocked users are always denied regardless of the default.
+
+### Invite user — search flow
+
+1. User types 3+ characters into the search input and presses **Enter** or clicks 🔍.
+2. System calls `GET /api/auth/search?q=…` and shows a dropdown of matching users (by email, display name, or organisation).
+3. Users marked **non-searchable** or **protected** are excluded from results.
+4. User clicks a result — the email fills in and the dropdown closes.
+5. User selects a role from the dropdown (options capped at their own access level) and clicks **Invite**.
+
+### Invite user — exact email
+
+If the intended recipient does not appear in search results (new user or non-searchable), the inviter types a full email address directly and clicks Invite. The system creates a user record if none exists.
+
+### Invite email (new users only)
+
+When the invited email has no prior account, an invitation email is sent via Resend:
+- **Subject:** `You have been invited to "{document name}" on VoteText`
+- **Body:** inviter's name, document name, role, sign-in URL with the invited email address noted, one-line opt-out sentence
+- Plain text + minimal HTML, no images, no tracking
+- Email is fire-and-forget — a send failure does not roll back the access grant
+
+### Role cap
+
+An inviter can never assign a level higher than their own. The role dropdown only shows permitted levels; the backend enforces the cap with 403.
+
+### Non-searchable profile
+
+Users can toggle **Non-searchable profile** in their profile page (`PATCH /api/auth/profile` with `is_non_searchable: 1`). Non-searchable users are excluded from `GET /api/auth/search` results but can still be added by exact email.
+
+---
+
+## UC-6: Copy a document
+
+**Actor:** Document owner  
+**Entry point:** Document viewer → "Copy" button (between Settings and Change status)
+
+1. Owner clicks **Copy**.
+2. Client fetches `GET /api/documents/:id/text` to retrieve the full reconstructed text.
+3. **New Document** modal opens pre-filled with the original title + " (copy)" and the full text; description is blank; lines-per-page matches the source document.
+4. Format detection runs on the pre-filled text (paged/numbered banners appear if applicable).
+5. User edits title/description as needed and clicks **Create document**.
+6. A new `draft` document is created with no proposals, variants, or access records (owner only).
+
+---
+
 ## Planned / future use cases
 
-- **UC-5:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
-- **UC-6:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-7:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-7:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
+- **UC-8:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-9:** Anonymous viewing — public document accessible without login; read-only.

@@ -116,7 +116,8 @@ router.get('/:id', (req, res, next) => {
             if (!settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
         } else if (doc.owner_id !== userId) {
             const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [userId, doc.id]);
-            if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
+            if (access && access.blocked) return res.status(403).json({ error: 'Access denied' });
+            if (!access && !ACCESS_LEVELS.includes(settings.default_access)) return res.status(403).json({ error: 'Access denied' });
         }
 
         res.json({ document: { ...doc, settings } });
