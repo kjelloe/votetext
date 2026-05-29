@@ -300,21 +300,37 @@ Single HTML page (`public/index.html`) with hash-based routing:
 - **`esc(str)`** — HTML-escapes all user-supplied values before inserting into innerHTML
 - **`el(tag, attrs, ...children)`** — creates DOM nodes programmatically for dynamic content
 - **Event delegation** — one listener on a container, not per-item
-- **Minimal client state** — only `state.user`, `state.docLines` (line cache per document), `state.docCache`. Fresh fetch on every view render
+- **Minimal client state** — `state.user`, `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target). Fresh fetch on every view render
 
 ### Proposals sidebar
 
-The sidebar always shows **all** variants for the document (not filtered by page). Cards are ordered by `char_start ASC, created_at ASC` so overlapping proposals appear adjacent, matching document reading order. Each card carries `data-char-start`, `data-char-end`, and `data-line-start` attributes. A `mouseover`/`mouseout` delegation listener on the list:
+Cards are ordered by `char_start ASC, created_at ASC` so overlapping proposals appear adjacent, matching document reading order. Each card carries `data-char-start`, `data-char-end`, and `data-line-start` attributes. A `mouseover`/`mouseout` delegation listener on the list:
 
 - **On-page variant** (char range overlaps `state.docLines[docId][currentPage]`): adds `.hover-highlight` to matching `.line-text` spans (blue outline + tint); removed on leave.
 - **All variants on hover**: shows a `↗ p.N` goto-link in the card footer. Clicking calls `navigatePage(N, lineStart)` — if already on page N the API fetch is skipped and only the scroll is performed; otherwise the page is fetched, rendered, then scrolled via `scrollIntoView({ behavior: 'smooth', block: 'center' })` on the target `.doc-line[data-line-num]`.
 - **Overlapping variants on hover**: shows a `⊕ #N, #M` overlap indicator to the left of the goto-link. Overlaps are computed client-side with an O(n²) char-range intersection pass after variants load and stored in `overlapMap: { id → [{id, num}] }`. Clicking the indicator toggles `.overlap-highlight` (amber border + cream background) on all cards in the overlap group; clicking again or opening a different group clears it.
+
+**Sidebar filter** — two buttons in the header: **All N** (all proposals) and **On-page N** (proposals overlapping the current page). Active filter stored in `state.docFilterMode[docId]`; restored when the user navigates back. `renderVariantList()` is an inner function called after every page navigation and on filter toggle; it updates button labels, styles, and re-renders the list.
 
 `GET /api/documents/:id/variants` enriches each row with:
 - `proposer_org` (joined from `users`)
 - `line_start` / `line_end` — correlated `MIN`/`MAX` subqueries on `document_lines` matching the variant's char range
 
 Proposal numbers (`#1`, `#2` …) are assigned client-side in creation order (`id` ascending) and are stable regardless of document-position sort.
+
+### Proposal detail page (`#/variants/:id`)
+
+`viewVariant` fetches the individual variant, all document variants, comments, and votes in parallel. From the full variants list it derives:
+
+- **Proposal number** (`#N`) — id-ascending order, same as sidebar numbering
+- **Prev / Next** — document-position order (`char_start ASC, created_at ASC`); buttons show `← Prev` / `Next →` with a native `title` tooltip of `#N Title`
+- **Back to document** — stores `state.pendingVariantJump = { docId, page, lineStart }` before navigating; `viewDocument` consumes it at the end and calls `navigatePage(page, lineStart)` to scroll the proposal into view
+
+`GET /api/documents/:id` returns `owner_organization` (joined from `users`) in addition to `owner_name`. Both are shown in the document info sidebar with a dotted-underline tooltip (`Name · Organisation`) matching the proposal author tooltip style.
+
+**Line context preview** — rendered below the diff block for all users. Two helper functions, `renderOriginalPreview(lines, v)` and `renderProposedPreview(lines, v)`, build line-numbered monospace views from the already-cached `state.docLines` entries:
+- Original: affected lines with the selected char range highlighted in red inline
+- Proposed: reconstructed text after applying the operation (insert/replace/delete), changed portion highlighted in green; line numbers start from the first affected line
 
 ### Text selection → variant proposal
 

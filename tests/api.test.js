@@ -226,6 +226,12 @@ test('GET /documents/:id — → 200 with metadata', async () => {
     assert.equal(r.data.document.status, 'draft');
 });
 
+test('GET /documents/:id — includes owner_organization field → 200', async () => {
+    const r = await req('GET', `/documents/${docId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok('owner_organization' in r.data.document, 'owner_organization should be present');
+});
+
 test('GET /documents/:id/lines — page 1 returns lines with correct char offsets', async () => {
     const r = await req('GET', `/documents/${docId}/lines?page=1`, { cookie: sessionCookie });
     assert.equal(r.status, 200);

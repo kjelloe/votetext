@@ -135,7 +135,39 @@ When the user hovers any proposal card:
 
 Clicking the **⊕** overlap indicator toggles an amber highlight on all cards in the overlap group (the current card plus every card it overlaps). The highlight persists across page navigation since all cards remain in the sidebar DOM. Clicking the indicator again (or clicking any indicator in the group) clears the highlight. Only one overlap group can be highlighted at a time — opening a new group automatically clears the previous one.
 
+### Sidebar filter
+
+Two filter buttons appear in the sidebar header next to "Proposals":
+
+- **All N** — shows every proposal for the document (default)
+- **On-page N** — shows only proposals whose char range overlaps the current page; the count updates automatically when the user navigates to a different page
+
+The active filter is highlighted (primary button style); the inactive one is ghost. The selected filter is persisted per document in client state (`state.docFilterMode`) and restored when the user navigates back from a proposal detail page.
+
 ---
+
+## UC-7: View a proposal detail
+
+**Actor:** Any user with at least `viewer` access  
+**Entry point:** Clicking a proposal card in the sidebar, or a "view variant" link in the activity feed
+
+### Page header
+
+- **← Back to document** button (top-left) — navigates back to the document and automatically scrolls to the line where the proposal begins, replicating the goto-link behaviour. The sidebar filter mode is preserved.
+- **← Prev** / **Next →** buttons (top-right) — navigate to the previous or next proposal in **document position order** (same order as the sidebar). Each button shows a native tooltip on hover with the target proposal's number and title, e.g. `#3 Fjern streng skole`. Buttons are omitted when there is no previous/next proposal.
+
+### Proposal title
+
+The page heading shows **Proposal #N** where N is the sequential number from creation order (same as the sidebar `#N`). The variant's title appears as a subtitle line beneath.
+
+### Line context preview
+
+Below the diff block, an **"In context"** section shows the affected document lines with an **Original / Proposed** toggle:
+
+- **Original** (default) — shows the complete affected lines with the selected range highlighted in red, so the reader can see exactly which passage is targeted.
+- **Proposed** — reconstructs the same lines with the change applied: replaced/inserted text highlighted in green, deleted text removed. For multiline replacements the resulting line count may differ from the original; line numbers start from the first affected line.
+
+The preview is shown to all users (not just the author).
 
 ---
 
@@ -203,6 +235,6 @@ Users can toggle **Non-searchable profile** in their profile page (`PATCH /api/a
 
 ## Planned / future use cases
 
-- **UC-7:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
-- **UC-8:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-9:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-8:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
+- **UC-9:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-10:** Anonymous viewing — public document accessible without login; read-only.

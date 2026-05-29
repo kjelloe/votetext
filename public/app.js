@@ -3,8 +3,9 @@
 /* ===== State ===== */
 const state = {
     user: null,
-    docLines: {},   // docId → { page → lines[] }
-    docCache: {},   // docId → document
+    docLines: {},        // docId → { page → lines[] }
+    docCache: {},        // docId → document
+    docFilterMode: {},   // docId → 'all' | 'page'
     pendingVariantJump: null,  // { docId, page, lineStart } — consumed once by viewDocument
 };
 
@@ -487,7 +488,7 @@ async function viewDocument(docId) {
     const linesPerPage = parsedSettings.lines_per_page || 30;
 
     // Variants sidebar — all proposals, filterable by page
-    let varFilterMode = 'all';
+    let varFilterMode = state.docFilterMode[docId] || 'all';
 
     function getPageVariants() {
         const pageLines = state.docLines[docId][currentPage] || [];
@@ -624,8 +625,8 @@ async function viewDocument(docId) {
         }
     }
 
-    varSection.querySelector('#filter-all-btn').addEventListener('click', () => { varFilterMode = 'all'; renderVariantList(); });
-    varSection.querySelector('#filter-page-btn').addEventListener('click', () => { varFilterMode = 'page'; renderVariantList(); });
+    varSection.querySelector('#filter-all-btn').addEventListener('click', () => { varFilterMode = 'all'; state.docFilterMode[docId] = 'all'; renderVariantList(); });
+    varSection.querySelector('#filter-page-btn').addEventListener('click', () => { varFilterMode = 'page'; state.docFilterMode[docId] = 'page'; renderVariantList(); });
 
     paginationEl.addEventListener('click', async e => {
         const btn = e.target.closest('button[data-page]');
