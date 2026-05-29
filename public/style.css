@@ -440,6 +440,35 @@ textarea { resize: vertical; min-height: 120px; }
     flex-direction: column;
     gap: 1.5rem;
 }
+.variant-nav-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.variant-nav-arrows {
+    display: flex;
+    gap: 0.25rem;
+}
+.variant-nav-arrow {
+    font-size: 1.5rem;
+    line-height: 1;
+    padding: 0.3rem 0.7rem;
+    color: var(--color-text-muted);
+}
+.nav-arrow-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    vertical-align: middle;
+}
+.variant-nav-arrow:hover:not(:disabled) {
+    color: var(--color-primary);
+    background: rgba(37, 99, 235, 0.07);
+}
+.proposal-heading {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--color-text);
+}
 .diff-block {
     font-family: var(--font-mono);
     font-size: 0.8125rem;

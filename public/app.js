@@ -5,6 +5,7 @@ const state = {
     user: null,
     docLines: {},   // docId → { page → lines[] }
     docCache: {},   // docId → document
+    pendingVariantJump: null,  // { docId, page, lineStart } — consumed once by viewDocument
 };
 
 /* ===== Utilities ===== */
@@ -646,6 +647,13 @@ async function viewDocument(docId) {
     // Propose button
     const proposeBtn = varSection.querySelector('#propose-btn');
     if (proposeBtn) proposeBtn.addEventListener('click', () => openProposeModal(doc, pendingSelection));
+
+    // Consume back-from-variant scroll target
+    const jump = state.pendingVariantJump;
+    if (jump && String(jump.docId) === String(docId)) {
+        state.pendingVariantJump = null;
+        await navigatePage(jump.page, jump.lineStart);
+    }
 }
 
 function renderLines(container, lines, variants) {
@@ -1006,18 +1014,42 @@ function openProposeModal(doc, selection) {
 
 /* ===== View: Variant detail ===== */
 async function viewVariant(variantId) {
+    variantId = parseInt(variantId);
     const data = await api('GET', `/variants/${variantId}`);
     const v = data.variant;
 
-    // Fetch document for context
-    const docData = await api('GET', `/documents/${v.document_id}`).catch(() => null);
-    const doc = docData && docData.document;
-
-    // Fetch comments and votes
-    const [commentData, voteData] = await Promise.all([
+    // Fetch doc, all doc variants, comments, votes in parallel
+    const [docData, allVariantsData, commentData, voteData] = await Promise.all([
+        api('GET', `/documents/${v.document_id}`).catch(() => null),
+        api('GET', `/documents/${v.document_id}/variants`).catch(() => ({ variants: [] })),
         api('GET', `/variants/${variantId}/comments`).catch(() => ({ comments: [] })),
         api('GET', `/variants/${variantId}/votes`).catch(() => ({ votes: [], tallies: {} })),
     ]);
+
+    const doc = docData && docData.document;
+    const rawVariants = allVariantsData.variants || [];
+
+    // Proposal number: id-ascending order (same as sidebar #N)
+    const idOrder = Object.fromEntries([...rawVariants].sort((a, b) => a.id - b.id).map((vv, i) => [vv.id, i + 1]));
+    const proposalNum = idOrder[variantId];
+
+    // Document-position order (same as sidebar listing) for prev/next
+    const docOrdered = [...rawVariants].sort((a, b) =>
+        a.char_start !== b.char_start ? a.char_start - b.char_start : new Date(a.created_at) - new Date(b.created_at)
+    );
+    const posIdx = docOrdered.findIndex(vv => vv.id === variantId);
+    const prevV = posIdx > 0 ? { ...docOrdered[posIdx - 1], proposal_num: idOrder[docOrdered[posIdx - 1].id] } : null;
+    const nextV = posIdx < docOrdered.length - 1 ? { ...docOrdered[posIdx + 1], proposal_num: idOrder[docOrdered[posIdx + 1].id] } : null;
+
+    // Page + line for back-to-document jump
+    const thisInList = rawVariants.find(vv => vv.id === variantId);
+    const lineStart = thisInList ? thisInList.line_start : null;
+    let parsedSettings = {};
+    try { parsedSettings = doc ? (typeof doc.settings === 'object' ? doc.settings : JSON.parse(doc.settings || '{}')) : {}; } catch {}
+    const linesPerPage = parsedSettings.lines_per_page || 30;
+    const jumpPage = lineStart
+        ? Math.ceil(lineStart / linesPerPage)
+        : Math.max(1, Math.ceil((v.char_start / Math.max((doc && doc.total_chars) || 1, 1)) * ((doc && doc.total_pages) || 1)));
 
     // Get original text from doc lines if available
     let originalText = null;
@@ -1026,13 +1058,10 @@ async function viewVariant(variantId) {
         if (allLines.length > 0) {
             originalText = extractTextRange(allLines, v.char_start, v.char_end);
         } else {
-            // Try fetching relevant pages
-            const linesPerPage = (doc.settings && doc.settings.lines_per_page) || 30;
-            const startPage = Math.max(1, Math.ceil((v.char_start / Math.max(doc.total_chars, 1)) * doc.total_pages));
             try {
-                const ld = await api('GET', `/documents/${v.document_id}/lines?page=${startPage}`);
+                const ld = await api('GET', `/documents/${v.document_id}/lines?page=${jumpPage}`);
                 state.docLines[v.document_id] = state.docLines[v.document_id] || {};
-                state.docLines[v.document_id][startPage] = ld.lines;
+                state.docLines[v.document_id][jumpPage] = ld.lines;
                 originalText = extractTextRange(ld.lines, v.char_start, v.char_end);
             } catch {}
         }
@@ -1043,16 +1072,23 @@ async function viewVariant(variantId) {
 
     const wrap = el('div', { class: 'variant-layout' });
 
-    // Back link + header
+    const prevLabel = prevV ? `#${prevV.proposal_num} ${prevV.title || prevV.operation}` : '';
+    const nextLabel = nextV ? `#${nextV.proposal_num} ${nextV.title || nextV.operation}` : '';
+
     wrap.innerHTML = `
-        <div>
-            ${doc ? `<a href="#/documents/${esc(doc.id)}" class="btn btn-ghost btn-sm">← Back to document</a>` : ''}
+        <div class="variant-nav-row">
+            ${doc ? `<button id="back-to-doc-btn" class="btn btn-ghost btn-sm">← Back to document</button>` : '<span></span>'}
+            <div class="variant-nav-arrows">
+                ${prevV ? `<button class="btn btn-ghost variant-nav-arrow" data-nav-id="${esc(prevV.id)}" title="${esc(prevLabel)}">← <span class="nav-arrow-label">Prev</span></button>` : ''}
+                ${nextV ? `<button class="btn btn-ghost variant-nav-arrow" data-nav-id="${esc(nextV.id)}" title="${esc(nextLabel)}"><span class="nav-arrow-label">Next</span> →</button>` : ''}
+            </div>
         </div>
         <div class="card">
-            <div class="flex justify-between items-center mb-2">
-                <h1 style="font-size:1.25rem;font-weight:700">${esc(v.title) || 'Unnamed variant'}</h1>
+            <div class="flex justify-between items-center mb-1">
+                <h1 class="proposal-heading">Proposal ${proposalNum ? `#${esc(proposalNum)}` : ''}</h1>
                 ${statusBadge(v.status)}
             </div>
+            ${v.title ? `<p style="font-size:1rem;font-weight:600;margin-bottom:0.5rem">${esc(v.title)}</p>` : ''}
             <p class="text-muted mb-2">
                 ${esc(v.operation)} · chars ${esc(v.char_start)}–${esc(v.char_end)} ·
                 proposed by <strong>${esc(v.proposer_name)}</strong> · ${timeAgo(v.created_at)}
@@ -1096,6 +1132,18 @@ async function viewVariant(variantId) {
     `;
 
     setMain(wrap);
+
+    // Back to document — navigate and scroll to this proposal
+    const backBtn = document.getElementById('back-to-doc-btn');
+    if (backBtn) backBtn.addEventListener('click', () => {
+        state.pendingVariantJump = { docId: String(v.document_id), page: jumpPage, lineStart };
+        location.hash = `#/documents/${v.document_id}`;
+    });
+
+    // Prev/next arrows
+    wrap.querySelectorAll('.variant-nav-arrow').forEach(btn => {
+        btn.addEventListener('click', () => { location.hash = `#/variants/${btn.dataset.navId}`; });
+    });
 
     // Vote buttons
     const voteCard = document.getElementById('vote-card');
