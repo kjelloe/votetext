@@ -475,7 +475,7 @@ async function viewDocument(docId) {
         <div class="sidebar-header">Document info</div>
         <div class="sidebar-body">
             <p class="text-muted mb-1">${esc(doc.description) || '<em>No description</em>'}</p>
-            <p class="text-muted">Owner: ${esc(doc.owner_name)}</p>
+            <p class="text-muted">Owner: <span class="author-tip" title="${esc([doc.owner_name, doc.owner_organization].filter(Boolean).join(' · '))}">${esc(doc.owner_name)}</span></p>
             <p class="text-muted">${doc.total_lines} lines · ${doc.total_pages} pages</p>
             ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm mt-2" id="access-btn">Manage access</button>` : ''}
         </div>
@@ -486,22 +486,55 @@ async function viewDocument(docId) {
     try { parsedSettings = typeof doc.settings === 'object' ? doc.settings : JSON.parse(doc.settings || '{}'); } catch {}
     const linesPerPage = parsedSettings.lines_per_page || 30;
 
-    // Variants sidebar — all proposals, not just current page
+    // Variants sidebar — all proposals, filterable by page
+    let varFilterMode = 'all';
+
+    function getPageVariants() {
+        const pageLines = state.docLines[docId][currentPage] || [];
+        if (!pageLines.length) return [];
+        const pageStart = pageLines[0].char_offset_start;
+        const pageEnd = pageLines[pageLines.length - 1].char_offset_end;
+        return variants.filter(v => v.char_start < pageEnd && v.char_end > pageStart);
+    }
+
+    function renderVariantList() {
+        const list = document.getElementById('variants-list');
+        const allBtn = document.getElementById('filter-all-btn');
+        const pageBtn = document.getElementById('filter-page-btn');
+        if (!list) return;
+        const pageVariants = getPageVariants();
+        if (allBtn) {
+            allBtn.textContent = `All ${variants.length}`;
+            allBtn.className = `btn btn-sm ${varFilterMode === 'all' ? 'btn-primary' : 'btn-ghost'}`;
+        }
+        if (pageBtn) {
+            pageBtn.textContent = `On-page ${pageVariants.length}`;
+            pageBtn.className = `btn btn-sm ${varFilterMode === 'page' ? 'btn-primary' : 'btn-ghost'}`;
+        }
+        const displayed = varFilterMode === 'page' ? pageVariants : variants;
+        list.innerHTML = displayed.length === 0
+            ? '<p class="text-muted">No proposals on this page.</p>'
+            : displayed.map(v => renderVariantCard(v, overlapMap[v.id] || [])).join('');
+    }
+
     const varSection = el('div', { class: 'sidebar-section' });
     varSection.innerHTML = `
         <div class="sidebar-header">
-            Proposals <span class="text-muted">(${variants.length})</span>
-            ${state.user ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
+            <span>Proposals</span>
+            <div class="flex gap-1 items-center">
+                <button id="filter-all-btn" class="btn btn-sm btn-primary">All ${variants.length}</button>
+                <button id="filter-page-btn" class="btn btn-sm btn-ghost">On-page 0</button>
+                ${state.user ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
+            </div>
         </div>
-        <div class="sidebar-body" id="variants-list">
-            ${variants.length === 0 ? '<p class="text-muted">No proposals yet.</p>' :
-                variants.map(v => renderVariantCard(v, overlapMap[v.id] || [])).join('')}
-        </div>
+        <div class="sidebar-body" id="variants-list"></div>
     `;
 
     sidebar.append(metaSection, varSection);
     wrap.append(textPanel, sidebar);
     setMain(wrap);
+
+    renderVariantList();
 
     // Events: variant list — click, hover highlight, goto-page
     const variantsList = wrap.querySelector('#variants-list');
@@ -584,11 +617,15 @@ async function viewDocument(docId) {
             renderLines(lc, ld.lines, variants);
             renderPagination(paginationEl, page, doc.total_pages, docId);
         }
+        renderVariantList();
         if (scrollToLine) {
             const target = lc.querySelector(`.doc-line[data-line-num="${scrollToLine}"]`);
             if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     }
+
+    varSection.querySelector('#filter-all-btn').addEventListener('click', () => { varFilterMode = 'all'; renderVariantList(); });
+    varSection.querySelector('#filter-page-btn').addEventListener('click', () => { varFilterMode = 'page'; renderVariantList(); });
 
     paginationEl.addEventListener('click', async e => {
         const btn = e.target.closest('button[data-page]');

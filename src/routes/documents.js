@@ -102,7 +102,7 @@ router.post('/', requireAuth, (req, res, next) => {
 router.get('/:id', (req, res, next) => {
     try {
         const doc = getOne(
-            'SELECT d.*, u.display_name as owner_name FROM documents d JOIN users u ON u.id = d.owner_id WHERE d.id = ? AND d.deleted_at IS NULL',
+            'SELECT d.*, u.display_name as owner_name, u.organization as owner_organization FROM documents d JOIN users u ON u.id = d.owner_id WHERE d.id = ? AND d.deleted_at IS NULL',
             [req.params.id]
         );
         if (!doc) return res.status(404).json({ error: 'Document not found' });
