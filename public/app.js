@@ -1067,6 +1067,10 @@ async function viewVariant(variantId) {
         }
     }
 
+    const affectedLines = Object.values(state.docLines[v.document_id] || {}).flat()
+        .filter(l => l.char_offset_start < v.char_end && l.char_offset_end > v.char_start)
+        .sort((a, b) => a.line_num - b.line_num);
+
     const myVoteRecord = state.user ? voteData.votes.find(vt => vt.user_id === state.user.id) : null;
     const myVote = myVoteRecord != null ? myVoteRecord.vote_value : undefined;
 
@@ -1098,6 +1102,18 @@ async function viewVariant(variantId) {
             <div class="diff-block">
                 ${renderDiff(v, originalText)}
             </div>
+
+            ${affectedLines.length ? `
+            <div class="line-preview-section">
+                <div class="line-preview-header">
+                    <div class="flex gap-1 items-center">
+                        <button id="preview-orig-btn" class="btn btn-primary btn-sm">Original</button>
+                        <button id="preview-prop-btn" class="btn btn-ghost btn-sm">Proposed</button>
+                        <span class="text-muted" style="font-size:0.8125rem">In context</span>
+                    </div>
+                </div>
+                <div id="line-preview-content" class="line-preview-block"></div>
+            </div>` : ''}
 
             ${state.user && v.proposed_by === state.user.id && v.status === 'pending' ? `
                 <div class="flex gap-1 mt-2">
@@ -1132,6 +1148,24 @@ async function viewVariant(variantId) {
     `;
 
     setMain(wrap);
+
+    // Line context preview toggle
+    const previewEl = document.getElementById('line-preview-content');
+    if (previewEl) {
+        const origBtn = document.getElementById('preview-orig-btn');
+        const propBtn = document.getElementById('preview-prop-btn');
+        previewEl.innerHTML = renderOriginalPreview(affectedLines, v);
+        origBtn.addEventListener('click', () => {
+            previewEl.innerHTML = renderOriginalPreview(affectedLines, v);
+            origBtn.className = 'btn btn-primary btn-sm';
+            propBtn.className = 'btn btn-ghost btn-sm';
+        });
+        propBtn.addEventListener('click', () => {
+            previewEl.innerHTML = renderProposedPreview(affectedLines, v);
+            origBtn.className = 'btn btn-ghost btn-sm';
+            propBtn.className = 'btn btn-primary btn-sm';
+        });
+    }
 
     // Back to document — navigate and scroll to this proposal
     const backBtn = document.getElementById('back-to-doc-btn');
@@ -1197,6 +1231,59 @@ async function viewVariant(variantId) {
             location.hash = `#/documents/${v.document_id}`;
         } catch (err) { alert(err.message); }
     });
+}
+
+function renderOriginalPreview(lines, v) {
+    return lines.map(line => {
+        const ls = line.char_offset_start, le = line.char_offset_end;
+        const t = line.original_text;
+        let content;
+        if (v.char_start < le && v.char_end > ls) {
+            const s = Math.max(v.char_start, ls) - ls;
+            const e = Math.min(v.char_end, le) - ls;
+            content = esc(t.substring(0, s)) +
+                `<mark class="preview-del">${esc(t.substring(s, e)) || '​'}</mark>` +
+                esc(t.substring(e));
+        } else {
+            content = esc(t) || '&nbsp;';
+        }
+        return `<div class="preview-line"><span class="preview-lnum">${line.line_num}</span><span class="preview-ltext">${content}</span></div>`;
+    }).join('');
+}
+
+function renderProposedPreview(lines, v) {
+    const blockStart = lines[0].char_offset_start;
+    const originalBlock = lines.map(l => l.original_text).join('\n');
+    const relStart = Math.max(0, v.char_start - blockStart);
+    const relEnd = Math.min(originalBlock.length, v.char_end - blockStart);
+    const newText = v.new_text || '';
+    let proposed;
+    if (v.operation === 'delete') {
+        proposed = originalBlock.substring(0, relStart) + originalBlock.substring(relEnd);
+    } else if (v.operation === 'insert') {
+        proposed = originalBlock.substring(0, relStart) + newText + originalBlock.substring(relStart);
+    } else {
+        proposed = originalBlock.substring(0, relStart) + newText + originalBlock.substring(relEnd);
+    }
+    const hlStart = relStart;
+    const hlEnd = v.operation === 'delete' ? relStart : relStart + newText.length;
+    const startLineNum = lines[0].line_num;
+    let charPos = 0;
+    return proposed.split('\n').map((lineText, i) => {
+        const ls = charPos, le = charPos + lineText.length;
+        charPos += lineText.length + 1;
+        let content;
+        if (hlEnd > hlStart && hlStart < le && hlEnd > ls) {
+            const s = Math.max(hlStart, ls) - ls;
+            const e = Math.min(hlEnd, le) - ls;
+            content = esc(lineText.substring(0, s)) +
+                `<mark class="preview-ins">${esc(lineText.substring(s, e)) || '​'}</mark>` +
+                esc(lineText.substring(e));
+        } else {
+            content = esc(lineText) || '&nbsp;';
+        }
+        return `<div class="preview-line"><span class="preview-lnum">${startLineNum + i}</span><span class="preview-ltext">${content}</span></div>`;
+    }).join('');
 }
 
 function extractTextRange(lines, charStart, charEnd) {
