@@ -1169,7 +1169,7 @@ async function viewVariant(variantId) {
             </div>
             ${v.title ? `<p style="font-size:1rem;font-weight:600;margin-bottom:0.5rem">${esc(v.title)}</p>` : ''}
             <p class="text-muted mb-2">
-                ${esc(v.operation)} · chars ${esc(v.char_start)}–${esc(v.char_end)} ·
+                ${esc(v.operation)} · ${v.operation === 'insert' ? `char ${esc(v.char_start)}` : `chars ${esc(v.char_start)}–${esc(v.char_end)}`} ·
                 proposed by <strong>${esc(v.proposer_name)}</strong> · ${timeAgo(v.created_at)}
             </p>
             ${v.rationale ? `<p style="border-left:3px solid var(--color-border);padding:.5rem .75rem;font-style:italic;margin-bottom:.5rem">${esc(v.rationale)}</p>` : ''}
@@ -1355,7 +1355,7 @@ function renderOriginalPreview(lines, v) {
         const ls = line.char_offset_start, le = line.char_offset_end;
         const t = line.original_text;
         let content;
-        if (v.char_start < le && v.char_end > ls) {
+        if (v.operation !== 'insert' && v.char_start < le && v.char_end > ls) {
             const s = Math.max(v.char_start, ls) - ls;
             const e = Math.min(v.char_end, le) - ls;
             content = esc(t.substring(0, s)) +
