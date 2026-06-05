@@ -299,6 +299,15 @@ function openCreateDocModal(prefill = {}) {
                 <option value="60">60</option>
             </select>
         </div>
+        ${prefill.copyFrom ? `
+        <div class="form-group copy-options-row">
+            <label class="copy-options-label">Copy from source</label>
+            <div class="copy-options">
+                <label><input type="checkbox" id="copy-proposals"> Copy proposals</label>
+                <label id="copy-votes-label" style="opacity:.45"><input type="checkbox" id="copy-votes" disabled> Copy votes</label>
+                <label id="copy-comments-label" style="opacity:.45"><input type="checkbox" id="copy-comments" disabled> Copy comments</label>
+            </div>
+        </div>` : ''}
         <p id="create-doc-err" class="error-msg" style="display:none"></p>
         <div class="form-actions">
             <button id="create-doc-submit" class="btn btn-primary">Create document</button>
@@ -402,6 +411,19 @@ function openCreateDocModal(prefill = {}) {
     if (prefill.text) { textarea.value = prefill.text; runDetect(); }
     if (prefill.linesPerPage) setLpp(prefill.linesPerPage);
 
+    if (prefill.copyFrom) {
+        const proposalsCb = document.getElementById('copy-proposals');
+        const votesCb = document.getElementById('copy-votes');
+        const commentsCb = document.getElementById('copy-comments');
+        proposalsCb.addEventListener('change', () => {
+            votesCb.disabled = !proposalsCb.checked;
+            commentsCb.disabled = !proposalsCb.checked;
+            document.getElementById('copy-votes-label').style.opacity = proposalsCb.checked ? '' : '.45';
+            document.getElementById('copy-comments-label').style.opacity = proposalsCb.checked ? '' : '.45';
+            if (!proposalsCb.checked) { votesCb.checked = false; commentsCb.checked = false; }
+        });
+    }
+
     document.getElementById('create-doc-submit').addEventListener('click', async () => {
         errEl.style.display = 'none';
         const title = document.getElementById('new-doc-title').value.trim();
@@ -425,8 +447,20 @@ function openCreateDocModal(prefill = {}) {
         btn.disabled = true; btn.textContent = 'Creating…';
         try {
             const data = await api('POST', '/documents', { title, text, description, settings: { lines_per_page: linesPerPage } });
+            const newDocId = data.document.id;
+            if (prefill.copyFrom) {
+                const copy_variants = document.getElementById('copy-proposals').checked;
+                const copy_votes    = document.getElementById('copy-votes').checked;
+                const copy_comments = document.getElementById('copy-comments').checked;
+                if (copy_variants || copy_votes || copy_comments) {
+                    btn.textContent = 'Copying data…';
+                    await api('POST', `/documents/${prefill.copyFrom}/copy-data`, {
+                        target_doc_id: newDocId, copy_variants, copy_votes, copy_comments,
+                    });
+                }
+            }
             closeModal();
-            location.hash = `#/documents/${data.document.id}`;
+            location.hash = `#/documents/${newDocId}`;
         } catch (err) {
             errEl.textContent = err.message; errEl.style.display = '';
             btn.disabled = false; btn.textContent = 'Create document';
@@ -696,7 +730,7 @@ async function viewDocument(docId) {
         copyBtn.disabled = true; copyBtn.textContent = 'Loading…';
         try {
             const { text } = await api('GET', `/documents/${docId}/text`);
-            openCreateDocModal({ title: `${doc.title} (copy)`, text, linesPerPage: parsedSettings.lines_per_page });
+            openCreateDocModal({ title: `${doc.title} (copy)`, text, linesPerPage: parsedSettings.lines_per_page, copyFrom: doc.id });
         } finally {
             copyBtn.disabled = false; copyBtn.textContent = 'Copy';
         }

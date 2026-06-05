@@ -222,6 +222,87 @@ router.get('/:id/text', (req, res, next) => {
     }
 });
 
+// POST /api/documents/:id/copy-data — copy variants/votes/comments into a target doc (owner only)
+router.post('/:id/copy-data', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
+    try {
+        const sourceDoc = req.document;
+        const { target_doc_id, copy_variants, copy_votes, copy_comments } = req.body;
+
+        const targetDoc = getOne('SELECT id, owner_id FROM documents WHERE id = ? AND deleted_at IS NULL', [target_doc_id]);
+        if (!targetDoc) return res.status(404).json({ error: 'Target document not found' });
+        if (targetDoc.owner_id !== req.user.id) return res.status(403).json({ error: 'You do not own the target document' });
+
+        const counts = { variants: 0, votes: 0, comments: 0 };
+
+        transaction(() => {
+            if (!copy_variants) return;
+
+            const srcVariants = getAll(
+                "SELECT * FROM variants WHERE document_id = ? AND is_hidden = 0 AND status != 'withdrawn' ORDER BY id",
+                [sourceDoc.id]
+            );
+            const variantMap = {}; // oldId → newId
+
+            for (const v of srcVariants) {
+                const r = run(
+                    'INSERT INTO variants (document_id, proposed_by, char_start, char_end, operation, new_text, title, rationale, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    [targetDoc.id, v.proposed_by, v.char_start, v.char_end, v.operation, v.new_text, v.title, v.rationale, 'pending']
+                );
+                variantMap[v.id] = r.lastInsertRowid;
+                counts.variants++;
+            }
+
+            if (copy_votes) {
+                const srcVotes = getAll(
+                    'SELECT * FROM votes WHERE variant_id IN (SELECT id FROM variants WHERE document_id = ?)',
+                    [sourceDoc.id]
+                );
+                for (const vote of srcVotes) {
+                    const newVId = variantMap[vote.variant_id];
+                    if (!newVId) continue;
+                    run('INSERT OR IGNORE INTO votes (variant_id, user_id, vote_value) VALUES (?, ?, ?)',
+                        [newVId, vote.user_id, vote.vote_value]);
+                    if (vote.vote_value === 1)  run('UPDATE variants SET votes_for     = votes_for     + 1 WHERE id = ?', [newVId]);
+                    if (vote.vote_value === -1) run('UPDATE variants SET votes_against = votes_against + 1 WHERE id = ?', [newVId]);
+                    if (vote.vote_value === 0)  run('UPDATE variants SET votes_abstain = votes_abstain + 1 WHERE id = ?', [newVId]);
+                    counts.votes++;
+                }
+            }
+
+            if (copy_comments) {
+                const srcComments = getAll(
+                    'SELECT * FROM comments WHERE variant_id IN (SELECT id FROM variants WHERE document_id = ?) AND is_hidden = 0 ORDER BY id',
+                    [sourceDoc.id]
+                );
+                const commentMap = {}; // oldId → newId
+                // Top-level first
+                for (const c of srcComments.filter(c => !c.parent_comment_id)) {
+                    const newVId = variantMap[c.variant_id];
+                    if (!newVId) continue;
+                    const r = run('INSERT INTO comments (variant_id, user_id, text) VALUES (?, ?, ?)',
+                        [newVId, c.user_id, c.text]);
+                    commentMap[c.id] = r.lastInsertRowid;
+                    counts.comments++;
+                }
+                // Replies
+                for (const c of srcComments.filter(c => c.parent_comment_id)) {
+                    const newVId = variantMap[c.variant_id];
+                    const newParentId = commentMap[c.parent_comment_id];
+                    if (!newVId || !newParentId) continue;
+                    const r = run('INSERT INTO comments (variant_id, user_id, parent_comment_id, text) VALUES (?, ?, ?, ?)',
+                        [newVId, c.user_id, newParentId, c.text]);
+                    commentMap[c.id] = r.lastInsertRowid;
+                    counts.comments++;
+                }
+            }
+        });
+
+        res.json({ copied: counts });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // GET /api/documents/:id/variants
 router.get('/:id/variants', (req, res, next) => {
     try {
