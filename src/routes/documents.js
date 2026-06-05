@@ -247,7 +247,8 @@ router.get('/:id/variants', (req, res, next) => {
             orange: parseInt(process.env.COMMENT_HEAT_ORANGE || '10'),
             red: parseInt(process.env.COMMENT_HEAT_RED || '25'),
         };
-        res.json({ variants, comment_heat });
+        const top_percent = parseInt(process.env.PROPOSALS_TOP_PERCENT || '10');
+        res.json({ variants, comment_heat, top_percent });
     } catch (err) {
         next(err);
     }

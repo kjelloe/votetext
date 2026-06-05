@@ -444,6 +444,7 @@ async function viewDocument(docId) {
     const doc = docData.document;
     const rawVariants = variantData.variants || [];
     const heatConfig = variantData.comment_heat || { orange: 10, red: 25 };
+    const topPercent = variantData.top_percent || 10;
     const idOrder = Object.fromEntries([...rawVariants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
     const variants = rawVariants.map(v => ({ ...v, proposal_num: idOrder[v.id] }));
 
@@ -522,12 +523,21 @@ async function viewDocument(docId) {
         return variants.filter(v => v.char_start < pageEnd && v.char_end > pageStart);
     }
 
+    function getTopVariants() {
+        const n = Math.max(1, Math.ceil(variants.length * topPercent / 100));
+        return [...variants]
+            .sort((a, b) => (b.votes_for + b.votes_against + b.votes_abstain) - (a.votes_for + a.votes_against + a.votes_abstain))
+            .slice(0, n);
+    }
+
     function renderVariantList() {
         const list = document.getElementById('variants-list');
         const allBtn = document.getElementById('filter-all-btn');
         const pageBtn = document.getElementById('filter-page-btn');
+        const topBtn = document.getElementById('filter-top-btn');
         if (!list) return;
         const pageVariants = getPageVariants();
+        const topVariants = getTopVariants();
         if (allBtn) {
             allBtn.textContent = `All ${variants.length}`;
             allBtn.className = `btn btn-sm ${varFilterMode === 'all' ? 'btn-primary' : 'btn-ghost'}`;
@@ -536,7 +546,11 @@ async function viewDocument(docId) {
             pageBtn.textContent = `On-page ${pageVariants.length}`;
             pageBtn.className = `btn btn-sm ${varFilterMode === 'page' ? 'btn-primary' : 'btn-ghost'}`;
         }
-        const displayed = varFilterMode === 'page' ? pageVariants : variants;
+        if (topBtn) {
+            topBtn.textContent = 'Top';
+            topBtn.className = `btn btn-sm ${varFilterMode === 'top' ? 'btn-primary' : 'btn-ghost'}`;
+        }
+        const displayed = varFilterMode === 'page' ? pageVariants : varFilterMode === 'top' ? topVariants : variants;
         const totalComments = variants.reduce((s, v) => s + (v.comment_count || 0), 0);
         list.innerHTML = displayed.length === 0
             ? '<p class="text-muted">No proposals on this page.</p>'
@@ -548,8 +562,11 @@ async function viewDocument(docId) {
         <div class="sidebar-header">
             <span>Proposals</span>
             <div class="flex gap-1 items-center">
-                <button id="filter-all-btn" class="btn btn-sm btn-primary">All ${variants.length}</button>
-                <button id="filter-page-btn" class="btn btn-sm btn-ghost">On-page 0</button>
+                <div style="display:flex;gap:0.25rem">
+                    <button id="filter-all-btn" class="btn btn-sm btn-primary">All ${variants.length}</button>
+                    <button id="filter-page-btn" class="btn btn-sm btn-ghost">On-page 0</button>
+                    <button id="filter-top-btn" class="btn btn-sm btn-ghost">Top</button>
+                </div>
                 ${state.user ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
             </div>
         </div>
@@ -652,6 +669,7 @@ async function viewDocument(docId) {
 
     varSection.querySelector('#filter-all-btn').addEventListener('click', () => { varFilterMode = 'all'; state.docFilterMode[docId] = 'all'; renderVariantList(); });
     varSection.querySelector('#filter-page-btn').addEventListener('click', () => { varFilterMode = 'page'; state.docFilterMode[docId] = 'page'; renderVariantList(); });
+    varSection.querySelector('#filter-top-btn').addEventListener('click', () => { varFilterMode = 'top'; state.docFilterMode[docId] = 'top'; renderVariantList(); });
 
     paginationEl.addEventListener('click', async e => {
         const btn = e.target.closest('button[data-page]');
