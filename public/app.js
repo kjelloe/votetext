@@ -7,6 +7,8 @@ const state = {
     docCache: {},        // docId → document
     docFilterMode: {},   // docId → 'all' | 'page'
     pendingVariantJump: null,  // { docId, page, lineStart } — consumed once by viewDocument
+    commentSort: 'chrono',     // sort mode for comment thread on variant page
+    commentAuthorId: null,     // user_id of the variant proposer (for Author's filter)
 };
 
 /* ===== Utilities ===== */
@@ -30,6 +32,22 @@ function statusBadge(status) {
     return `<span class="status-badge status-${esc(status)}">${esc(status)}</span>`;
 }
 
+function startCooldown(btn, label, seconds) {
+    let remaining = seconds;
+    btn.disabled = true;
+    btn.textContent = `${label} (${remaining}s)`;
+    const iv = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+            clearInterval(iv);
+            btn.disabled = false;
+            btn.textContent = label;
+        } else {
+            btn.textContent = `${label} (${remaining}s)`;
+        }
+    }, 1000);
+}
+
 async function api(method, path, body = null) {
     const opts = { method, credentials: 'same-origin', headers: {} };
     if (body !== null) {
@@ -39,7 +57,12 @@ async function api(method, path, body = null) {
     const res = await fetch('/api' + path, opts);
     if (res.status === 204) return null;
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+        const err = new Error(data.error || `HTTP ${res.status}`);
+        err.status = res.status;
+        err.data = data;
+        throw err;
+    }
     return data;
 }
 
@@ -1052,7 +1075,11 @@ function openProposeModal(doc, selection) {
             location.hash = `#/variants/${data.variant.id}`;
         } catch (err) {
             errEl.textContent = err.message; errEl.style.display = '';
-            btn.disabled = false; btn.textContent = 'Submit proposal';
+            if (err.status === 429 && err.data && err.data.retry_after) {
+                startCooldown(btn, 'Submit proposal', err.data.retry_after);
+            } else {
+                btn.disabled = false; btn.textContent = 'Submit proposal';
+            }
         }
     });
 }
@@ -1060,8 +1087,11 @@ function openProposeModal(doc, selection) {
 /* ===== View: Variant detail ===== */
 async function viewVariant(variantId) {
     variantId = parseInt(variantId);
+    state.commentSort = 'chrono';
+    state.commentAuthorId = null;
     const data = await api('GET', `/variants/${variantId}`);
     const v = data.variant;
+    state.commentAuthorId = v.user_id;
 
     // Fetch doc, all doc variants, comments, votes in parallel
     const [docData, allVariantsData, commentData, voteData] = await Promise.all([
@@ -1178,8 +1208,14 @@ async function viewVariant(variantId) {
             <div class="sidebar-header" style="margin:-1.25rem -1.25rem 1rem;padding:.875rem 1.25rem;background:var(--color-bg-secondary);border-bottom:1px solid var(--color-border);border-radius:12px 12px 0 0">
                 Comments
             </div>
+            <div class="comment-sort-bar" id="comment-sort-bar">
+                <button id="csort-chrono" class="btn btn-sm btn-primary" data-sort="chrono">Oldest</button>
+                <button id="csort-recent" class="btn btn-sm btn-ghost" data-sort="recent">Newest</button>
+                <button id="csort-replied" class="btn btn-sm btn-ghost" data-sort="replied">Most replied</button>
+                <button id="csort-author" class="btn btn-sm btn-ghost" data-sort="author">Author's</button>
+            </div>
             <div id="comment-thread">
-                ${renderCommentThread(commentData.comments || [], v.id)}
+                ${renderCommentThread(commentData.comments || [], v.id, 'chrono', v.user_id)}
             </div>
             ${state.user ? `
                 <div class="mt-2" id="comment-form">
@@ -1193,6 +1229,30 @@ async function viewVariant(variantId) {
     `;
 
     setMain(wrap);
+
+    // Comment sort buttons
+    const sortBar = document.getElementById('comment-sort-bar');
+    if (sortBar) {
+        let cachedComments = commentData.comments || [];
+        const refreshThread = (comments) => {
+            cachedComments = comments;
+            const thread = document.getElementById('comment-thread');
+            if (thread) {
+                thread.innerHTML = renderCommentThread(cachedComments, variantId, state.commentSort, state.commentAuthorId);
+                wireCommentActions(variantId);
+            }
+            sortBar.querySelectorAll('button[data-sort]').forEach(b => {
+                b.className = `btn btn-sm ${b.dataset.sort === state.commentSort ? 'btn-primary' : 'btn-ghost'}`;
+            });
+        };
+        sortBar.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-sort]');
+            if (!btn) return;
+            state.commentSort = btn.dataset.sort;
+            refreshThread(cachedComments);
+        });
+        sortBar._refreshCommentThread = refreshThread;
+    }
 
     // Line context preview toggle
     const previewEl = document.getElementById('line-preview-content');
@@ -1254,10 +1314,22 @@ async function viewVariant(variantId) {
                 await api('POST', `/variants/${variantId}/comments`, { text });
                 document.getElementById('comment-text').value = '';
                 const cd = await api('GET', `/variants/${variantId}/comments`);
-                document.getElementById('comment-thread').innerHTML = renderCommentThread(cd.comments || [], variantId);
-                wireCommentActions(variantId);
-            } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
-            postBtn.disabled = false;
+                const sb = document.getElementById('comment-sort-bar');
+                if (sb && sb._refreshCommentThread) {
+                    sb._refreshCommentThread(cd.comments || []);
+                } else {
+                    document.getElementById('comment-thread').innerHTML = renderCommentThread(cd.comments || [], variantId, state.commentSort, state.commentAuthorId);
+                    wireCommentActions(variantId);
+                }
+                startCooldown(postBtn, 'Post comment', 5);
+            } catch (err) {
+                errEl.textContent = err.message; errEl.style.display = '';
+                if (err.status === 429 && err.data && err.data.retry_after) {
+                    startCooldown(postBtn, 'Post comment', err.data.retry_after);
+                } else {
+                    postBtn.disabled = false;
+                }
+            }
         });
     }
 
@@ -1372,9 +1444,18 @@ function renderVoteSection(v, myVote) {
         </div>`;
 }
 
-function renderCommentThread(comments, variantId) {
+function renderCommentThread(comments, variantId, sortMode = 'chrono', authorId = null) {
     if (!comments.length) return '<p class="text-muted">No comments yet.</p>';
-    return `<div class="comment-thread">` + comments.map(c => `
+    let top = [...comments];
+    if (sortMode === 'author') {
+        top = top.filter(c => c.user_id === authorId);
+    } else if (sortMode === 'recent') {
+        top.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    } else if (sortMode === 'replied') {
+        top.sort((a, b) => (b.replies || []).length - (a.replies || []).length);
+    }
+    if (!top.length) return '<p class="text-muted">No comments match this filter.</p>';
+    return `<div class="comment-thread">` + top.map(c => `
         <div class="comment" id="comment-${esc(c.id)}">
             <div class="comment-header">
                 <span class="comment-author">${esc(c.author_name)}</span>
@@ -1403,6 +1484,16 @@ function renderCommentThread(comments, variantId) {
 function wireCommentActions(variantId) {
     const thread = document.getElementById('comment-thread');
     if (!thread) return;
+
+    const applyRefresh = (comments) => {
+        const sortBar = document.getElementById('comment-sort-bar');
+        if (sortBar && sortBar._refreshCommentThread) {
+            sortBar._refreshCommentThread(comments);
+        } else {
+            thread.innerHTML = renderCommentThread(comments, variantId, state.commentSort, state.commentAuthorId);
+            wireCommentActions(variantId);
+        }
+    };
 
     thread.addEventListener('click', async e => {
         const replyBtn = e.target.closest('.reply-btn');
@@ -1439,8 +1530,7 @@ function wireCommentActions(variantId) {
             try {
                 await api('POST', `/variants/${variantId}/comments`, { text, parent_comment_id: parseInt(parentId) });
                 const cd = await api('GET', `/variants/${variantId}/comments`);
-                thread.innerHTML = renderCommentThread(cd.comments || [], variantId);
-                wireCommentActions(variantId);
+                applyRefresh(cd.comments || []);
             } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; postReply.disabled = false; }
         }
 
@@ -1450,8 +1540,7 @@ function wireCommentActions(variantId) {
             try {
                 await api('DELETE', `/comments/${deleteBtn.dataset.id}`);
                 const cd = await api('GET', `/variants/${variantId}/comments`);
-                thread.innerHTML = renderCommentThread(cd.comments || [], variantId);
-                wireCommentActions(variantId);
+                applyRefresh(cd.comments || []);
             } catch (err) { alert(err.message); }
         }
     }, { capture: false });

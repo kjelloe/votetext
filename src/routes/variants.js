@@ -188,6 +188,18 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
         const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
         if (!doc || !checkDocAccess(doc, req, 'commenter')) return res.status(403).json({ error: 'Access denied' });
 
+        if (process.env.NODE_ENV !== 'test') {
+            const commentCooldown = parseInt(process.env.COMMENT_COOLDOWN_SECONDS || '5');
+            const lastComment = getOne('SELECT created_at FROM comments WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [req.user.id]);
+            if (lastComment) {
+                const elapsed = (Date.now() - new Date(lastComment.created_at).getTime()) / 1000;
+                if (elapsed < commentCooldown) {
+                    const retryAfter = Math.ceil(commentCooldown - elapsed);
+                    return res.status(429).json({ error: `Please wait ${retryAfter} more second${retryAfter !== 1 ? 's' : ''} before commenting.`, retry_after: retryAfter });
+                }
+            }
+        }
+
         if (parent_comment_id) {
             const parent = getOne('SELECT * FROM comments WHERE id = ?', [parent_comment_id]);
             if (!parent || parent.variant_id !== variant.id) return res.status(422).json({ error: 'Invalid parent comment' });

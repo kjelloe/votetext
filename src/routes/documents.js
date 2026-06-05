@@ -262,6 +262,19 @@ router.post('/:id/variants', requireAuth, requireDocumentAccess('proposer'), (re
         if (doc.status === 'resolved' || doc.status === 'archived') {
             return res.status(422).json({ error: 'Cannot propose on a resolved or archived document' });
         }
+
+        if (process.env.NODE_ENV !== 'test') {
+            const variantCooldown = parseInt(process.env.VARIANT_COOLDOWN_SECONDS || '5');
+            const lastVariant = getOne("SELECT created_at FROM variants WHERE proposed_by = ? ORDER BY created_at DESC LIMIT 1", [req.user.id]);
+            if (lastVariant) {
+                const elapsed = (Date.now() - new Date(lastVariant.created_at).getTime()) / 1000;
+                if (elapsed < variantCooldown) {
+                    const retryAfter = Math.ceil(variantCooldown - elapsed);
+                    return res.status(429).json({ error: `Please wait ${retryAfter} more second${retryAfter !== 1 ? 's' : ''} before submitting a new proposal.`, retry_after: retryAfter });
+                }
+            }
+        }
+
         if (char_start === undefined || char_end === undefined) return res.status(400).json({ error: 'char_start and char_end required' });
         if (char_start < 0 || char_end < char_start) return res.status(400).json({ error: 'Invalid character range' });
         if (char_end > doc.total_chars) return res.status(400).json({ error: 'Range exceeds document length' });

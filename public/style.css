@@ -567,6 +567,7 @@ mark.preview-ins {
 .vote-count-display { font-size: 0.8125rem; color: var(--color-text-muted); font-weight: 600; }
 
 /* Comments */
+.comment-sort-bar { display: flex; gap: 0.375rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
 .comment-thread { display: flex; flex-direction: column; gap: 0.75rem; }
 .comment {
     background: var(--color-surface);
