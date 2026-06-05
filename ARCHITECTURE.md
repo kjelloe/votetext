@@ -221,7 +221,7 @@ All write endpoints (except logout) require a valid session cookie. Read endpoin
 | 404 | Not Found |
 | 409 | Conflict (duplicate, e.g., unique constraint) |
 | 422 | Unprocessable (business rule violation, e.g., invalid status transition) |
-| 429 | Too Many Requests (rate limit) |
+| 429 | Too Many Requests (OTP rate limit, or comment/variant cooldown) |
 | 500 | Internal Server Error |
 
 ---
@@ -300,7 +300,7 @@ Single HTML page (`public/index.html`) with hash-based routing:
 - **`esc(str)`** — HTML-escapes all user-supplied values before inserting into innerHTML
 - **`el(tag, attrs, ...children)`** — creates DOM nodes programmatically for dynamic content
 - **Event delegation** — one listener on a container, not per-item
-- **Minimal client state** — `state.user`, `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target). Fresh fetch on every view render
+- **Minimal client state** — `state.user`, `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page). Fresh fetch on every view render
 
 ### Proposals sidebar
 
@@ -310,11 +310,22 @@ Cards are ordered by `char_start ASC, created_at ASC` so overlapping proposals a
 - **All variants on hover**: shows a `↗ p.N` goto-link in the card footer. Clicking calls `navigatePage(N, lineStart)` — if already on page N the API fetch is skipped and only the scroll is performed; otherwise the page is fetched, rendered, then scrolled via `scrollIntoView({ behavior: 'smooth', block: 'center' })` on the target `.doc-line[data-line-num]`.
 - **Overlapping variants on hover**: shows a `⊕ #N, #M` overlap indicator to the left of the goto-link. Overlaps are computed client-side with an O(n²) char-range intersection pass after variants load and stored in `overlapMap: { id → [{id, num}] }`. Clicking the indicator toggles `.overlap-highlight` (amber border + cream background) on all cards in the overlap group; clicking again or opening a different group clears it.
 
-**Sidebar filter** — two buttons in the header: **All N** (all proposals) and **On-page N** (proposals overlapping the current page). Active filter stored in `state.docFilterMode[docId]`; restored when the user navigates back. `renderVariantList()` is an inner function called after every page navigation and on filter toggle; it updates button labels, styles, and re-renders the list.
+**Sidebar filter** — three buttons in the header: **All N**, **On-page N**, and **Top**. Active filter stored in `state.docFilterMode[docId]`; restored when the user navigates back. `renderVariantList()` is an inner function called after every page navigation and on filter toggle; it updates button labels, styles, and re-renders the list.
+
+- **All N** — all proposals, document-position order
+- **On-page N** — proposals whose char range overlaps the current page
+- **Top** — top `ceil(count × PROPOSALS_TOP_PERCENT / 100)` proposals ranked by total votes (for + against + abstain)
 
 `GET /api/documents/:id/variants` enriches each row with:
 - `proposer_org` (joined from `users`)
 - `line_start` / `line_end` — correlated `MIN`/`MAX` subqueries on `document_lines` matching the variant's char range
+- `comment_count` — correlated `COUNT(*)` of non-hidden comments for the variant
+
+The response also includes two config objects read from env vars:
+- `comment_heat: { orange, red }` — percentage thresholds for comment heatmap colouring (`COMMENT_HEAT_ORANGE`, `COMMENT_HEAT_RED`)
+- `top_percent` — percentage for the Top filter (`PROPOSALS_TOP_PERCENT`)
+
+**Comment count heatmap** — each card shows a 💬 N bubble. `renderVariantCard` computes the proposal's share of total document comments and applies `comment-heat-orange` or `comment-heat-red` CSS classes at the configured thresholds.
 
 Proposal numbers (`#1`, `#2` …) are assigned client-side in creation order (`id` ascending) and are stable regardless of document-position sort.
 
@@ -329,8 +340,12 @@ Proposal numbers (`#1`, `#2` …) are assigned client-side in creation order (`i
 `GET /api/documents/:id` returns `owner_organization` (joined from `users`) in addition to `owner_name`. Both are shown in the document info sidebar with a dotted-underline tooltip (`Name · Organisation`) matching the proposal author tooltip style.
 
 **Line context preview** — rendered below the diff block for all users. Two helper functions, `renderOriginalPreview(lines, v)` and `renderProposedPreview(lines, v)`, build line-numbered monospace views from the already-cached `state.docLines` entries:
-- Original: affected lines with the selected char range highlighted in red inline
+- Original: affected lines with the selected char range highlighted in red inline. For INSERT proposals no highlight is shown — nothing is removed from the original text.
 - Proposed: reconstructed text after applying the operation (insert/replace/delete), changed portion highlighted in green; line numbers start from the first affected line
+
+**Comment sort bar** — above the comment list, four buttons select the top-level thread ordering: **Oldest** (default, chronological), **Newest** (reverse chronological), **Most replied** (by reply count), **Author's** (filter: only threads by the proposal author). Sort mode is stored in `state.commentSort` and resets to `chrono` on each `viewVariant` call. Post/reply/delete mutations route through the sort-aware `_refreshCommentThread` closure attached to the sort bar element.
+
+**Proposal metadata line** — for INSERT proposals the position shows as `char N` (insertion point only); replace/delete show `chars N–M`.
 
 ### Text selection → variant proposal
 
@@ -372,6 +387,17 @@ Email behaviour by environment:
 | `test` | Send skipped entirely; OTP logged via `console.warn` | Send skipped entirely; logged via `console.warn` |
 
 The `test` skip prevents real Resend API calls during `npm test`. Tests read OTPs directly from the database.
+
+### Spam cooldowns
+
+`POST /api/variants/:id/comments` and `POST /api/documents/:id/variants` enforce per-user cooldowns to prevent scripted flooding:
+
+| Env var | Default | Applies to |
+|---------|---------|-----------|
+| `COMMENT_COOLDOWN_SECONDS` | 5 | Posting a comment or reply |
+| `VARIANT_COOLDOWN_SECONDS` | 5 | Submitting a new proposal |
+
+The check queries the user's most recent comment/variant timestamp and returns `429 { error, retry_after }` if within the window. Skipped when `NODE_ENV=test`. The frontend mirrors the cooldown with a live countdown on the submit button after a successful post, and applies `retry_after` seconds from a 429 response.
 
 ---
 

@@ -137,12 +137,23 @@ Clicking the **⊕** overlap indicator toggles an amber highlight on all cards i
 
 ### Sidebar filter
 
-Two filter buttons appear in the sidebar header next to "Proposals":
+Three filter buttons appear in the sidebar header next to "Proposals":
 
 - **All N** — shows every proposal for the document (default)
 - **On-page N** — shows only proposals whose char range overlaps the current page; the count updates automatically when the user navigates to a different page
+- **Top** — shows the top `ceil(count × PROPOSALS_TOP_PERCENT / 100)` proposals (minimum 1) ranked by total votes cast (for + against + abstain combined), highest first
 
-The active filter is highlighted (primary button style); the inactive one is ghost. The selected filter is persisted per document in client state (`state.docFilterMode`) and restored when the user navigates back from a proposal detail page.
+The active filter is highlighted (primary button style); inactive buttons are ghost. The selected filter is persisted per document in client state (`state.docFilterMode`) and restored when the user navigates back from a proposal detail page.
+
+### Comment count heatmap
+
+Each proposal card shows a 💬 N comment count to the right of the vote tallies. The colour signals relative comment activity on this proposal versus the document as a whole:
+
+- **Normal** (muted) — proposal holds < `COMMENT_HEAT_ORANGE`% of total document comments
+- **Orange, bold** — ≥ `COMMENT_HEAT_ORANGE`% (default 10%)
+- **Red, bold** — ≥ `COMMENT_HEAT_RED`% (default 25%)
+
+Both thresholds are system-configurable env vars. Total comment count is computed client-side from the `comment_count` field returned per variant by `GET /api/documents/:id/variants`.
 
 ---
 
@@ -160,11 +171,28 @@ The active filter is highlighted (primary button style); the inactive one is gho
 
 The page heading shows **Proposal #N** where N is the sequential number from creation order (same as the sidebar `#N`). The variant's title appears as a subtitle line beneath.
 
+### Proposal metadata line
+
+Below the heading a metadata line shows: `operation · position · proposed by Name · time ago`.
+
+For **INSERT** proposals the position is shown as `char N` (a single insertion point — there is no range being removed). For **replace** and **delete** the position is `chars N–M`.
+
+### Comment sorting
+
+A row of sort/filter buttons appears above the comment list:
+
+- **Oldest** (default) — chronological order, oldest thread first
+- **Newest** — reverse chronological, newest top-level thread first
+- **Most replied** — top-level threads ordered by reply count, descending
+- **Author's** — shows only comments posted by the proposal's author
+
+Sorting applies to top-level threads only; replies remain nested under their parent. The sort mode resets to **Oldest** each time a new proposal page is loaded.
+
 ### Line context preview
 
 Below the diff block, an **"In context"** section shows the affected document lines with an **Original / Proposed** toggle:
 
-- **Original** (default) — shows the complete affected lines with the selected range highlighted in red, so the reader can see exactly which passage is targeted.
+- **Original** (default) — shows the complete affected lines. For **replace** and **delete** proposals the targeted range is highlighted in red. For **insert** proposals no highlight is shown (nothing is being removed from the original).
 - **Proposed** — reconstructs the same lines with the change applied: replaced/inserted text highlighted in green, deleted text removed. For multiline replacements the resulting line count may differ from the original; line numbers start from the first affected line.
 
 The preview is shown to all users (not just the author).

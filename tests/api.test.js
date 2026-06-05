@@ -933,6 +933,26 @@ test('POST /auth/request-otp — 6th request in window → 429', async () => {
     assert.equal(r.status, 429);
 });
 
+// ── COMMENT / VARIANT COOLDOWN (NODE_ENV=test skips enforcement) ──────────────
+
+test('GET /documents/:id/variants — includes comment_heat and top_percent → 200', async () => {
+    const r = await req('GET', `/documents/${docId}/variants`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.comment_heat, 'comment_heat present');
+    assert.equal(typeof r.data.comment_heat.orange, 'number');
+    assert.equal(typeof r.data.comment_heat.red, 'number');
+    assert.equal(typeof r.data.top_percent, 'number');
+});
+
+test('GET /documents/:id/variants — each variant has comment_count → 200', async () => {
+    const r = await req('GET', `/documents/${docId}/variants`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.variants.length > 0);
+    for (const v of r.data.variants) {
+        assert.ok('comment_count' in v, `variant ${v.id} missing comment_count`);
+    }
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {
