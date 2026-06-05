@@ -420,6 +420,7 @@ async function viewDocument(docId) {
 
     const doc = docData.document;
     const rawVariants = variantData.variants || [];
+    const heatConfig = variantData.comment_heat || { orange: 10, red: 25 };
     const idOrder = Object.fromEntries([...rawVariants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
     const variants = rawVariants.map(v => ({ ...v, proposal_num: idOrder[v.id] }));
 
@@ -513,9 +514,10 @@ async function viewDocument(docId) {
             pageBtn.className = `btn btn-sm ${varFilterMode === 'page' ? 'btn-primary' : 'btn-ghost'}`;
         }
         const displayed = varFilterMode === 'page' ? pageVariants : variants;
+        const totalComments = variants.reduce((s, v) => s + (v.comment_count || 0), 0);
         list.innerHTML = displayed.length === 0
             ? '<p class="text-muted">No proposals on this page.</p>'
-            : displayed.map(v => renderVariantCard(v, overlapMap[v.id] || [])).join('');
+            : displayed.map(v => renderVariantCard(v, overlapMap[v.id] || [], totalComments, heatConfig)).join('');
     }
 
     const varSection = el('div', { class: 'sidebar-section' });
@@ -735,7 +737,7 @@ function renderPagination(container, currentPage, totalPages, docId) {
     `;
 }
 
-function renderVariantCard(v, overlaps = []) {
+function renderVariantCard(v, overlaps = [], totalComments = 0, heatConfig = { orange: 10, red: 25 }) {
     const numPrefix = v.proposal_num ? `<span class="variant-num">#${esc(v.proposal_num)}</span> ` : '';
     const lineRange = v.line_start != null
         ? (v.line_start === v.line_end ? `line ${esc(v.line_start)}` : `lines ${esc(v.line_start)}–${esc(v.line_end)}`)
@@ -747,6 +749,10 @@ function renderVariantCard(v, overlaps = []) {
     const overlapIndicator = overlaps.length
         ? `<span class="overlap-indicator" style="display:none" data-overlap-ids="${esc(overlaps.map(o => o.id).join(','))}" title="Overlaps with ${esc(overlapNums)}">⊕ ${esc(overlapNums)}</span>`
         : '';
+    const cc = v.comment_count || 0;
+    const pct = totalComments > 0 ? (cc / totalComments) * 100 : 0;
+    const heatClass = pct >= heatConfig.red ? 'comment-heat-red' : pct >= heatConfig.orange ? 'comment-heat-orange' : '';
+    const commentBubble = `<span class="comment-bubble ${heatClass}" title="${esc(cc)} comment${cc !== 1 ? 's' : ''}">💬 ${esc(cc)}</span>`;
     return `
         <div class="variant-card" data-id="${esc(v.id)}" data-char-start="${esc(v.char_start)}" data-char-end="${esc(v.char_end)}" data-line-start="${esc(v.line_start ?? '')}">
             <div class="variant-card-title">${numPrefix}${esc(v.title) || esc(v.operation) + ' at ' + esc(v.char_start)}</div>
@@ -756,6 +762,7 @@ function renderVariantCard(v, overlaps = []) {
                     <span class="vote-mini-for">▲ ${esc(v.votes_for)}</span>
                     <span class="vote-mini-against">▼ ${esc(v.votes_against)}</span>
                     <span class="vote-mini-abstain">◆ ${esc(v.votes_abstain)}</span>
+                    ${commentBubble}
                 </div>
                 <div class="card-footer-right">
                     ${overlapIndicator}

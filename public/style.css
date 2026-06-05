@@ -426,10 +426,13 @@ textarea { resize: vertical; min-height: 120px; }
 .variant-card-title { font-weight: 900; font-size: 0.875rem; margin-bottom: 0.25rem; letter-spacing: -0.01em; }
 .variant-card-meta { font-size: 0.75rem; color: var(--color-text-muted); font-weight: 600; }
 
-.vote-mini { display: flex; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.75rem; font-weight: 800; }
+.vote-mini { display: flex; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.75rem; font-weight: 800; align-items: center; }
 .vote-mini-for { color: var(--color-success); }
 .vote-mini-against { color: var(--color-danger); }
 .vote-mini-abstain { color: var(--color-warning); }
+.comment-bubble { font-size: 0.75rem; font-weight: 400; color: var(--color-muted); }
+.comment-bubble.comment-heat-orange { font-weight: 700; color: #d97706; }
+.comment-bubble.comment-heat-red { font-weight: 700; color: #dc2626; }
 
 /* ===== Variant detail ===== */
 .variant-layout {

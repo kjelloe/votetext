@@ -236,13 +236,18 @@ router.get('/:id/variants', (req, res, next) => {
         const variants = getAll(
             `SELECT v.*, u.display_name as proposer_name, u.organization as proposer_org,
                 (SELECT MIN(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_start,
-                (SELECT MAX(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_end
+                (SELECT MAX(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_end,
+                (SELECT COUNT(*) FROM comments c WHERE c.variant_id = v.id AND c.is_hidden = 0) as comment_count
              FROM variants v JOIN users u ON u.id = v.proposed_by
              WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn'
              ORDER BY v.char_start ASC, v.created_at ASC`,
             [doc.id]
         );
-        res.json({ variants });
+        const comment_heat = {
+            orange: parseInt(process.env.COMMENT_HEAT_ORANGE || '10'),
+            red: parseInt(process.env.COMMENT_HEAT_RED || '25'),
+        };
+        res.json({ variants, comment_heat });
     } catch (err) {
         next(err);
     }
