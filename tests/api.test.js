@@ -1209,6 +1209,25 @@ test('POST /documents/:id/status — final_voting → voting (back) → 200', as
     assert.equal(r.data.document.status, 'voting');
 });
 
+// ── GROUP M — Gap Fixes ───────────────────────────────────────────────────────
+
+test('Setup: assign vote_order to conflictVariant2Id for gap-11 test (doc in voting)', async () => {
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/conflict-order`, {
+        body: { vote_order: 2 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.vote_order, 2);
+});
+
+test('PATCH /variants/:id — proposer cannot edit after voting has started → 422', async () => {
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}`, {
+        body: { title: 'Should not be allowed' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
 // ── GROUP L — Final Voting ────────────────────────────────────────────────────
 
 test('Setup: transition votingDocId back to final_voting for final-vote tests', async () => {
@@ -1291,6 +1310,59 @@ test('PATCH /documents/:id/doc-vote — viewer access → 403', async () => {
         cookie: viewerCookie,
     });
     assert.equal(r.status, 403);
+});
+
+// M group continued — these run while votingDocId is still in final_voting
+
+test('POST /variants/:id/vote — blocked during final_voting → 422', async () => {
+    const r = await req('POST', `/variants/${reviewVariantId}/vote`, {
+        body: { vote_value: 1 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('PATCH /review-status — allowed in final_voting and clears vote_order → 200', async () => {
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/review-status`, {
+        body: { status: 'rejected' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.status, 'rejected');
+    assert.equal(r.data.variant.vote_order, null);
+});
+
+test('PATCH /review-status — restore conflictVariant2Id to pending for resolve test', async () => {
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/review-status`, {
+        body: { status: 'pending' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.status, 'pending');
+});
+
+test('Setup: record final tally on pending variant for resolve test', async () => {
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/final-vote`, {
+        body: { yes: 5, no: 2, abstain: 1 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.final_yes, 5);
+});
+
+test('POST /documents/:id/status — final_voting → resolved — processes tallies → 200', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/status`, {
+        body: { status: 'resolved' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'resolved');
+});
+
+test('GET variant after resolve — yes > no → status = approved', async () => {
+    const r = await req('GET', `/variants/${conflictVariant2Id}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.status, 'approved');
 });
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────

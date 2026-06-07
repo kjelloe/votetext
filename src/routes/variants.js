@@ -67,6 +67,10 @@ router.patch('/:id', requireAuth, (req, res, next) => {
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
         if (variant.proposed_by !== req.user.id) return res.status(403).json({ error: 'Not your variant' });
         if (variant.status !== 'pending') return res.status(422).json({ error: 'Can only edit pending variants' });
+        const doc = getOne('SELECT status FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (doc && !['draft', 'open'].includes(doc.status)) {
+            return res.status(422).json({ error: 'Cannot edit proposals after voting has started' });
+        }
 
         const { new_text, title, rationale } = req.body;
         run(
@@ -109,7 +113,9 @@ router.patch('/:id/review-status', requireAuth, (req, res, next) => {
 
         const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
-        if (doc.status !== 'voting') return res.status(422).json({ error: 'Document must be in voting status' });
+        if (doc.status !== 'voting' && doc.status !== 'final_voting') {
+            return res.status(422).json({ error: 'Document must be in voting or final_voting status' });
+        }
 
         const isOwner = doc.owner_id === req.user.id;
         if (!isOwner) {
@@ -119,8 +125,14 @@ router.patch('/:id/review-status', requireAuth, (req, res, next) => {
             if (userIdx < ACCESS_LEVELS.indexOf('editor')) return res.status(403).json({ error: 'Editor or admin access required' });
         }
 
-        run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, variant.id]);
-        logActivity(req.user.id, variant.document_id, variant.id, 'variant_updated', { review_status: status });
+        // Clear conflict ordering when removing a proposal from the vote
+        const clearOrder = ['rejected', 'not_applicable', 'withdrawn'].includes(status);
+        run(
+            `UPDATE variants SET status = ?${clearOrder ? ', vote_order = NULL, parent_variant_id = NULL' : ''}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+            [status, variant.id]
+        );
+        const action = status === 'withdrawn' ? 'variant_withdrawn' : 'variant_updated';
+        logActivity(req.user.id, variant.document_id, variant.id, action, status === 'withdrawn' ? {} : { review_status: status });
         res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
     } catch (err) {
         next(err);
@@ -337,8 +349,8 @@ router.post('/:id/vote', requireAuth, (req, res, next) => {
 
         const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
         if (!doc || !checkDocAccess(doc, req, 'voter')) return res.status(403).json({ error: 'Access denied' });
-        if (doc.status === 'resolved' || doc.status === 'archived') {
-            return res.status(422).json({ error: 'Cannot vote on resolved or archived documents' });
+        if (['final_voting', 'resolved', 'archived'].includes(doc.status)) {
+            return res.status(422).json({ error: 'Cannot vote while document is in final_voting, resolved, or archived state' });
         }
 
         const existing = getOne('SELECT id FROM votes WHERE variant_id = ? AND user_id = ?', [variant.id, req.user.id]);
@@ -365,6 +377,11 @@ router.delete('/:id/vote', requireAuth, (req, res, next) => {
     try {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
+
+        const voteDoc = getOne('SELECT status FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (voteDoc && ['final_voting', 'resolved', 'archived'].includes(voteDoc.status)) {
+            return res.status(422).json({ error: 'Cannot retract vote while document is in final_voting, resolved, or archived state' });
+        }
 
         transaction(() => {
             run('DELETE FROM votes WHERE variant_id = ? AND user_id = ?', [variant.id, req.user.id]);

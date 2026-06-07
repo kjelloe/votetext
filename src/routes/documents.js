@@ -9,6 +9,33 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 const router = Router();
 
+function resolveVariants(documentId) {
+    const voteable = getAll(
+        "SELECT * FROM variants WHERE document_id = ? AND status IN ('pending', 'conflict') AND is_hidden = 0",
+        [documentId]
+    );
+    const roots    = voteable.filter(v => v.parent_variant_id == null);
+    const children = voteable.filter(v => v.parent_variant_id != null);
+    const approvedIds = new Set();
+
+    for (const v of roots) {
+        if (v.final_yes == null && v.final_no == null) continue;
+        const passed = (v.final_yes || 0) > (v.final_no || 0);
+        run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+            [passed ? 'approved' : 'rejected', v.id]);
+        if (passed) approvedIds.add(v.id);
+    }
+    for (const v of children) {
+        if (approvedIds.has(v.parent_variant_id)) {
+            run("UPDATE variants SET status = 'not_applicable', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [v.id]);
+        } else if (v.final_yes != null || v.final_no != null) {
+            const passed = (v.final_yes || 0) > (v.final_no || 0);
+            run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+                [passed ? 'approved' : 'rejected', v.id]);
+        }
+    }
+}
+
 const VALID_TRANSITIONS = {
     draft: ['open'],
     open: ['voting', 'draft'],
@@ -191,6 +218,7 @@ router.post('/:id/status', requireAuth, requireDocumentAccess('admin'), (req, re
 
         run("UPDATE documents SET status = ?, voting_scheduled_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, doc.id]);
         logActivity(req.user.id, doc.id, null, 'document_status_changed', { from: doc.status, to: status });
+        if (status === 'resolved') resolveVariants(doc.id);
         res.json({ document: getOne('SELECT * FROM documents WHERE id = ?', [doc.id]) });
     } catch (err) {
         next(err);

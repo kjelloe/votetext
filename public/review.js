@@ -328,9 +328,18 @@ async function viewFinalVoting(docId) {
     prntBtn.addEventListener('click', () => _openPrintHTML(doc, _buildOrderedBlocks(Object.values(varMap), varMap), fullText));
     toolbar.append(csvBtn, prntBtn, backBtn);
     hdr.append(toolbar);
+    const progressEl = el('div', { id: 'fv-progress', class: 'fv-progress' });
+    hdr.append(progressEl);
     wrap.append(hdr);
 
     const list = el('div', { class: 'fv-list' });
+
+    function updateProgress() {
+        const allItems = blocks.flatMap(b => b.items);
+        const done = allItems.filter(i => i.v.final_yes != null || i.v.final_no != null).length;
+        progressEl.textContent = `${done} of ${allItems.length} proposals recorded`;
+        progressEl.className = `fv-progress${done === allItems.length ? ' fv-progress-done' : ''}`;
+    }
 
     function renderProposalCard(v, isChild, parentNum, blockType, groupNum) {
         const orig = fullText.slice(v.char_start, v.char_end);
@@ -371,6 +380,7 @@ async function viewFinalVoting(docId) {
                 const d = await api('PATCH', `/variants/${v.id}/final-vote`, patch);
                 Object.assign(varMap[v.id], d.variant);
                 saveBtn.style.display = 'none'; savedInd.style.display = '';
+                updateProgress();
             } catch (e) { alert(e.message); }
         });
         card.querySelectorAll('.fv-num-input').forEach(inp => inp.addEventListener('input', () => {
@@ -408,6 +418,7 @@ async function viewFinalVoting(docId) {
 
     wrap.append(list, docVote);
     setMain(wrap);
+    updateProgress();
 
     docVote.querySelector('#dv-save').addEventListener('click', async () => {
         const yes     = parseInt(docVote.querySelector('#dv-yes').value,     10);
