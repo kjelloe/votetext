@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS variants (
 
     -- Status lifecycle: pending → approved | rejected | withdrawn | merged
     status          TEXT    NOT NULL DEFAULT 'pending'
-                            CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn', 'merged')),
+                            CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn', 'merged', 'conflict', 'not_applicable')),
 
     -- Moderation
     is_hidden       INTEGER NOT NULL DEFAULT 0,       -- hidden by moderator

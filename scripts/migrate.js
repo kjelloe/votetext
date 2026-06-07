@@ -56,5 +56,47 @@ if (actSchemaRow && !actSchemaRow.sql.includes('voting_scheduled')) {
     console.log('[skip] activity_log CHECK constraint already up to date');
 }
 
+// Recreate variants to extend status CHECK constraint with 'conflict', 'not_applicable'
+const varSchemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='variants'").get();
+if (varSchemaRow && !varSchemaRow.sql.includes('not_applicable')) {
+    console.log('[migrating] Recreating variants to extend status CHECK constraint…');
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+        CREATE TABLE variants_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id     INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
+            proposed_by     INTEGER NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+            char_start      INTEGER NOT NULL CHECK (char_start >= 0),
+            char_end        INTEGER NOT NULL CHECK (char_end >= 0),
+            operation       TEXT    NOT NULL DEFAULT 'replace'
+                                    CHECK (operation IN ('insert', 'replace', 'delete')),
+            new_text        TEXT    NOT NULL DEFAULT '',
+            title           TEXT    NOT NULL DEFAULT '',
+            rationale       TEXT    NOT NULL DEFAULT '',
+            status          TEXT    NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn', 'merged', 'conflict', 'not_applicable')),
+            is_hidden       INTEGER NOT NULL DEFAULT 0,
+            votes_for       INTEGER NOT NULL DEFAULT 0,
+            votes_against   INTEGER NOT NULL DEFAULT 0,
+            votes_abstain   INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            CHECK (char_end >= char_start)
+        );
+        INSERT INTO variants_new SELECT * FROM variants;
+        DROP TABLE variants;
+        ALTER TABLE variants_new RENAME TO variants;
+        CREATE INDEX idx_variants_document ON variants (document_id);
+        CREATE INDEX idx_variants_proposer  ON variants (proposed_by);
+        CREATE INDEX idx_variants_status    ON variants (document_id, status);
+        CREATE INDEX idx_variants_range     ON variants (document_id, char_start, char_end);
+        CREATE INDEX idx_variants_created   ON variants (created_at);
+    `);
+    db.pragma('foreign_keys = ON');
+    console.log('[done] Recreated variants with extended CHECK constraint');
+} else {
+    console.log('[skip] variants CHECK constraint already up to date');
+}
+
 db.close();
 console.log('Migration complete.');

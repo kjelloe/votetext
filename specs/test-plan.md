@@ -161,6 +161,20 @@
 
 ---
 
+## Group K — Review View
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| K1 | PATCH `/variants/:id/review-status { status: 'conflict' }` — owner on voting doc | 200, `status = conflict` |
+| K2 | PATCH `/variants/:id/review-status { status: 'rejected' }` — change from prior status | 200, `status = rejected` |
+| K3 | PATCH `/variants/:id/review-status { status: 'pending' }` — restore to voting | 200, `status = pending` |
+| K4 | PATCH `/variants/:id/review-status { status: 'not_applicable' }` | 200, `status = not_applicable` |
+| K5 | PATCH with `status: 'approved'` (not in allowed list) | 400 |
+| K6 | PATCH on variant in a non-voting document (e.g., archived) | 422 |
+| K7 | PATCH by user with only `viewer` access | 403 |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.

@@ -167,6 +167,7 @@ function updateHeader() {
 const routes = [
     [/^#\/login$/, viewLogin],
     [/^#\/documents$/, viewDocumentList],
+    [/^#\/documents\/(\d+)\/review$/, params => viewDocumentReview(params[1])],
     [/^#\/documents\/(\d+)$/, params => viewDocument(params[1])],
     [/^#\/variants\/(\d+)$/, params => viewVariant(params[1])],
     [/^#\/activity$/, viewActivity],
@@ -554,6 +555,7 @@ async function viewDocument(docId) {
                 <span>${statusBadge(doc.status)}</span>
             </div>
             <div class="flex gap-1 items-center">
+                ${doc.status === 'voting' && state.user ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
                 ${(doc.owner_id === (state.user && state.user.id)) ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
@@ -1747,6 +1749,98 @@ function openEditVariantModal(v) {
             location.reload();
         } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
     });
+}
+
+/* ===== View: Document Review ===== */
+async function viewDocumentReview(docId) {
+    if (!state.user) { location.hash = '#/login'; return; }
+    const [docData, varData] = await Promise.all([
+        api('GET', `/documents/${docId}`),
+        api('GET', `/documents/${docId}/variants`).catch(() => ({ variants: [] })),
+    ]);
+    const doc = docData.document;
+    if (doc.status !== 'voting') { location.hash = `#/documents/${docId}`; return; }
+    const rawV = varData.variants || [];
+    const idOrder = Object.fromEntries([...rawV].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
+    let variants = rawV.map(v => ({ ...v, num: idOrder[v.id] }));
+    const overlapCount = {};
+    for (let i = 0; i < variants.length; i++)
+        for (let j = i + 1; j < variants.length; j++) {
+            const [a, b] = [variants[i], variants[j]];
+            if (a.char_start < b.char_end && a.char_end > b.char_start) {
+                overlapCount[a.id] = (overlapCount[a.id] || 0) + 1;
+                overlapCount[b.id] = (overlapCount[b.id] || 0) + 1;
+            }
+        }
+    let sortMode = 'line', hideZero = false, curPage = 1;
+    const wrap = el('div', { class: 'review-layout' });
+    const textPanel = el('div', { class: 'review-text-panel' });
+    textPanel.innerHTML = `<div class="doc-text-header"><div><h2>${esc(doc.title)}</h2>${statusBadge(doc.status)}</div><a href="#/documents/${esc(String(docId))}" class="btn btn-ghost btn-sm">← Document</a></div><div class="doc-text-body" id="rdoc-lines"></div><div class="pagination" id="rdoc-pagination"></div>`;
+    const propPanel = el('div', { class: 'review-proposals-panel' });
+    propPanel.innerHTML = `<div class="review-toolbar"><strong>Proposals</strong><div class="flex gap-1"><button id="rsort-line" class="btn btn-primary btn-sm">Line</button><button id="rsort-num" class="btn btn-ghost btn-sm">#</button><button id="rsort-votes" class="btn btn-ghost btn-sm">Votes</button><button id="rsort-conflicts" class="btn btn-ghost btn-sm">Conflicts</button><label style="font-size:.8125rem;display:flex;align-items:center;gap:.3rem"><input type="checkbox" id="rfilter-zero"> Hide 0-vote</label></div></div><div id="review-list"></div>`;
+    wrap.append(textPanel, propPanel);
+    setMain(wrap);
+
+    async function loadPage(page) {
+        const d = await api('GET', `/documents/${docId}/lines?page=${page}`);
+        curPage = page;
+        renderLines(document.getElementById('rdoc-lines'), d.lines || [], rawV);
+        renderPagination(document.getElementById('rdoc-pagination'), page, doc.total_pages, docId);
+    }
+
+    function renderReviewList() {
+        const list = document.getElementById('review-list');
+        if (!list) return;
+        let sorted = [...variants];
+        if (hideZero) sorted = sorted.filter(v => v.votes_for + v.votes_against + v.votes_abstain > 0);
+        if (sortMode === 'num') sorted.sort((a, b) => a.num - b.num);
+        else if (sortMode === 'votes') sorted.sort((a, b) => (b.votes_for + b.votes_against + b.votes_abstain) - (a.votes_for + a.votes_against + a.votes_abstain));
+        else if (sortMode === 'conflicts') sorted.sort((a, b) => (overlapCount[b.id] || 0) - (overlapCount[a.id] || 0));
+        else sorted.sort((a, b) => a.char_start - b.char_start || a.id - b.id);
+        list.innerHTML = '';
+        if (!sorted.length) { list.innerHTML = '<div class="text-muted" style="padding:1.5rem">No proposals match filter.</div>'; return; }
+        for (const v of sorted) {
+            const oc = overlapCount[v.id] || 0;
+            const suggestConflict = oc > 0 && v.status === 'pending';
+            const isVoting = v.status === 'pending' && !suggestConflict;
+            const card = el('div', { class: 'review-card' });
+            card.innerHTML = `<div class="review-card-header"><span class="variant-num">#${v.num}</span><span class="review-card-title">${esc(v.title || v.operation)}</span>${oc ? `<span class="review-overlap-badge">⊕${oc}</span>` : ''}</div><div class="text-muted review-card-meta">Lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))} · ${esc(v.operation)} · ▲${v.votes_for} ▼${v.votes_against}</div><div class="review-actions"><button class="review-btn review-btn-voting${isVoting ? ' review-btn-active' : ''}" data-action="pending">VOTING</button><button class="review-btn review-btn-conflict${v.status === 'conflict' || suggestConflict ? ' review-btn-active' : ''}" data-action="conflict">CONFLICT</button><button class="review-btn review-btn-danger${v.status === 'rejected' ? ' review-btn-active' : ''}" data-action="rejected">NOT VOTING</button><button class="review-btn review-btn-danger${v.status === 'not_applicable' ? ' review-btn-active' : ''}" data-action="not_applicable">Not applicable</button><button class="review-btn review-btn-danger${v.status === 'withdrawn' ? ' review-btn-active' : ''}" data-action="withdrawn">Withdrawn</button></div>`;
+            card.querySelectorAll('.review-btn').forEach(btn => btn.addEventListener('click', async () => {
+                try {
+                    const data = await api('PATCH', `/variants/${v.id}/review-status`, { status: btn.dataset.action });
+                    const idx = variants.findIndex(x => x.id === v.id);
+                    if (idx >= 0) variants[idx] = { ...variants[idx], ...data.variant };
+                    renderReviewList();
+                } catch (e) { showError(wrap, e.message); }
+            }));
+            list.append(card);
+        }
+    }
+
+    wrap.addEventListener('click', async e => {
+        const pb = e.target.closest('[data-page]');
+        if (pb && !pb.disabled) { await loadPage(parseInt(pb.dataset.page)); return; }
+        if (e.target.dataset.action === 'jump') {
+            const inp = document.getElementById('page-jump-input');
+            if (inp) await loadPage(parseInt(inp.value) || curPage);
+        }
+    });
+    wrap.addEventListener('keydown', async e => {
+        if (e.key === 'Enter' && e.target.id === 'page-jump-input') await loadPage(parseInt(e.target.value) || curPage);
+    });
+
+    ['line', 'num', 'votes', 'conflicts'].forEach(m => {
+        const btn = document.getElementById(`rsort-${m}`);
+        if (btn) btn.addEventListener('click', () => {
+            sortMode = m;
+            ['line', 'num', 'votes', 'conflicts'].forEach(k => { const b = document.getElementById(`rsort-${k}`); if (b) b.className = `btn btn-${k === m ? 'primary' : 'ghost'} btn-sm`; });
+            renderReviewList();
+        });
+    });
+    document.getElementById('rfilter-zero').addEventListener('change', e => { hideZero = e.target.checked; renderReviewList(); });
+
+    await loadPage(1);
+    renderReviewList();
 }
 
 /* ===== View: Activity ===== */

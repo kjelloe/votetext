@@ -323,8 +323,71 @@ Users can toggle **Non-searchable profile** in their profile page (`PATCH /api/a
 
 ---
 
+## UC-9: Review proposals before resolution
+
+**Actor:** Document owner or user with `editor`/`admin` access
+**Entry point:** Document viewer → "Review" button (visible when document is in `voting` status)
+
+### Preconditions
+
+- Document is in `voting` status.
+- User is authenticated and has `editor` or `admin` access (or is the document owner).
+
+### Main flow
+
+1. Owner/editor clicks **Review** in the document header.
+2. Browser navigates to `#/documents/:id/review`.
+3. The review view loads with a two-panel layout:
+   - **Left panel** — full document text (paginated, sticky), same line rendering as the document view.
+   - **Right panel** — all proposals listed by default in **document position order** (line number / char_start).
+4. Each proposal card shows:
+   - **#N** — sequential proposal number (id-ascending, same as sidebar)
+   - **Title** and optional **overlap badge** (⊕N) showing how many other proposals share a character range
+   - **Line range · operation · ▲ for / ▼ against** vote tallies
+   - **Action buttons** (see below)
+5. Editor reviews each proposal and selects an action. Changes are saved immediately to the backend on each click; no submit step.
+6. After reviewing all proposals the editor navigates back or continues to document status management.
+
+### Action buttons per proposal
+
+| Button | Status set | Colour | Default suggested when |
+|--------|------------|--------|------------------------|
+| **VOTING** | `pending` | Green | Proposal has no character-range overlaps with other proposals |
+| **CONFLICT** | `conflict` | Yellow | Proposal overlaps ≥1 other proposal (auto-suggested) |
+| **NOT VOTING** | `rejected` | Red | — |
+| **Not applicable** | `not_applicable` | Red | — |
+| **Withdrawn** | `withdrawn` | Red | — |
+
+The currently active status is highlighted on the button. An editor can change any proposal's status at any time, including overriding the suggested state.
+
+### Sort options
+
+| Sort | Behaviour |
+|------|-----------|
+| **Line** (default) | Document position order (`char_start ASC`) |
+| **#** | Proposal number order (creation order, id ASC) |
+| **Votes** | Highest total vote count (for + against + abstain) first |
+| **Conflicts** | Most overlapping proposals first (descending overlap count) |
+
+### Filter
+
+A **Hide 0-vote** checkbox removes proposals that have received no votes (for + against + abstain = 0), helping editors focus on actively-discussed proposals.
+
+### Pagination (left panel)
+
+The document text panel supports the same page navigation as the regular document view (Prev / Next / Go to page). Proposals in the right panel always show all proposals regardless of the current page.
+
+### New variant statuses
+
+Two statuses are only set via the review endpoint, not by proposers:
+
+- **`conflict`** — the proposal overlaps another; editor excludes it from the final vote. Displayed with the existing status badge in the sidebar.
+- **`not_applicable`** — the proposal no longer applies to the document as currently worded.
+
+---
+
 ## Planned / future use cases
 
-- **UC-9:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
-- **UC-10:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-11:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-10:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are auto-resolved based on `resolution_mode` setting.
+- **UC-11:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-12:** Anonymous viewing — public document accessible without login; read-only.

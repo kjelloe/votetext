@@ -97,6 +97,36 @@ router.delete('/:id', requireAuth, (req, res, next) => {
     }
 });
 
+// PATCH /api/variants/:id/review-status  (editor/admin only; doc must be in 'voting')
+router.patch('/:id/review-status', requireAuth, (req, res, next) => {
+    try {
+        const { status } = req.body;
+        const allowed = ['pending', 'conflict', 'rejected', 'not_applicable', 'withdrawn'];
+        if (!allowed.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+
+        const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+
+        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (doc.status !== 'voting') return res.status(422).json({ error: 'Document must be in voting status' });
+
+        const isOwner = doc.owner_id === req.user.id;
+        if (!isOwner) {
+            const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
+            if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
+            const userIdx = ACCESS_LEVELS.indexOf(access.access_level);
+            if (userIdx < ACCESS_LEVELS.indexOf('editor')) return res.status(403).json({ error: 'Editor or admin access required' });
+        }
+
+        run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, variant.id]);
+        logActivity(req.user.id, variant.document_id, variant.id, 'variant_updated', { review_status: status });
+        res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // GET /api/variants/:id/relations
 router.get('/:id/relations', (req, res, next) => {
     try {

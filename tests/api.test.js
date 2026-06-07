@@ -1035,6 +1035,80 @@ test('POST /documents/:id/status { countdown_minutes: 0 } — immediate transiti
     assert.equal(r.data.document.voting_scheduled_at, null, 'no schedule set for immediate transition');
 });
 
+// ── REVIEW VIEW ──────────────────────────────────────────────────────────────
+
+let reviewVariantId;
+
+test('Setup: create variant in voting document for review tests', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/variants`, {
+        body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'TEST', title: 'Review test variant' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    reviewVariantId = r.data.variant.id;
+    assert.equal(r.data.variant.status, 'pending');
+});
+
+test('PATCH /variants/:id/review-status — set conflict → 200', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/review-status`, {
+        body: { status: 'conflict' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.status, 'conflict');
+});
+
+test('PATCH /variants/:id/review-status — change from conflict to rejected → 200', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/review-status`, {
+        body: { status: 'rejected' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.status, 'rejected');
+});
+
+test('PATCH /variants/:id/review-status — restore to pending → 200', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/review-status`, {
+        body: { status: 'pending' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.status, 'pending');
+});
+
+test('PATCH /variants/:id/review-status — set not_applicable → 200', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/review-status`, {
+        body: { status: 'not_applicable' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.status, 'not_applicable');
+});
+
+test('PATCH /variants/:id/review-status — invalid status → 400', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/review-status`, {
+        body: { status: 'approved' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('PATCH /variants/:id/review-status — doc not in voting status → 422', async () => {
+    const r = await req('PATCH', `/variants/${variantId}/review-status`, {
+        body: { status: 'conflict' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('PATCH /variants/:id/review-status — viewer has no access → 403', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/review-status`, {
+        body: { status: 'pending' },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

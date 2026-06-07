@@ -204,6 +204,7 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes /variants, /access, /activity sub-routes)
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
+                       (includes PATCH /:id/review-status — editor/admin status update)
 /api/comments/*    → src/routes/comments.js   (edit/delete only)
 /api/activity      → src/routes/activity.js
 ```
@@ -288,12 +289,13 @@ This uses the index `idx_variants_range`.
 Single HTML page (`public/index.html`) with hash-based routing:
 
 ```
-#/login            → viewLogin()
-#/documents        → viewDocumentList()
-#/documents/:id    → viewDocument(id)
-#/variants/:id     → viewVariant(id)
-#/activity         → viewActivity()
-#/profile          → viewProfile()
+#/login                  → viewLogin()
+#/documents              → viewDocumentList()
+#/documents/:id          → viewDocument(id)
+#/documents/:id/review   → viewDocumentReview(id)   — editor/admin two-panel review view
+#/variants/:id           → viewVariant(id)
+#/activity               → viewActivity()
+#/profile                → viewProfile()
 ```
 
 ### Key patterns
@@ -302,7 +304,7 @@ Single HTML page (`public/index.html`) with hash-based routing:
 - **`esc(str)`** — HTML-escapes all user-supplied values before inserting into innerHTML
 - **`el(tag, attrs, ...children)`** — creates DOM nodes programmatically for dynamic content
 - **Event delegation** — one listener on a container, not per-item
-- **Minimal client state** — `state.user`, `state.config` (server-delivered config: `toast_dismiss_seconds`, `voting_countdown_default_minutes`), `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page), `state.lastActivityTime` (newest activity event seen, for toast deduplication), `state.votingBannerInterval` (live countdown setInterval handle). Fresh fetch on every view render
+- **Minimal client state** — `state.user`, `state.config` (server-delivered config: `toast_dismiss_seconds`, `voting_countdown_default_minutes`), `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page), `state.lastActivityTime` (newest activity event seen, for toast deduplication), `state.votingBannerInterval` (live countdown setInterval handle). Fresh fetch on every view render except review (variants mutated in-place after each action)
 
 ### Proposals sidebar
 
@@ -389,6 +391,42 @@ Email behaviour by environment:
 | `test` | Send skipped entirely; OTP logged via `console.warn` | Send skipped entirely; logged via `console.warn` |
 
 The `test` skip prevents real Resend API calls during `npm test`. Tests read OTPs directly from the database.
+
+### Variant statuses
+
+The `variants.status` column tracks a proposal through its lifecycle:
+
+| Status | Set by | Meaning |
+|--------|--------|---------|
+| `pending` | Default on creation; review endpoint | In the vote — will count toward the final decision |
+| `conflict` | Review endpoint (editor/admin) | Overlaps another proposal; excluded from final vote |
+| `rejected` | Review endpoint (editor/admin) | Explicitly not voted on |
+| `not_applicable` | Review endpoint (editor/admin) | No longer applies to the current document wording |
+| `withdrawn` | Proposer or review endpoint | Proposer or editor retracted the proposal |
+| `approved` | Resolve flow (future) | Won the vote |
+| `merged` | Resolve flow (future) | Applied to the document text |
+
+`conflict` and `not_applicable` are set exclusively via `PATCH /api/variants/:id/review-status` — only the existing `PATCH /api/variants/:id` (proposer self-edit) and `DELETE /api/variants/:id` (withdraw) affect statuses outside the review endpoint.
+
+### Review view
+
+When a document is in `voting` status, the **Review** button appears in the document header for authenticated users. Navigating to `#/documents/:id/review` opens the two-panel review UI:
+
+- **Left** — document text, paginated, sticky; reuses `renderLines` / `renderPagination`
+- **Right** — all proposals with sort (line / # / votes / conflicts) and a "Hide 0-vote" filter toggle
+
+Each proposal card has five action buttons (VOTING, CONFLICT, NOT VOTING, Not applicable, Withdrawn). Clicking any button immediately calls `PATCH /api/variants/:id/review-status`, updates the in-memory variant, and re-renders the list without a full page reload.
+
+Proposals that overlap another proposal (character-range intersection) auto-suggest CONFLICT (the CONFLICT button is highlighted by default). An editor overrides this by clicking VOTING or any other action.
+
+**Access control** — `PATCH /api/variants/:id/review-status` requires:
+1. The requesting user to be authenticated
+2. The document to be in `voting` status (422 otherwise)
+3. The user to be the document owner, or to have `editor` or `admin` access level (403 otherwise)
+
+The review route (`#/documents/:id/review`) is shown to all authenticated users on voting documents; users without editor/admin access will receive a 403 on the first status-update attempt, which triggers an inline error.
+
+---
 
 ### Voting transition
 
