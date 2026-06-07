@@ -426,8 +426,46 @@ Within a conflict group, root proposals are voted in vote-order number sequence 
 
 ---
 
+## UC-11: Conduct final voting
+
+**Actor:** Document owner or user with `editor`/`admin` access
+**Entry point:** Review view (`#/documents/:id/review`) → "Voting walkthrough" button (visible when document is in `final_voting`)
+
+### Preconditions
+
+- Document is in `final_voting` status.
+- All conflict groups have been ordered (UC-10 completed).
+
+### Main flow
+
+1. Editor clicks **Voting walkthrough** in the review view toolbar.
+2. Browser navigates to `#/documents/:id/final-vote`.
+3. The walkthrough view shows:
+   - **Export CSV** button — downloads a Nordic CSV (semi-colon separated, double-quoted, UTF-8 BOM) with all voteable proposals in document-position order.
+   - **Print HTML** button — opens a new browser tab with a print-ready HTML tally sheet.
+   - All voteable proposals (pending + ordered conflict proposals) in a scrollable list, ordered by document position. Conflict groups appear as a labelled section; child proposals are indented with a "↳ child of #N — voted only if parent fails" note.
+4. For each proposal, the editor records the physical vote tally: **Yes**, **No**, **Abstain** (integer counts). Clicking **Save** calls `PATCH /api/variants/:id/final-vote`.
+5. At the bottom, an **Overall document vote** section records the total vote on the document as a whole. Clicking **Save** calls `PATCH /api/documents/:id/doc-vote`.
+6. After all tallies are recorded, the document remains in `final_voting`. The editor uses **Change Status → resolved** to close voting.
+
+### Proposal ordering in export and walkthrough
+
+All voteable proposals are merged into a single document-position sequence. Conflict groups appear as a unit at the position of their earliest character offset; within each group, root proposals are ordered by `vote_order`, with children immediately following their parent. Proposals not in any conflict group appear at their own character position, interleaved with groups by document order.
+
+**Excluded from the walkthrough:** `withdrawn`, `rejected`, `not_applicable`, and hidden proposals.
+
+### Export columns (CSV)
+
+`Order; Proposal #; Title; Type; Line Start; Line End; Proposer; Organization; Original Text; Proposed Text; Conflict Group; Vote Order; Parent Proposal #; Yes; No; Abstain`
+
+### Overall document vote
+
+After all individual proposals are voted on, the assembly votes on the document as a whole (a common requirement in formal Nordic parliamentary procedure, typically failing only at a very high no-vote threshold such as ≥1% of total). The yes/no/abstain totals from this vote are stored on the document and appear in the print HTML tally sheet.
+
+---
+
 ## Planned / future use cases
 
-- **UC-11:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are processed based on vote tallies and `resolution_mode` setting.
-- **UC-12:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-13:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-12:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are processed based on vote tallies and `resolution_mode` setting.
+- **UC-13:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-14:** Anonymous viewing — public document accessible without login; read-only.

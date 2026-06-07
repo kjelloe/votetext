@@ -1209,6 +1209,90 @@ test('POST /documents/:id/status — final_voting → voting (back) → 200', as
     assert.equal(r.data.document.status, 'voting');
 });
 
+// ── GROUP L — Final Voting ────────────────────────────────────────────────────
+
+test('Setup: transition votingDocId back to final_voting for final-vote tests', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/status`, {
+        body: { status: 'final_voting' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'final_voting');
+});
+
+test('PATCH /variants/:id/final-vote — record yes/no/abstain → 200', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/final-vote`, {
+        body: { yes: 12, no: 3, abstain: 2 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.final_yes, 12);
+    assert.equal(r.data.variant.final_no, 3);
+    assert.equal(r.data.variant.final_abstain, 2);
+});
+
+test('PATCH /variants/:id/final-vote — partial update preserves existing values → 200', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/final-vote`, {
+        body: { yes: 15 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.final_yes, 15);
+    assert.equal(r.data.variant.final_no, 3);
+    assert.equal(r.data.variant.final_abstain, 2);
+});
+
+test('PATCH /variants/:id/final-vote — negative count → 400', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/final-vote`, {
+        body: { yes: -1 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('PATCH /variants/:id/final-vote — doc not in final_voting → 422', async () => {
+    const r = await req('PATCH', `/variants/${variantId}/final-vote`, {
+        body: { yes: 1, no: 0, abstain: 0 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('PATCH /variants/:id/final-vote — viewer access → 403', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/final-vote`, {
+        body: { yes: 1, no: 0, abstain: 0 },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
+test('PATCH /documents/:id/doc-vote — record overall vote → 200', async () => {
+    const r = await req('PATCH', `/documents/${votingDocId}/doc-vote`, {
+        body: { yes: 42, no: 1, abstain: 3 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.doc_vote_yes, 42);
+    assert.equal(r.data.document.doc_vote_no, 1);
+    assert.equal(r.data.document.doc_vote_abstain, 3);
+});
+
+test('PATCH /documents/:id/doc-vote — doc not in final_voting → 422', async () => {
+    const r = await req('PATCH', `/documents/${docId}/doc-vote`, {
+        body: { yes: 1, no: 0, abstain: 0 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('PATCH /documents/:id/doc-vote — viewer access → 403', async () => {
+    const r = await req('PATCH', `/documents/${votingDocId}/doc-vote`, {
+        body: { yes: 1, no: 0, abstain: 0 },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

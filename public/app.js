@@ -168,6 +168,7 @@ const routes = [
     [/^#\/login$/, viewLogin],
     [/^#\/documents$/, viewDocumentList],
     [/^#\/documents\/(\d+)\/conflicts$/, params => viewConflictResolution(params[1])],
+    [/^#\/documents\/(\d+)\/final-vote$/, params => viewFinalVoting(params[1])],
     [/^#\/documents\/(\d+)\/review$/, params => viewDocumentReview(params[1])],
     [/^#\/documents\/(\d+)$/, params => viewDocument(params[1])],
     [/^#\/variants\/(\d+)$/, params => viewVariant(params[1])],
@@ -1779,7 +1780,7 @@ async function viewDocumentReview(docId) {
     const textPanel = el('div', { class: 'review-text-panel' });
     textPanel.innerHTML = `<div class="doc-text-header"><div><h2>${esc(doc.title)}</h2>${statusBadge(doc.status)}</div><a href="#/documents/${esc(String(docId))}" class="btn btn-ghost btn-sm">← Document</a></div><div class="doc-text-body" id="rdoc-lines"></div><div class="pagination" id="rdoc-pagination"></div>`;
     const propPanel = el('div', { class: 'review-proposals-panel' });
-    propPanel.innerHTML = `<div class="review-toolbar"><strong>Proposals</strong><div class="flex gap-1">${!isFinalVoting ? `<a href="#/documents/${esc(String(docId))}/conflicts" class="btn btn-warning btn-sm">Resolve conflicts</a>` : `<span class="review-final-badge">Final voting</span>`}<button id="rsort-line" class="btn btn-primary btn-sm">Line</button><button id="rsort-num" class="btn btn-ghost btn-sm">#</button><button id="rsort-votes" class="btn btn-ghost btn-sm">Votes</button><button id="rsort-conflicts" class="btn btn-ghost btn-sm">Conflicts</button><label style="font-size:.8125rem;display:flex;align-items:center;gap:.3rem"><input type="checkbox" id="rfilter-zero"> Hide 0-vote</label></div></div><div id="review-list"></div>`;
+    propPanel.innerHTML = `<div class="review-toolbar"><strong>Proposals</strong><div class="flex gap-1">${!isFinalVoting ? `<a href="#/documents/${esc(String(docId))}/conflicts" class="btn btn-warning btn-sm">Resolve conflicts</a>` : `<span class="review-final-badge">Final voting</span><a href="#/documents/${esc(String(docId))}/final-vote" class="btn btn-success btn-sm">Voting walkthrough</a>`}<button id="rsort-line" class="btn btn-primary btn-sm">Line</button><button id="rsort-num" class="btn btn-ghost btn-sm">#</button><button id="rsort-votes" class="btn btn-ghost btn-sm">Votes</button><button id="rsort-conflicts" class="btn btn-ghost btn-sm">Conflicts</button><label style="font-size:.8125rem;display:flex;align-items:center;gap:.3rem"><input type="checkbox" id="rfilter-zero"> Hide 0-vote</label></div></div><div id="review-list"></div>`;
     wrap.append(textPanel, propPanel);
     setMain(wrap);
 

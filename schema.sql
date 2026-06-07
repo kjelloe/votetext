@@ -99,7 +99,12 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     deleted_at          TEXT,                                                          -- NULL = active; set to soft-delete
-    voting_scheduled_at TEXT                                                           -- ISO-8601 UTC when open→voting transition fires; NULL = not scheduled
+    voting_scheduled_at TEXT,                                                          -- ISO-8601 UTC when open→voting transition fires; NULL = not scheduled
+
+    -- Overall document vote (recorded by editor/admin during final_voting stage)
+    doc_vote_yes        INTEGER,
+    doc_vote_no         INTEGER,
+    doc_vote_abstain    INTEGER
 );
 
 CREATE INDEX idx_documents_owner_id   ON documents (owner_id);
@@ -167,6 +172,11 @@ CREATE TABLE IF NOT EXISTS variants (
     -- Conflict resolution (set by editor/admin during voting stage)
     vote_order          INTEGER,                                                   -- position within conflict group (root proposals only)
     parent_variant_id   INTEGER REFERENCES variants (id) ON DELETE SET NULL,      -- NULL = root; set = child (voted only if parent fails)
+
+    -- Final voting tallies (recorded by editor/admin during final_voting stage)
+    final_yes       INTEGER,
+    final_no        INTEGER,
+    final_abstain   INTEGER,
 
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

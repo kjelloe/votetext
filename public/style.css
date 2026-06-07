@@ -1046,6 +1046,32 @@ mark.preview-ins {
 .btn-lg { font-size: 1rem; padding: 0.75rem 1.5rem; }
 .review-final-badge { font-size: 0.75rem; font-weight: 700; background: #dcfce7; color: #15803d; border-radius: 20px; padding: 0.2rem 0.6rem; align-self: center; }
 
+/* ===== Final Voting Walkthrough ===== */
+.fv-list { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 2rem; }
+.fv-group { border: 2px solid #d97706; border-radius: 6px; padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.fv-group-header { font-weight: 700; font-size: 0.85rem; color: #92400e; padding-bottom: 0.4rem; border-bottom: 1px solid #fde68a; margin-bottom: 0.25rem; }
+.fv-card { border: 1px solid var(--color-border); border-radius: 6px; padding: 0.9rem 1rem; background: var(--color-surface); }
+.fv-card-child { margin-left: 1.75rem; border-color: #fbbf24; background: #fffbeb; }
+.fv-card-header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.6rem; font-size: 0.875rem; }
+.fv-card-num { font-variant-numeric: tabular-nums; }
+.fv-card-title { font-weight: 600; }
+.fv-card-meta { font-size: 0.8rem; }
+.fv-order-badge { display: inline-flex; align-items: center; justify-content: center; background: #1d4ed8; color: #fff; border-radius: 50%; width: 1.5em; height: 1.5em; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; }
+.fv-child-note { font-size: 0.75rem; color: #92400e; font-style: italic; }
+.fv-status-badge { font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.45rem; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
+.fv-status-pending    { background: #dbeafe; color: #1e40af; }
+.fv-status-conflict   { background: #fef3c7; color: #92400e; }
+.fv-status-rejected   { background: #fee2e2; color: #991b1b; }
+.fv-card-texts { display: grid; grid-template-columns: 5rem 1fr; gap: 0.25rem 0.5rem; margin-bottom: 0.75rem; align-items: start; font-size: 0.85rem; }
+.fv-label { font-weight: 700; font-size: 0.75rem; color: var(--color-text-muted); padding-top: 0.2rem; }
+.fv-text { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: 4px; padding: 0.3rem 0.5rem; white-space: pre-wrap; word-break: break-word; max-height: 8rem; overflow-y: auto; }
+.fv-inputs { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-size: 0.875rem; border-top: 1px dashed var(--color-border); padding-top: 0.6rem; }
+.fv-inputs label { display: flex; align-items: center; gap: 0.35rem; font-weight: 600; }
+.fv-num-input { width: 5rem; padding: 0.3rem 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; font-size: 0.875rem; text-align: right; }
+.fv-saved-indicator { font-size: 0.85rem; color: #16a34a; font-weight: 600; }
+.fv-docvote { border: 2px solid var(--color-border); border-radius: 8px; padding: 1.25rem 1.25rem 1rem; margin-top: 1.5rem; }
+.fv-docvote-title { margin: 0 0 0.25rem; font-size: 1rem; }
+
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
     .doc-layout {

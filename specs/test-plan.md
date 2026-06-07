@@ -183,6 +183,21 @@
 
 ---
 
+## Group L — Final Voting
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| L1 | PATCH `/variants/:id/final-vote { yes: 12, no: 3, abstain: 2 }` — editor on final_voting doc | 200, `final_yes = 12`, `final_no = 3`, `final_abstain = 2` |
+| L2 | PATCH partial update `{ yes: 15 }` — other fields preserved | 200, `final_yes = 15`, `final_no = 3`, `final_abstain = 2` |
+| L3 | PATCH with negative count `{ yes: -1 }` | 400 |
+| L4 | PATCH `/variants/:id/final-vote` on doc not in `final_voting` | 422 |
+| L5 | PATCH `/variants/:id/final-vote` by viewer | 403 |
+| L6 | PATCH `/documents/:id/doc-vote { yes: 42, no: 1, abstain: 3 }` — editor on final_voting doc | 200, fields stored on document |
+| L7 | PATCH `/documents/:id/doc-vote` on doc not in `final_voting` | 422 |
+| L8 | PATCH `/documents/:id/doc-vote` by viewer | 403 |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.
@@ -206,3 +221,8 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Resolve conflicts:** Review view toolbar → Resolve conflicts → conflict resolution view shows conflict groups; drag proposals to reorder; drag onto root to make child (amber badge, × to remove); vote_order badges appear (blue circle)
 - [ ] **Ready for final voting:** all conflict groups resolved → button turns green; click → document transitions to `final_voting`; toolbar shows "Final voting" badge
 - [ ] **Roll back to voting:** final_voting doc → Change status → voting → back in voting with "Resolve conflicts" button visible
+- [ ] **Voting walkthrough:** final_voting doc → Review view → "Voting walkthrough" button → walkthrough view loads with proposals in document order; conflict groups labelled and indented
+- [ ] **Export CSV:** click Export CSV → file downloads; open in spreadsheet — columns correct, encoding correct, semi-colon separated
+- [ ] **Print HTML:** click Print HTML → new tab opens with clean tally sheet; print dialog renders cleanly
+- [ ] **Record tally:** enter yes/no/abstain for a proposal → Save → "✓ Saved" appears; reload page → values persist
+- [ ] **Overall document vote:** fill yes/no/abstain at bottom → Save → persists on reload

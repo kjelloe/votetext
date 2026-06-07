@@ -535,6 +535,33 @@ router.patch('/:id/access/:userId', requireAuth, requireDocumentAccess('admin'),
     }
 });
 
+// PATCH /api/documents/:id/doc-vote  (editor/admin only; doc must be in 'final_voting')
+router.patch('/:id/doc-vote', requireAuth, requireDocumentAccess('editor'), (req, res, next) => {
+    try {
+        const doc = req.document;
+        if (doc.status !== 'final_voting') return res.status(422).json({ error: 'Document must be in final_voting status' });
+
+        const { yes, no, abstain } = req.body;
+        for (const [k, v] of [['yes', yes], ['no', no], ['abstain', abstain]]) {
+            if (v !== undefined && v !== null && (!Number.isInteger(v) || v < 0)) {
+                return res.status(400).json({ error: `${k} must be a non-negative integer or null` });
+            }
+        }
+
+        const newYes     = yes     !== undefined ? yes     : doc.doc_vote_yes;
+        const newNo      = no      !== undefined ? no      : doc.doc_vote_no;
+        const newAbstain = abstain !== undefined ? abstain : doc.doc_vote_abstain;
+        run(
+            "UPDATE documents SET doc_vote_yes = ?, doc_vote_no = ?, doc_vote_abstain = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+            [newYes, newNo, newAbstain, doc.id]
+        );
+        logActivity(req.user.id, doc.id, null, 'document_updated', { doc_vote_yes: newYes, doc_vote_no: newNo, doc_vote_abstain: newAbstain });
+        res.json({ document: getOne('SELECT * FROM documents WHERE id = ?', [doc.id]) });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // DELETE /api/documents/:id/access/:userId
 router.delete('/:id/access/:userId', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
     try {

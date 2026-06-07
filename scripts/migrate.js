@@ -58,6 +58,12 @@ if (actSchemaRow && !actSchemaRow.sql.includes('voting_scheduled')) {
 
 addColumnIfMissing('variants', 'vote_order', 'INTEGER');
 addColumnIfMissing('variants', 'parent_variant_id', 'INTEGER REFERENCES variants (id) ON DELETE SET NULL');
+addColumnIfMissing('variants', 'final_yes', 'INTEGER');
+addColumnIfMissing('variants', 'final_no', 'INTEGER');
+addColumnIfMissing('variants', 'final_abstain', 'INTEGER');
+addColumnIfMissing('documents', 'doc_vote_yes', 'INTEGER');
+addColumnIfMissing('documents', 'doc_vote_no', 'INTEGER');
+addColumnIfMissing('documents', 'doc_vote_abstain', 'INTEGER');
 
 // Recreate documents to extend status CHECK constraint with 'final_voting'
 const docSchemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='documents'").get();
@@ -81,7 +87,10 @@ if (docSchemaRow && !docSchemaRow.sql.includes('final_voting')) {
             created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             deleted_at          TEXT,
-            voting_scheduled_at TEXT
+            voting_scheduled_at TEXT,
+            doc_vote_yes        INTEGER,
+            doc_vote_no         INTEGER,
+            doc_vote_abstain    INTEGER
         );
         INSERT INTO documents_new SELECT * FROM documents;
         DROP TABLE documents;
@@ -121,6 +130,9 @@ if (varSchemaRow && !varSchemaRow.sql.includes('not_applicable')) {
             votes_abstain   INTEGER NOT NULL DEFAULT 0,
             vote_order          INTEGER,
             parent_variant_id   INTEGER REFERENCES variants (id) ON DELETE SET NULL,
+            final_yes           INTEGER,
+            final_no            INTEGER,
+            final_abstain       INTEGER,
             created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             CHECK (char_end >= char_start)

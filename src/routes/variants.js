@@ -169,6 +169,46 @@ router.patch('/:id/conflict-order', requireAuth, (req, res, next) => {
     }
 });
 
+// PATCH /api/variants/:id/final-vote  (editor/admin only; doc must be in 'final_voting')
+router.patch('/:id/final-vote', requireAuth, (req, res, next) => {
+    try {
+        const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+
+        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (doc.status !== 'final_voting') return res.status(422).json({ error: 'Document must be in final_voting status' });
+
+        const isOwner = doc.owner_id === req.user.id;
+        if (!isOwner) {
+            const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
+            if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
+            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('editor')) {
+                return res.status(403).json({ error: 'Editor or admin access required' });
+            }
+        }
+
+        const { yes, no, abstain } = req.body;
+        for (const [k, v] of [['yes', yes], ['no', no], ['abstain', abstain]]) {
+            if (v !== undefined && v !== null && (!Number.isInteger(v) || v < 0)) {
+                return res.status(400).json({ error: `${k} must be a non-negative integer or null` });
+            }
+        }
+
+        const newYes     = yes     !== undefined ? yes     : variant.final_yes;
+        const newNo      = no      !== undefined ? no      : variant.final_no;
+        const newAbstain = abstain !== undefined ? abstain : variant.final_abstain;
+        run(
+            "UPDATE variants SET final_yes = ?, final_no = ?, final_abstain = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+            [newYes, newNo, newAbstain, variant.id]
+        );
+        logActivity(req.user.id, variant.document_id, variant.id, 'variant_updated', { final_yes: newYes, final_no: newNo, final_abstain: newAbstain });
+        res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // GET /api/variants/:id/relations
 router.get('/:id/relations', (req, res, next) => {
     try {

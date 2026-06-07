@@ -201,11 +201,13 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes GET /search — user lookup, excludes non-searchable/protected)
 /api/documents/*   → src/routes/documents.js
                        (includes GET /:id/text — full reconstructed text for copy/export)
+                       (includes PATCH /:id/doc-vote — overall document vote tallies, editor/admin, final_voting only)
                        (includes /variants, /access, /activity sub-routes)
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
                        (includes PATCH /:id/review-status — editor/admin status update)
                        (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution)
+                       (includes PATCH /:id/final-vote — final_yes/no/abstain tallies, editor/admin, final_voting only)
 /api/comments/*    → src/routes/comments.js   (edit/delete only)
 /api/activity      → src/routes/activity.js
 ```
@@ -295,6 +297,7 @@ Single HTML page (`public/index.html`) with hash-based routing:
 #/documents/:id          → viewDocument(id)
 #/documents/:id/review      → viewDocumentReview(id)        — editor/admin two-panel review view
 #/documents/:id/conflicts   → viewConflictResolution(id)    — drag-and-drop conflict ordering (public/review.js)
+#/documents/:id/final-vote  → viewFinalVoting(id)           — final voting walkthrough + export (public/review.js)
 #/variants/:id           → viewVariant(id)
 #/activity               → viewActivity()
 #/profile                → viewProfile()
@@ -461,6 +464,22 @@ A standalone JS file (loaded after `app.js`) that defines `viewConflictResolutio
 3. The user to be the document owner, or to have `editor` or `admin` access level (403 otherwise)
 
 The review route (`#/documents/:id/review`) is shown to all authenticated users on voting documents; users without editor/admin access will receive a 403 on the first status-update attempt, which triggers an inline error.
+
+### Final voting walkthrough (`public/review.js`)
+
+After all conflicts are resolved and the document is in `final_voting`, the editor opens the walkthrough at `#/documents/:id/final-vote`. This view:
+
+1. Fetches variants and the full document text (`GET /documents/:id/text` for original-text extraction by char range).
+2. Builds an ordered proposal list using `_buildOrderedBlocks()`: all voteable proposals (pending + conflict, excluding withdrawn/rejected/not_applicable/hidden) sorted by document position. Conflict groups appear as a labelled unit at their earliest character offset; within each group roots are ordered by `vote_order`, children follow their parent.
+3. Renders each proposal with Original / Proposed text, and yes/no/abstain integer inputs. Clicking **Save** calls `PATCH /api/variants/:id/final-vote`.
+4. Provides **Export CSV** (Nordic format: semi-colon separated, double-quoted, UTF-8 BOM) and **Print HTML** (standalone printable tally sheet opened in a new tab via Blob URL) — both generated client-side from in-memory data.
+5. An **Overall document vote** section at the bottom records yes/no/abstain totals for the whole document via `PATCH /api/documents/:id/doc-vote`.
+
+Both new PATCH endpoints require `final_voting` document status (422 otherwise) and editor/admin access (403 otherwise). Partial updates are supported: omitted fields retain their current value.
+
+**New schema fields:**
+- `variants.final_yes`, `variants.final_no`, `variants.final_abstain` — INTEGER, null until recorded
+- `documents.doc_vote_yes`, `documents.doc_vote_no`, `documents.doc_vote_abstain` — INTEGER, null until recorded
 
 ---
 
