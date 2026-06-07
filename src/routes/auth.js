@@ -132,7 +132,11 @@ router.post('/logout', (req, res) => {
 
 // GET /api/auth/me
 router.get('/me', requireAuth, (req, res) => {
-    res.json({ user: req.user });
+    const config = {
+        toast_dismiss_seconds: parseInt(process.env.TOAST_DISMISS_SECONDS || '30'),
+        voting_countdown_default_minutes: parseInt(process.env.VOTING_COUNTDOWN_DEFAULT_MINUTES || '5'),
+    };
+    res.json({ user: req.user, config });
 });
 
 // GET /api/auth/search?q=... — find users by partial email, display_name, or organization

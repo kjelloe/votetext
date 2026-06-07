@@ -66,7 +66,7 @@ votetext/
 │       └── activity.js     — user activity feed
 ├── public/
 │   ├── index.html          — SPA shell
-│   ├── app.js              — client router + all views (< 1100 lines)
+│   ├── app.js              — client router + all views (< 2000 lines)
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   └── test-plan.md        — human-readable test scenarios
@@ -105,6 +105,8 @@ activity_log ── references users, documents, variants
 **JSON settings blob** — `documents.settings` stores configurable options (`allow_anonymous_view`, `lines_per_page`, `resolution_mode`, etc.) without schema migrations.
 
 **Soft delete** — `documents.deleted_at TEXT` (NULL = active). All queries filter `AND deleted_at IS NULL`. Existing DBs need `npm run migrate` to add the column.
+
+**Voting countdown** — `documents.voting_scheduled_at TEXT` stores the ISO-8601 UTC timestamp when an `open` document should auto-transition to `voting`. Checked lazily via `applyVotingSchedules()` (see below). NULL = not scheduled.
 
 **WAL mode** — All reads happen concurrently; writes are serialised by SQLite. Busy timeout is 5 s.
 
@@ -300,7 +302,7 @@ Single HTML page (`public/index.html`) with hash-based routing:
 - **`esc(str)`** — HTML-escapes all user-supplied values before inserting into innerHTML
 - **`el(tag, attrs, ...children)`** — creates DOM nodes programmatically for dynamic content
 - **Event delegation** — one listener on a container, not per-item
-- **Minimal client state** — `state.user`, `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page). Fresh fetch on every view render
+- **Minimal client state** — `state.user`, `state.config` (server-delivered config: `toast_dismiss_seconds`, `voting_countdown_default_minutes`), `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page), `state.lastActivityTime` (newest activity event seen, for toast deduplication), `state.votingBannerInterval` (live countdown setInterval handle). Fresh fetch on every view render
 
 ### Proposals sidebar
 
@@ -387,6 +389,31 @@ Email behaviour by environment:
 | `test` | Send skipped entirely; OTP logged via `console.warn` | Send skipped entirely; logged via `console.warn` |
 
 The `test` skip prevents real Resend API calls during `npm test`. Tests read OTPs directly from the database.
+
+### Voting transition
+
+Documents transition from `open` to `voting` either immediately or after a countdown set by the owner:
+
+| API call | Effect |
+|----------|--------|
+| `POST /documents/:id/status { status: 'voting', countdown_minutes: N }` (N > 0) | Sets `voting_scheduled_at = now + N min`, logs `voting_scheduled`, status stays `open` |
+| `POST /documents/:id/status { status: 'voting', countdown_minutes: 0 }` | Immediate transition to `voting` |
+| `POST /documents/:id/status { cancel_schedule: true }` | Clears `voting_scheduled_at`, logs `voting_schedule_cancelled` |
+
+**Lazy evaluation** — no background job or cron. `applyVotingSchedules()` in `src/db.js` is called at the top of `GET /documents`, `GET /documents/:id`, and `GET /activity`. It finds all docs with `status='open' AND voting_scheduled_at <= now()` and transitions them, logging `document_status_changed { from, to, auto: true }` under the document owner's user ID.
+
+**Client countdown banner** — `viewDocument` checks `doc.voting_scheduled_at`. If set, it inserts an amber `.voting-banner` between the document header and the text body. A `setInterval` ticks every second, displaying `⏱ Voting opens in M:SS`. When the countdown reaches 0 the interval fires `location.reload()`, which fetches the already-transitioned document. The interval handle is stored in `state.votingBannerInterval` and cleared at the start of each route navigation to prevent stale intervals.
+
+**Toast notifications** — `init()` fetches the activity feed once on startup to record `state.lastActivityTime`. A `setInterval` polling loop then calls `pollActivity()` every 30 seconds. If new `voting_scheduled` events appear newer than `state.lastActivityTime`, `showToast()` appends an amber-bordered toast to `#toast-container` (fixed, bottom-right). Toasts auto-dismiss after `state.config.toast_dismiss_seconds` (default 30) or when the user clicks ×.
+
+**Config delivery** — `GET /api/auth/me` returns a `config` object alongside the user:
+```json
+{
+  "toast_dismiss_seconds": 30,
+  "voting_countdown_default_minutes": 5
+}
+```
+Stored in `state.config` during `init()`. Used by `openStatusModal` (default countdown value) and `pollActivity` (dismiss duration).
 
 ### Spam cooldowns
 

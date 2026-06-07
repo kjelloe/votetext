@@ -133,6 +133,12 @@
 | H7 | `archived → any` | 422 (no further transitions) |
 | H8 | Vote on `resolved` document | 422 |
 | H9 | Propose variant on `archived` document | 422 |
+| H10 | `POST /status { status: 'voting', countdown_minutes: 5 }` on open doc | 200, status stays `open`, `voting_scheduled_at` set ≥5 min from now |
+| H11 | `GET /documents/:id` after scheduling | 200, `voting_scheduled_at` field present and set |
+| H12 | `POST /status { cancel_schedule: true }` with active schedule | 200, `voting_scheduled_at` = null |
+| H13 | `POST /status { cancel_schedule: true }` with no active schedule | 422 |
+| H14 | Auto-transition: set `voting_scheduled_at` to past, then `GET /documents/:id` | 200, status = `voting`, `voting_scheduled_at` = null |
+| H15 | `POST /status { status: 'voting', countdown_minutes: 0 }` | 200, status = `voting` immediately, `voting_scheduled_at` = null |
 
 ---
 
@@ -144,6 +150,14 @@
 | I2 | GET `/activity?mine=true` — filtered feed | 200, only actions performed by the requesting user |
 | I3 | GET `/documents/:id/activity` | 200, `document_created` action present |
 | I4 | Pagination: `?page=2` | 200, second page of results |
+
+---
+
+## Group J — Client Config Delivery
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| J1 | GET `/auth/me` — response includes `config` | 200, `config.toast_dismiss_seconds` (number), `config.voting_countdown_default_minutes` (number) |
 
 ---
 
@@ -159,7 +173,10 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] Vote buttons: clicking For/Against/Abstain updates count immediately
 - [ ] Changing vote: count adjusts correctly
 - [ ] Comment thread: post comment → post reply → reply is indented; trying a 3rd level is blocked
-- [ ] Activity feed: shows recent actions with correct labels
+- [ ] Activity feed: shows recent actions with correct labels; `voting_scheduled` events have amber highlight
 - [ ] Profile: update display name → header reflects new name
 - [ ] Logout: session cleared, redirected to login
 - [ ] Mobile (375px): single-column layout, no overflow
+- [ ] **Voting countdown:** open doc → Change status → voting → set 1 min → Schedule → amber banner appears with live countdown; other browser tab sees toast notification within 30 s
+- [ ] **Cancel schedule:** banner [Cancel] button clears countdown and banner disappears
+- [ ] **Auto-transition:** wait for countdown to reach 0 → page reloads and document is now in `voting` status

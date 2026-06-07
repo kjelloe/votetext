@@ -34,4 +34,19 @@ function logActivity(userId, documentId, variantId, action, metadata = {}) {
     ).run(userId, documentId || null, variantId || null, action, JSON.stringify(metadata));
 }
 
-module.exports = { db, getOne, getAll, run, transaction, logActivity };
+function applyVotingSchedules() {
+    const now = new Date().toISOString();
+    const scheduled = db.prepare(
+        "SELECT id, owner_id FROM documents WHERE status = 'open' AND voting_scheduled_at IS NOT NULL AND voting_scheduled_at <= ? AND deleted_at IS NULL"
+    ).all(now);
+    for (const doc of scheduled) {
+        db.transaction(() => {
+            db.prepare(
+                "UPDATE documents SET status = 'voting', voting_scheduled_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?"
+            ).run(doc.id);
+            logActivity(doc.owner_id, doc.id, null, 'document_status_changed', { from: 'open', to: 'voting', auto: true });
+        })();
+    }
+}
+
+module.exports = { db, getOne, getAll, run, transaction, logActivity, applyVotingSchedules };

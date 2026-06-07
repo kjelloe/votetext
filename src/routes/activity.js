@@ -1,7 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
-const { getAll } = require('../db');
+const { getAll, applyVotingSchedules } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
 const router = Router();
@@ -11,6 +11,7 @@ const router = Router();
 // ?mine=true restricts to actions performed by the requesting user.
 router.get('/', requireAuth, (req, res, next) => {
     try {
+        applyVotingSchedules();
         const page = Math.max(1, parseInt(req.query.page || '1'));
         const mine = req.query.mine === 'true';
         const limit = 20;

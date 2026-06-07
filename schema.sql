@@ -96,9 +96,10 @@ CREATE TABLE IF NOT EXISTS documents (
     -- }
     settings        TEXT    NOT NULL DEFAULT '{}',
 
-    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    deleted_at      TEXT                                                               -- NULL = active; set to soft-delete
+    created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    deleted_at          TEXT,                                                          -- NULL = active; set to soft-delete
+    voting_scheduled_at TEXT                                                           -- ISO-8601 UTC when open→voting transition fires; NULL = not scheduled
 );
 
 CREATE INDEX idx_documents_owner_id   ON documents (owner_id);
@@ -284,7 +285,8 @@ CREATE TABLE IF NOT EXISTS activity_log (
                             'variant_proposed', 'variant_updated', 'variant_withdrawn',
                             'vote_cast', 'vote_changed', 'vote_retracted',
                             'comment_added', 'comment_updated',
-                            'user_invited', 'user_blocked', 'user_unblocked'
+                            'user_invited', 'user_blocked', 'user_unblocked',
+                            'voting_scheduled', 'voting_schedule_cancelled'
                         )),
     metadata    TEXT    NOT NULL DEFAULT '{}',   -- JSON with action-specific data
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

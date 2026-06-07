@@ -256,13 +256,75 @@ Users can toggle **Non-searchable profile** in their profile page (`PATCH /api/a
 2. Client fetches `GET /api/documents/:id/text` to retrieve the full reconstructed text.
 3. **New Document** modal opens pre-filled with the original title + " (copy)" and the full text; description is blank; lines-per-page matches the source document.
 4. Format detection runs on the pre-filled text (paged/numbered banners appear if applicable).
-5. User edits title/description as needed and clicks **Create document**.
-6. A new `draft` document is created with no proposals, variants, or access records (owner only).
+5. An optional **"Copy from source"** row appears above the Create button with three checkboxes: **Copy proposals**, **Copy votes** (enabled only when proposals is checked), **Copy comments** (same dependency).
+6. User edits title/description as needed and clicks **Create document**.
+7. A new `draft` document is created. If copy options were selected, `POST /api/documents/:sourceId/copy-data` copies the chosen data (proposals → votes → comments, in dependency order) into the new document in a single transaction.
+
+---
+
+## UC-8: Schedule a document for voting
+
+**Actor:** Document owner  
+**Entry point:** Document viewer → "Change status" button → voting option
+
+### Preconditions
+
+- Document is in `open` status.
+- User is the document owner (or has `admin` access).
+
+### Main flow — scheduled countdown
+
+1. Owner clicks **Change status**.
+2. "Change status" modal opens. "voting" appears as a transition button alongside other valid transitions.
+3. Owner clicks **voting**.
+4. The button is replaced inline by a mini-form:
+   - Label: *Minutes until voting opens (0 = immediate)*
+   - Number input, default `VOTING_COUNTDOWN_DEFAULT_MINUTES` (default 5), range 0–10080 (14 days)
+   - **Schedule** and **Cancel** buttons
+5. Owner adjusts the minutes and clicks **Schedule**.
+6. System calls `POST /api/documents/:id/status { status: 'voting', countdown_minutes: N }`.
+7. Server sets `documents.voting_scheduled_at = now + N minutes`, logs `voting_scheduled` activity, returns the updated document. **Status remains `open`.**
+8. Modal closes; the page reloads.
+9. An **amber countdown banner** appears between the document header and the text body:
+   - Shows `⏱ Voting opens in M:SS` (live tick every second)
+   - Owner sees a **[Cancel]** button on the right
+10. All users who have access to the document and are active in the app see a **toast notification** in the bottom-right corner: `⏱ Voting for "Doc Title" opens in N minutes [View] ×`
+    - Toast auto-dismisses after `TOAST_DISMISS_SECONDS` (default 30 s) or when the user clicks ×.
+11. The `voting_scheduled` event appears prominently in the activity feed (amber background, ⏱ icon, countdown minutes in the body).
+
+### Alternate flow — immediate (countdown = 0)
+
+5a. Owner sets minutes to 0 and clicks **Schedule**.  
+5b. System transitions the document immediately to `voting` status (same as `POST … { status: 'voting' }` with no countdown).  
+5c. No banner is shown; document is now in voting state.
+
+### Alternate flow — cancel schedule
+
+1. Owner clicks **Cancel** in the amber banner, or opens "Change status" and clicks **Cancel schedule** in the warning notice at the top of the modal.
+2. System calls `POST /api/documents/:id/status { cancel_schedule: true }`.
+3. Server clears `voting_scheduled_at`, logs `voting_schedule_cancelled`, returns updated document.
+4. Banner disappears; status remains `open`.
+5. Owner can immediately reschedule with a new countdown.
+
+### Auto-transition (server-side)
+
+- `applyVotingSchedules()` in `src/db.js` is called lazily on every `GET /api/documents`, `GET /api/documents/:id`, and `GET /api/activity` request.
+- Any document with `status = 'open'` and `voting_scheduled_at ≤ now` is transitioned to `voting`, `voting_scheduled_at` is cleared, and a `document_status_changed { from: 'open', to: 'voting', auto: true }` activity entry is logged under the document owner's user ID.
+- If the countdown expires while a user is viewing the document, the banner's live countdown will reach 0 and trigger `location.reload()`, which calls the GET endpoint and returns the document already in `voting` status.
+
+### Activity feed display
+
+`voting_scheduled` events are shown with:
+- ⏱ icon
+- Amber background highlight
+- Countdown minutes appended: `· N min countdown`
+
+`voting_schedule_cancelled` events are shown with a 🚫 icon.
 
 ---
 
 ## Planned / future use cases
 
-- **UC-8:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
-- **UC-9:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-10:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-9:** Resolve a document — admin closes voting, marks variants approved/rejected, document moves to `resolved`.
+- **UC-10:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-11:** Anonymous viewing — public document accessible without login; read-only.

@@ -1,7 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
-const { db, getOne, getAll, run, transaction, logActivity } = require('../db');
+const { db, getOne, getAll, run, transaction, logActivity, applyVotingSchedules } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireDocumentAccess, ACCESS_LEVELS } = require('../middleware/access');
 const { Resend } = require('resend');
@@ -36,6 +36,7 @@ function importText(text, linesPerPage) {
 // GET /api/documents
 router.get('/', (req, res, next) => {
     try {
+        applyVotingSchedules();
         if (!req.user) return res.json({ documents: [] });
 
         const docs = getAll(
@@ -101,6 +102,7 @@ router.post('/', requireAuth, (req, res, next) => {
 // GET /api/documents/:id
 router.get('/:id', (req, res, next) => {
     try {
+        applyVotingSchedules();
         const doc = getOne(
             'SELECT d.*, u.display_name as owner_name, u.organization as owner_organization FROM documents d JOIN users u ON u.id = d.owner_id WHERE d.id = ? AND d.deleted_at IS NULL',
             [req.params.id]
@@ -157,13 +159,36 @@ router.patch('/:id', requireAuth, requireDocumentAccess('editor'), (req, res, ne
 // POST /api/documents/:id/status
 router.post('/:id/status', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
     try {
-        const { status } = req.body;
+        const { status, countdown_minutes, cancel_schedule } = req.body;
         const doc = req.document;
+
+        const fullDoc = () => getOne(
+            'SELECT d.*, u.display_name as owner_name, u.organization as owner_organization FROM documents d JOIN users u ON u.id = d.owner_id WHERE d.id = ?',
+            [doc.id]
+        );
+
+        if (cancel_schedule) {
+            if (!doc.voting_scheduled_at) return res.status(422).json({ error: 'No scheduled voting to cancel' });
+            run("UPDATE documents SET voting_scheduled_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [doc.id]);
+            logActivity(req.user.id, doc.id, null, 'voting_schedule_cancelled', {});
+            return res.json({ document: fullDoc() });
+        }
+
         const allowed = VALID_TRANSITIONS[doc.status] || [];
         if (!allowed.includes(status)) {
             return res.status(422).json({ error: `Cannot transition from '${doc.status}' to '${status}'` });
         }
-        run("UPDATE documents SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, doc.id]);
+
+        if (status === 'voting' && countdown_minutes !== undefined && parseInt(countdown_minutes) > 0) {
+            const mins = parseInt(countdown_minutes);
+            if (mins > 10080) return res.status(400).json({ error: 'Countdown cannot exceed 10080 minutes (14 days)' });
+            const scheduledAt = new Date(Date.now() + mins * 60000).toISOString();
+            run("UPDATE documents SET voting_scheduled_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [scheduledAt, doc.id]);
+            logActivity(req.user.id, doc.id, null, 'voting_scheduled', { countdown_minutes: mins, scheduled_at: scheduledAt });
+            return res.json({ document: fullDoc() });
+        }
+
+        run("UPDATE documents SET status = ?, voting_scheduled_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, doc.id]);
         logActivity(req.user.id, doc.id, null, 'document_status_changed', { from: doc.status, to: status });
         res.json({ document: getOne('SELECT * FROM documents WHERE id = ?', [doc.id]) });
     } catch (err) {

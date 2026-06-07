@@ -953,6 +953,88 @@ test('GET /documents/:id/variants — each variant has comment_count → 200', a
     }
 });
 
+// ── VOTING TRANSITION ─────────────────────────────────────────────────────────
+
+let votingDocId;
+
+test('GET /api/auth/me — returns config with voting defaults → 200', async () => {
+    const r = await req('GET', '/auth/me', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.config, 'config present');
+    assert.equal(typeof r.data.config.toast_dismiss_seconds, 'number');
+    assert.equal(typeof r.data.config.voting_countdown_default_minutes, 'number');
+});
+
+test('Setup: create fresh open doc for voting transition tests', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Voting test doc', text: 'line one\nline two' }, cookie: sessionCookie });
+    votingDocId = d.data.document.id;
+    const r = await req('POST', `/documents/${votingDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'open');
+});
+
+test('POST /documents/:id/status { status: voting, countdown_minutes: 5 } — schedules → 200', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/status`, {
+        body: { status: 'voting', countdown_minutes: 5 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'open', 'status stays open while countdown runs');
+    assert.ok(r.data.document.voting_scheduled_at, 'voting_scheduled_at should be set');
+    const scheduled = new Date(r.data.document.voting_scheduled_at).getTime();
+    assert.ok(scheduled > Date.now(), 'scheduled time should be in the future');
+});
+
+test('GET /documents/:id — returns voting_scheduled_at when scheduled → 200', async () => {
+    const r = await req('GET', `/documents/${votingDocId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok('voting_scheduled_at' in r.data.document, 'voting_scheduled_at field present');
+    assert.ok(r.data.document.voting_scheduled_at, 'voting_scheduled_at is set');
+});
+
+test('POST /documents/:id/status { cancel_schedule: true } — cancels → 200', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/status`, {
+        body: { cancel_schedule: true },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'open');
+    assert.equal(r.data.document.voting_scheduled_at, null, 'voting_scheduled_at should be cleared');
+});
+
+test('POST /documents/:id/status { cancel_schedule: true } — no schedule → 422', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/status`, {
+        body: { cancel_schedule: true },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('Voting auto-transition — past voting_scheduled_at triggers status change on GET', async () => {
+    const past = new Date(Date.now() - 1000).toISOString();
+    db.prepare("UPDATE documents SET voting_scheduled_at = ? WHERE id = ?").run(past, votingDocId);
+
+    const r = await req('GET', `/documents/${votingDocId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'voting', 'should auto-transition to voting');
+    assert.equal(r.data.document.voting_scheduled_at, null, 'voting_scheduled_at cleared after transition');
+});
+
+test('POST /documents/:id/status { countdown_minutes: 0 } — immediate transition → 200', async () => {
+    // Create another fresh doc in 'open' for immediate transition test
+    const d = await req('POST', '/documents', { body: { title: 'Immediate vote doc', text: 'text here' }, cookie: sessionCookie });
+    const immedId = d.data.document.id;
+    await req('POST', `/documents/${immedId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+
+    const r = await req('POST', `/documents/${immedId}/status`, {
+        body: { status: 'voting', countdown_minutes: 0 },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'voting', 'immediate transition should go straight to voting');
+    assert.equal(r.data.document.voting_scheduled_at, null, 'no schedule set for immediate transition');
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

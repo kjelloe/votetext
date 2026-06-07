@@ -3,12 +3,15 @@
 /* ===== State ===== */
 const state = {
     user: null,
+    config: {},
     docLines: {},        // docId → { page → lines[] }
     docCache: {},        // docId → document
     docFilterMode: {},   // docId → 'all' | 'page'
     pendingVariantJump: null,  // { docId, page, lineStart } — consumed once by viewDocument
     commentSort: 'chrono',     // sort mode for comment thread on variant page
     commentAuthorId: null,     // user_id of the variant proposer (for Author's filter)
+    lastActivityTime: null,    // ISO timestamp of newest activity event seen
+    votingBannerInterval: null,// setInterval handle for voting countdown banner
 };
 
 /* ===== Utilities ===== */
@@ -94,6 +97,42 @@ function showError(container, msg) {
     container.prepend(alert);
 }
 
+function showToast(msg, docId, dismissSeconds) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+    const id = 'toast-' + Date.now();
+    const toast = el('div', { class: 'toast', id });
+    toast.innerHTML = `<span>${esc(msg)}</span>${docId ? ` <a href="#/documents/${esc(docId)}" class="toast-link">View</a>` : ''}<button class="toast-dismiss" title="Dismiss">×</button>`;
+    container.append(toast);
+    toast.querySelector('.toast-dismiss').addEventListener('click', () => toast.remove());
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, (dismissSeconds || 30) * 1000);
+}
+
+async function pollActivity() {
+    if (!state.user) return;
+    try {
+        const data = await api('GET', '/activity');
+        const events = data.activity || [];
+        if (!events.length) return;
+        const newest = events[0].created_at;
+        if (state.lastActivityTime && newest > state.lastActivityTime) {
+            const dismissSecs = (state.config && state.config.toast_dismiss_seconds) || 30;
+            for (const e of events) {
+                if (e.created_at <= state.lastActivityTime) break;
+                if (e.action === 'voting_scheduled') {
+                    let meta = {};
+                    try { meta = JSON.parse(e.metadata || '{}'); } catch {}
+                    const mins = meta.countdown_minutes;
+                    const docLabel = esc(e.document_title || 'a document');
+                    const msg = `⏱ Voting for "${docLabel}" opens in ${mins} minute${mins !== 1 ? 's' : ''}`;
+                    showToast(msg, e.document_id, dismissSecs);
+                }
+            }
+        }
+        state.lastActivityTime = newest;
+    } catch {}
+}
+
 /* ===== Modal ===== */
 function openModal(contentHtml, title = '') {
     const overlay = document.getElementById('modal-overlay');
@@ -135,6 +174,7 @@ const routes = [
 ];
 
 async function router() {
+    if (state.votingBannerInterval) { clearInterval(state.votingBannerInterval); state.votingBannerInterval = null; }
     const hash = location.hash || '#/login';
     for (const [pattern, handler] of routes) {
         const m = hash.match(pattern);
@@ -611,6 +651,39 @@ async function viewDocument(docId) {
     wrap.append(textPanel, sidebar);
     setMain(wrap);
 
+    // Voting countdown banner
+    if (doc.voting_scheduled_at && doc.status === 'open') {
+        const scheduledMs = new Date(doc.voting_scheduled_at).getTime();
+        const isOwner = doc.owner_id === (state.user && state.user.id);
+        const banner = el('div', { class: 'voting-banner', id: 'voting-banner' });
+        banner.innerHTML = `<span id="voting-banner-countdown"></span>${isOwner ? '<button class="btn btn-ghost btn-sm" id="voting-banner-cancel">Cancel</button>' : ''}`;
+        textPanel.querySelector('.doc-text-header').insertAdjacentElement('afterend', banner);
+
+        function tickBanner() {
+            const countdown = document.getElementById('voting-banner-countdown');
+            if (!countdown) return;
+            const remaining = scheduledMs - Date.now();
+            if (remaining <= 0) { clearInterval(state.votingBannerInterval); state.votingBannerInterval = null; location.reload(); return; }
+            const totalMins = Math.floor(remaining / 60000);
+            const secs = Math.floor((remaining % 60000) / 1000);
+            const hrs = Math.floor(totalMins / 60);
+            const mins = totalMins % 60;
+            const display = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}:${String(secs).padStart(2, '0')}`;
+            countdown.textContent = `⏱ Voting opens in ${display}`;
+        }
+        tickBanner();
+        state.votingBannerInterval = setInterval(tickBanner, 1000);
+
+        if (isOwner) {
+            document.getElementById('voting-banner-cancel').addEventListener('click', async () => {
+                try {
+                    await api('POST', `/documents/${docId}/status`, { cancel_schedule: true });
+                    location.reload();
+                } catch (err) { alert(err.message); }
+            });
+        }
+    }
+
     renderVariantList();
 
     // Events: variant list — click, hover highlight, goto-page
@@ -886,24 +959,75 @@ function openStatusModal(doc) {
         openModal(`<p>No further status transitions available for <strong>${esc(doc.status)}</strong>.</p>`, 'Document status');
         return;
     }
+
+    const defaultMins = (state.config && state.config.voting_countdown_default_minutes) || 5;
+    const hasSchedule = !!(doc.voting_scheduled_at && doc.status === 'open');
+
+    const cancelBanner = hasSchedule
+        ? `<div class="voting-schedule-notice">⏱ Voting already scheduled — <button class="btn btn-ghost btn-sm" id="cancel-schedule-btn">Cancel schedule</button></div>`
+        : '';
+
+    const otherBtns = allowed
+        .filter(s => s !== 'voting')
+        .map(s => `<button class="btn btn-ghost mb-1" style="width:100%" data-status="${esc(s)}">${esc(s)}</button>`)
+        .join('');
+
+    const votingSection = allowed.includes('voting') ? `
+        <button class="btn btn-ghost mb-1" style="width:100%" id="voting-transition-btn">voting</button>
+        <div id="voting-form" style="display:none;margin-top:0.25rem;padding:0.75rem;background:var(--color-bg-secondary);border:1px solid var(--color-border);border-radius:var(--radius);margin-bottom:0.5rem">
+            <label style="display:block;margin-bottom:0.5rem;font-size:0.875rem;font-weight:600">Minutes until voting opens <span class="text-muted">(0 = immediate)</span></label>
+            <div class="flex gap-1 items-center">
+                <input type="number" id="countdown-input" min="0" max="10080" value="${esc(defaultMins)}" style="width:6rem">
+                <button id="schedule-voting-btn" class="btn btn-primary btn-sm">Schedule</button>
+                <button id="cancel-voting-form-btn" class="btn btn-ghost btn-sm">Cancel</button>
+            </div>
+        </div>` : '';
+
     openModal(`
+        ${cancelBanner}
         <p class="mb-2">Current status: ${statusBadge(doc.status)}</p>
         <p class="mb-2">Transition to:</p>
-        ${allowed.map(s => `<button class="btn btn-ghost mb-1" style="width:100%" data-status="${esc(s)}">${esc(s)}</button>`).join('')}
+        ${votingSection}
+        ${otherBtns}
         <p id="status-err" class="error-msg" style="display:none"></p>
     `, 'Change status');
 
-    document.getElementById('modal-content').addEventListener('click', async e => {
+    const mc = document.getElementById('modal-content');
+    const errEl = mc.querySelector('#status-err');
+
+    if (hasSchedule) {
+        mc.querySelector('#cancel-schedule-btn').addEventListener('click', async () => {
+            errEl.style.display = 'none';
+            try {
+                await api('POST', `/documents/${doc.id}/status`, { cancel_schedule: true });
+                closeModal(); location.reload();
+            } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
+        });
+    }
+
+    const votingTransBtn = mc.querySelector('#voting-transition-btn');
+    if (votingTransBtn) {
+        const votingForm = mc.querySelector('#voting-form');
+        votingTransBtn.addEventListener('click', () => { votingForm.style.display = ''; votingTransBtn.style.display = 'none'; });
+        mc.querySelector('#cancel-voting-form-btn').addEventListener('click', () => { votingForm.style.display = 'none'; votingTransBtn.style.display = ''; });
+        mc.querySelector('#schedule-voting-btn').addEventListener('click', async () => {
+            const mins = parseInt(mc.querySelector('#countdown-input').value || '0');
+            errEl.style.display = 'none';
+            try {
+                await api('POST', `/documents/${doc.id}/status`, { status: 'voting', countdown_minutes: mins });
+                closeModal(); location.reload();
+            } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
+        });
+    }
+
+    mc.addEventListener('click', async e => {
         const btn = e.target.closest('button[data-status]');
         if (!btn) return;
+        errEl.style.display = 'none';
         try {
             await api('POST', `/documents/${doc.id}/status`, { status: btn.dataset.status });
-            closeModal();
-            location.reload();
-        } catch (err) {
-            document.getElementById('status-err').textContent = err.message;
-            document.getElementById('status-err').style.display = '';
-        }
+            closeModal(); location.reload();
+        } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
     });
 }
 
@@ -1637,7 +1761,7 @@ async function renderActivity(mineOnly) {
     const activity = data.activity || [];
 
     const wrap = el('div', { class: 'page-container' });
-    const icons = { document_created: '📄', document_updated: '✏️', document_status_changed: '🔄', variant_proposed: '💡', variant_updated: '✏️', variant_withdrawn: '↩️', vote_cast: '🗳️', vote_changed: '🔁', vote_retracted: '↩️', comment_added: '💬', comment_updated: '✏️', user_invited: '👤', user_blocked: '🚫', user_unblocked: '✅' };
+    const icons = { document_created: '📄', document_updated: '✏️', document_status_changed: '🔄', variant_proposed: '💡', variant_updated: '✏️', variant_withdrawn: '↩️', vote_cast: '🗳️', vote_changed: '🔁', vote_retracted: '↩️', comment_added: '💬', comment_updated: '✏️', user_invited: '👤', user_blocked: '🚫', user_unblocked: '✅', voting_scheduled: '⏱', voting_schedule_cancelled: '🚫' };
 
     wrap.innerHTML = `
         <div class="page-header">
@@ -1648,16 +1772,22 @@ async function renderActivity(mineOnly) {
             </div>
         </div>
         ${activity.length === 0 ? '<div class="empty-state"><h3>No activity yet</h3><p>Start by creating or joining a document.</p></div>' :
-            `<div class="activity-list">${activity.map(a => `
-                <div class="activity-item">
+            `<div class="activity-list">${activity.map(a => {
+                let meta = {}; try { meta = JSON.parse(a.metadata || '{}'); } catch {}
+                const extra = a.action === 'voting_scheduled' && meta.countdown_minutes != null
+                    ? ` · <span class="text-muted">${esc(meta.countdown_minutes)} min countdown</span>`
+                    : '';
+                return `<div class="activity-item${a.action === 'voting_scheduled' ? ' activity-item-voting' : ''}">
                     <span class="activity-icon">${icons[a.action] || '•'}</span>
                     <div class="activity-body">
                         <strong>${esc(a.user_name || 'Unknown')}</strong> ${esc(a.action.replace(/_/g, ' '))}
                         ${a.document_title ? ` on <a href="#/documents/${esc(a.document_id)}">${esc(a.document_title)}</a>` : ''}
                         ${a.variant_id ? ` · <a href="#/variants/${esc(a.variant_id)}">view variant</a>` : ''}
+                        ${extra}
                     </div>
                     <span class="activity-time">${timeAgo(a.created_at)}</span>
-                </div>`).join('')}
+                </div>`;
+            }).join('')}
             </div>`}
     `;
     setMain(wrap);
@@ -1719,8 +1849,16 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     try {
         const data = await api('GET', '/auth/me');
         state.user = data.user;
+        state.config = data.config || {};
     } catch {}
     updateHeader();
     window.addEventListener('hashchange', () => router());
     await router();
+    if (state.user) {
+        try {
+            const data = await api('GET', '/activity');
+            state.lastActivityTime = (data.activity && data.activity[0]) ? data.activity[0].created_at : new Date().toISOString();
+        } catch {}
+        setInterval(pollActivity, 30000);
+    }
 })();
