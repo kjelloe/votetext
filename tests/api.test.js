@@ -1109,6 +1109,106 @@ test('PATCH /variants/:id/review-status — viewer has no access → 403', async
     assert.equal(r.status, 403);
 });
 
+// ── CONFLICT ORDER ───────────────────────────────────────────────────────────
+
+let conflictVariant2Id;
+
+test('Setup: create second variant in voting doc for conflict-order tests', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/variants`, {
+        body: { char_start: 0, char_end: 8, operation: 'replace', new_text: 'OVERLAP', title: 'Conflict order variant' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    conflictVariant2Id = r.data.variant.id;
+});
+
+test('PATCH /variants/:id/conflict-order — set vote_order → 200', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/conflict-order`, {
+        body: { vote_order: 1, parent_variant_id: null },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.vote_order, 1);
+    assert.equal(r.data.variant.parent_variant_id, null);
+});
+
+test('PATCH /variants/:id/conflict-order — make child of another → 200', async () => {
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/conflict-order`, {
+        body: { vote_order: null, parent_variant_id: reviewVariantId },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.parent_variant_id, reviewVariantId);
+    assert.equal(r.data.variant.vote_order, null);
+});
+
+test('PATCH /variants/:id/conflict-order — self as parent → 400', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/conflict-order`, {
+        body: { vote_order: null, parent_variant_id: reviewVariantId },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('PATCH /variants/:id/conflict-order — nest 3 levels (child of child) → 400', async () => {
+    // conflictVariant2Id is already a child of reviewVariantId
+    // Create a 3rd variant and try to make it a child of conflictVariant2Id
+    const d = await req('POST', `/documents/${votingDocId}/variants`, {
+        body: { char_start: 0, char_end: 3, operation: 'replace', new_text: 'X', title: '3rd level test' },
+        cookie: sessionCookie,
+    });
+    const thirdId = d.data.variant.id;
+    const r = await req('PATCH', `/variants/${thirdId}/conflict-order`, {
+        body: { parent_variant_id: conflictVariant2Id },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('PATCH /variants/:id/conflict-order — remove child (back to unordered) → 200', async () => {
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/conflict-order`, {
+        body: { vote_order: null, parent_variant_id: null },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.parent_variant_id, null);
+    assert.equal(r.data.variant.vote_order, null);
+});
+
+test('PATCH /variants/:id/conflict-order — doc not in voting → 422', async () => {
+    const r = await req('PATCH', `/variants/${variantId}/conflict-order`, {
+        body: { vote_order: 1, parent_variant_id: null },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 422);
+});
+
+test('PATCH /variants/:id/conflict-order — viewer access → 403', async () => {
+    const r = await req('PATCH', `/variants/${reviewVariantId}/conflict-order`, {
+        body: { vote_order: 2, parent_variant_id: null },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
+test('POST /documents/:id/status — voting → final_voting → 200', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/status`, {
+        body: { status: 'final_voting' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'final_voting');
+});
+
+test('POST /documents/:id/status — final_voting → voting (back) → 200', async () => {
+    const r = await req('POST', `/documents/${votingDocId}/status`, {
+        body: { status: 'voting' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'voting');
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

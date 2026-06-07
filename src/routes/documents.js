@@ -12,7 +12,8 @@ const router = Router();
 const VALID_TRANSITIONS = {
     draft: ['open'],
     open: ['voting', 'draft'],
-    voting: ['resolved', 'open'],
+    voting: ['resolved', 'open', 'final_voting'],
+    final_voting: ['resolved', 'voting'],
     resolved: ['archived'],
     archived: [],
 };

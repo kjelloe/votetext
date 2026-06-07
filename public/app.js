@@ -167,6 +167,7 @@ function updateHeader() {
 const routes = [
     [/^#\/login$/, viewLogin],
     [/^#\/documents$/, viewDocumentList],
+    [/^#\/documents\/(\d+)\/conflicts$/, params => viewConflictResolution(params[1])],
     [/^#\/documents\/(\d+)\/review$/, params => viewDocumentReview(params[1])],
     [/^#\/documents\/(\d+)$/, params => viewDocument(params[1])],
     [/^#\/variants\/(\d+)$/, params => viewVariant(params[1])],
@@ -555,7 +556,7 @@ async function viewDocument(docId) {
                 <span>${statusBadge(doc.status)}</span>
             </div>
             <div class="flex gap-1 items-center">
-                ${doc.status === 'voting' && state.user ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}
+                ${(doc.status === 'voting' || doc.status === 'final_voting') && state.user ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
                 ${(doc.owner_id === (state.user && state.user.id)) ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
@@ -1759,7 +1760,8 @@ async function viewDocumentReview(docId) {
         api('GET', `/documents/${docId}/variants`).catch(() => ({ variants: [] })),
     ]);
     const doc = docData.document;
-    if (doc.status !== 'voting') { location.hash = `#/documents/${docId}`; return; }
+    if (doc.status !== 'voting' && doc.status !== 'final_voting') { location.hash = `#/documents/${docId}`; return; }
+    const isFinalVoting = doc.status === 'final_voting';
     const rawV = varData.variants || [];
     const idOrder = Object.fromEntries([...rawV].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
     let variants = rawV.map(v => ({ ...v, num: idOrder[v.id] }));
@@ -1777,7 +1779,7 @@ async function viewDocumentReview(docId) {
     const textPanel = el('div', { class: 'review-text-panel' });
     textPanel.innerHTML = `<div class="doc-text-header"><div><h2>${esc(doc.title)}</h2>${statusBadge(doc.status)}</div><a href="#/documents/${esc(String(docId))}" class="btn btn-ghost btn-sm">← Document</a></div><div class="doc-text-body" id="rdoc-lines"></div><div class="pagination" id="rdoc-pagination"></div>`;
     const propPanel = el('div', { class: 'review-proposals-panel' });
-    propPanel.innerHTML = `<div class="review-toolbar"><strong>Proposals</strong><div class="flex gap-1"><button id="rsort-line" class="btn btn-primary btn-sm">Line</button><button id="rsort-num" class="btn btn-ghost btn-sm">#</button><button id="rsort-votes" class="btn btn-ghost btn-sm">Votes</button><button id="rsort-conflicts" class="btn btn-ghost btn-sm">Conflicts</button><label style="font-size:.8125rem;display:flex;align-items:center;gap:.3rem"><input type="checkbox" id="rfilter-zero"> Hide 0-vote</label></div></div><div id="review-list"></div>`;
+    propPanel.innerHTML = `<div class="review-toolbar"><strong>Proposals</strong><div class="flex gap-1">${!isFinalVoting ? `<a href="#/documents/${esc(String(docId))}/conflicts" class="btn btn-warning btn-sm">Resolve conflicts</a>` : `<span class="review-final-badge">Final voting</span>`}<button id="rsort-line" class="btn btn-primary btn-sm">Line</button><button id="rsort-num" class="btn btn-ghost btn-sm">#</button><button id="rsort-votes" class="btn btn-ghost btn-sm">Votes</button><button id="rsort-conflicts" class="btn btn-ghost btn-sm">Conflicts</button><label style="font-size:.8125rem;display:flex;align-items:center;gap:.3rem"><input type="checkbox" id="rfilter-zero"> Hide 0-vote</label></div></div><div id="review-list"></div>`;
     wrap.append(textPanel, propPanel);
     setMain(wrap);
 

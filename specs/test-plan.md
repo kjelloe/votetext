@@ -161,7 +161,7 @@
 
 ---
 
-## Group K — Review View
+## Group K — Review View & Conflict Resolution
 
 | ID | Scenario | Expected |
 |----|----------|----------|
@@ -172,6 +172,14 @@
 | K5 | PATCH with `status: 'approved'` (not in allowed list) | 400 |
 | K6 | PATCH on variant in a non-voting document (e.g., archived) | 422 |
 | K7 | PATCH by user with only `viewer` access | 403 |
+| K8 | PATCH `/variants/:id/conflict-order { vote_order: 1 }` — owner on voting doc | 200, `vote_order = 1` |
+| K9 | PATCH `/variants/:id/conflict-order { parent_variant_id: N }` — make child | 200, `parent_variant_id` set, `vote_order` cleared |
+| K10 | PATCH with `parent_variant_id` pointing to a child (3-level nesting) | 400 |
+| K11 | PATCH with self as parent | 400 |
+| K12 | PATCH conflict-order on non-voting doc | 422 |
+| K13 | PATCH conflict-order by viewer | 403 |
+| K14 | POST `/documents/:id/status { status: 'final_voting' }` — voting doc → 200 | 200, `status = final_voting` |
+| K15 | POST `/documents/:id/status { status: 'voting' }` — final_voting → voting (rollback) → 200 | 200, `status = voting` |
 
 ---
 
@@ -194,3 +202,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Voting countdown:** open doc → Change status → voting → set 1 min → Schedule → amber banner appears with live countdown; other browser tab sees toast notification within 30 s
 - [ ] **Cancel schedule:** banner [Cancel] button clears countdown and banner disappears
 - [ ] **Auto-transition:** wait for countdown to reach 0 → page reloads and document is now in `voting` status
+- [ ] **Review view:** document in voting → Review button → two-panel view → action buttons change proposal status; CONFLICT turns yellow, VOTING turns green
+- [ ] **Resolve conflicts:** Review view toolbar → Resolve conflicts → conflict resolution view shows conflict groups; drag proposals to reorder; drag onto root to make child (amber badge, × to remove); vote_order badges appear (blue circle)
+- [ ] **Ready for final voting:** all conflict groups resolved → button turns green; click → document transitions to `final_voting`; toolbar shows "Final voting" badge
+- [ ] **Roll back to voting:** final_voting doc → Change status → voting → back in voting with "Resolve conflicts" button visible

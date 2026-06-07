@@ -56,6 +56,46 @@ if (actSchemaRow && !actSchemaRow.sql.includes('voting_scheduled')) {
     console.log('[skip] activity_log CHECK constraint already up to date');
 }
 
+addColumnIfMissing('variants', 'vote_order', 'INTEGER');
+addColumnIfMissing('variants', 'parent_variant_id', 'INTEGER REFERENCES variants (id) ON DELETE SET NULL');
+
+// Recreate documents to extend status CHECK constraint with 'final_voting'
+const docSchemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='documents'").get();
+if (docSchemaRow && !docSchemaRow.sql.includes('final_voting')) {
+    console.log('[migrating] Recreating documents to extend status CHECK constraint…');
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+        CREATE TABLE documents_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            title           TEXT    NOT NULL DEFAULT 'Untitled Document',
+            description     TEXT    NOT NULL DEFAULT '',
+            owner_id        INTEGER NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+            status          TEXT    NOT NULL DEFAULT 'draft'
+                                    CHECK (status IN ('draft', 'open', 'voting', 'final_voting', 'resolved', 'archived')),
+            source_format   TEXT    NOT NULL DEFAULT 'plain'
+                                    CHECK (source_format IN ('plain', 'markdown')),
+            total_pages     INTEGER NOT NULL DEFAULT 1 CHECK (total_pages >= 1 AND total_pages <= 200),
+            total_lines     INTEGER NOT NULL DEFAULT 0,
+            total_chars     INTEGER NOT NULL DEFAULT 0,
+            settings        TEXT    NOT NULL DEFAULT '{}',
+            created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            deleted_at          TEXT,
+            voting_scheduled_at TEXT
+        );
+        INSERT INTO documents_new SELECT * FROM documents;
+        DROP TABLE documents;
+        ALTER TABLE documents_new RENAME TO documents;
+        CREATE INDEX idx_documents_owner_id   ON documents (owner_id);
+        CREATE INDEX idx_documents_status     ON documents (status);
+        CREATE INDEX idx_documents_created_at ON documents (created_at);
+    `);
+    db.pragma('foreign_keys = ON');
+    console.log('[done] Recreated documents with extended CHECK constraint');
+} else {
+    console.log('[skip] documents CHECK constraint already up to date');
+}
+
 // Recreate variants to extend status CHECK constraint with 'conflict', 'not_applicable'
 const varSchemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='variants'").get();
 if (varSchemaRow && !varSchemaRow.sql.includes('not_applicable')) {
@@ -79,6 +119,8 @@ if (varSchemaRow && !varSchemaRow.sql.includes('not_applicable')) {
             votes_for       INTEGER NOT NULL DEFAULT 0,
             votes_against   INTEGER NOT NULL DEFAULT 0,
             votes_abstain   INTEGER NOT NULL DEFAULT 0,
+            vote_order          INTEGER,
+            parent_variant_id   INTEGER REFERENCES variants (id) ON DELETE SET NULL,
             created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             CHECK (char_end >= char_start)

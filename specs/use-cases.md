@@ -386,8 +386,48 @@ Two statuses are only set via the review endpoint, not by proposers:
 
 ---
 
+## UC-10: Resolve conflicts before final voting
+
+**Actor:** Document owner or user with `editor`/`admin` access
+**Entry point:** Review view (`#/documents/:id/review`) → "Resolve conflicts" button
+
+### Preconditions
+
+- Document is in `voting` status.
+- At least two active proposals target overlapping character ranges.
+
+### Conflict group computation
+
+A conflict group is a set of ≥ 2 active proposals (not withdrawn / rejected / not_applicable) whose character ranges overlap. The system computes connected components of the overlap graph client-side. Each group must be resolved before the document can proceed to final voting.
+
+### Main flow
+
+1. Editor clicks **Resolve conflicts** in the review view toolbar.
+2. Browser navigates to `#/documents/:id/conflicts`.
+3. The conflict resolution view shows one card per conflict group, labelled by line range. Each card starts with all proposals in an **Unassigned** section at the bottom.
+4. For each group, the editor drags proposals into the numbered **ordered list** above:
+   - **Drag to a drop zone** (highlighted line between proposals) → proposal becomes a root at that position, receiving a vote-order number [1], [2], [3]…
+   - **Drag onto a root proposal card** → dropped proposal becomes a **child** (indented, shown with "child of #N" badge). Children are voted only if their parent proposal fails.
+5. To remove a child relationship, the editor clicks **×** on the child card (returns it to Unassigned).
+6. A group is marked **✓ Resolved** once every proposal has either a vote-order number (root) or a parent (child). Max two levels of nesting.
+7. When all groups are resolved, the **Ready for final voting** button turns green.
+8. Editor clicks **Ready for final voting** → document transitions to `final_voting` status → browser navigates to document view.
+
+### "Ready for final voting" button states
+
+| State | Appearance | Click action |
+|-------|-----------|--------------|
+| Conflicts remain | Yellow button | Alert explaining what's needed |
+| All resolved | Green **✓ Ready for final voting** | `POST /documents/:id/status { status: 'final_voting' }` |
+
+### Voting semantics (for future resolve flow)
+
+Within a conflict group, root proposals are voted in vote-order number sequence (1 first, then 2, etc.). If a root proposal **passes**, its children become **Obsoleted by prior vote** (effectively `not_applicable`). If a root **fails**, its children proceed to their own vote normally.
+
+---
+
 ## Planned / future use cases
 
-- **UC-10:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are auto-resolved based on `resolution_mode` setting.
-- **UC-11:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-12:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-11:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are processed based on vote tallies and `resolution_mode` setting.
+- **UC-12:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-13:** Anonymous viewing — public document accessible without login; read-only.

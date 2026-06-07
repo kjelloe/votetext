@@ -65,7 +65,7 @@ CREATE INDEX idx_sessions_expires_at ON sessions (expires_at);
 -- ---------------------------------------------------------------------------
 -- 4. DOCUMENTS
 -- ---------------------------------------------------------------------------
--- status lifecycle: draft → open → voting → resolved → archived
+-- status lifecycle: draft → open → voting → final_voting → resolved → archived
 CREATE TABLE IF NOT EXISTS documents (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     title           TEXT    NOT NULL DEFAULT 'Untitled Document',
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS documents (
 
     -- Document status
     status          TEXT    NOT NULL DEFAULT 'draft'
-                            CHECK (status IN ('draft', 'open', 'voting', 'resolved', 'archived')),
+                            CHECK (status IN ('draft', 'open', 'voting', 'final_voting', 'resolved', 'archived')),
 
     -- Source text metadata
     source_format   TEXT    NOT NULL DEFAULT 'plain'
@@ -163,6 +163,10 @@ CREATE TABLE IF NOT EXISTS variants (
     votes_for       INTEGER NOT NULL DEFAULT 0,
     votes_against   INTEGER NOT NULL DEFAULT 0,
     votes_abstain   INTEGER NOT NULL DEFAULT 0,
+
+    -- Conflict resolution (set by editor/admin during voting stage)
+    vote_order          INTEGER,                                                   -- position within conflict group (root proposals only)
+    parent_variant_id   INTEGER REFERENCES variants (id) ON DELETE SET NULL,      -- NULL = root; set = child (voted only if parent fails)
 
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

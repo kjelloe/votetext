@@ -205,6 +205,7 @@ Routes are grouped by resource and mounted in `server.js`:
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
                        (includes PATCH /:id/review-status — editor/admin status update)
+                       (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution)
 /api/comments/*    → src/routes/comments.js   (edit/delete only)
 /api/activity      → src/routes/activity.js
 ```
@@ -292,7 +293,8 @@ Single HTML page (`public/index.html`) with hash-based routing:
 #/login                  → viewLogin()
 #/documents              → viewDocumentList()
 #/documents/:id          → viewDocument(id)
-#/documents/:id/review   → viewDocumentReview(id)   — editor/admin two-panel review view
+#/documents/:id/review      → viewDocumentReview(id)        — editor/admin two-panel review view
+#/documents/:id/conflicts   → viewConflictResolution(id)    — drag-and-drop conflict ordering (public/review.js)
 #/variants/:id           → viewVariant(id)
 #/activity               → viewActivity()
 #/profile                → viewProfile()
@@ -406,11 +408,28 @@ The `variants.status` column tracks a proposal through its lifecycle:
 | `approved` | Resolve flow (future) | Won the vote |
 | `merged` | Resolve flow (future) | Applied to the document text |
 
+### Conflict ordering fields
+
+Two new columns on `variants` support the voting-order tree established in the conflict resolution view:
+
+- **`vote_order INTEGER`** — position within the conflict group for root proposals (1 = voted first). NULL for children and proposals with no group.
+- **`parent_variant_id INTEGER`** — NULL for root proposals; set to parent's `id` for child proposals. Children are voted only if their parent fails. Max two levels (no grandchildren). `ON DELETE SET NULL` so deleting a parent doesn't cascade-delete children.
+
 `conflict` and `not_applicable` are set exclusively via `PATCH /api/variants/:id/review-status` — only the existing `PATCH /api/variants/:id` (proposer self-edit) and `DELETE /api/variants/:id` (withdraw) affect statuses outside the review endpoint.
+
+### Document status lifecycle
+
+```
+draft → open → voting → final_voting → resolved → archived
+                  ↑           ↓
+                  └── voting ←┘  (can roll back)
+```
+
+`final_voting` is the stage after all conflicts have been ordered. The document transitions there via the **Ready for final voting** button in the conflict resolution view. From `final_voting`, an owner can roll back to `voting` (via the Change Status flow) or proceed to `resolved`.
 
 ### Review view
 
-When a document is in `voting` status, the **Review** button appears in the document header for authenticated users. Navigating to `#/documents/:id/review` opens the two-panel review UI:
+When a document is in `voting` or `final_voting` status, the **Review** button appears in the document header for authenticated users. Navigating to `#/documents/:id/review` opens the two-panel review UI:
 
 - **Left** — document text, paginated, sticky; reuses `renderLines` / `renderPagination`
 - **Right** — all proposals with sort (line / # / votes / conflicts) and a "Hide 0-vote" filter toggle
@@ -418,6 +437,23 @@ When a document is in `voting` status, the **Review** button appears in the docu
 Each proposal card has five action buttons (VOTING, CONFLICT, NOT VOTING, Not applicable, Withdrawn). Clicking any button immediately calls `PATCH /api/variants/:id/review-status`, updates the in-memory variant, and re-renders the list without a full page reload.
 
 Proposals that overlap another proposal (character-range intersection) auto-suggest CONFLICT (the CONFLICT button is highlighted by default). An editor overrides this by clicking VOTING or any other action.
+
+The review view toolbar shows a **Resolve conflicts** button (→ `#/documents/:id/conflicts`) when status is `voting`. When status is `final_voting` the toolbar shows a **Final voting** badge instead, and the action buttons are still visible but will return 422 from the backend (read-only state in practice).
+
+### Conflict resolution view (`public/review.js`)
+
+A standalone JS file (loaded after `app.js`) that defines `viewConflictResolution(docId)` as a global function, accessible from `app.js`'s router. It:
+
+1. Fetches all variants and computes conflict groups client-side (connected components of the char-range overlap graph, excluding withdrawn / rejected / not_applicable proposals).
+2. Renders one card per group, each with a numbered root list and child indentation.
+3. Uses HTML5 Drag-and-Drop API — drag handle `⠿` on each card, drop zones (dashed lines) between root proposals, and card-surface drop targets for parent-child assignment.
+4. Each drag-and-drop action calls `PATCH /api/variants/:id/conflict-order` (one PATCH per affected variant, run in parallel via `Promise.all`), then re-renders.
+5. A **Ready for final voting** button turns green when every group is resolved (every proposal has `vote_order` or `parent_variant_id`); clicking it calls `POST /documents/:id/status { status: 'final_voting' }`.
+
+`PATCH /api/variants/:id/conflict-order` requires:
+- Document status = `voting`
+- Editor or admin access (same check as `review-status`)
+- Body: `{ vote_order?, parent_variant_id? }`. If `parent_variant_id` is non-null, `vote_order` is forced to null. Setting a child as a parent returns 400.
 
 **Access control** — `PATCH /api/variants/:id/review-status` requires:
 1. The requesting user to be authenticated

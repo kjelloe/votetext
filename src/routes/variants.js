@@ -127,6 +127,48 @@ router.patch('/:id/review-status', requireAuth, (req, res, next) => {
     }
 });
 
+// PATCH /api/variants/:id/conflict-order  (editor/admin only; doc must be in 'voting')
+router.patch('/:id/conflict-order', requireAuth, (req, res, next) => {
+    try {
+        const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+
+        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (doc.status !== 'voting') return res.status(422).json({ error: 'Document must be in voting status to edit conflict order' });
+
+        const isOwner = doc.owner_id === req.user.id;
+        if (!isOwner) {
+            const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
+            if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
+            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('editor')) {
+                return res.status(403).json({ error: 'Editor or admin access required' });
+            }
+        }
+
+        let { vote_order, parent_variant_id } = req.body;
+
+        if (parent_variant_id != null) {
+            if (parent_variant_id === variant.id) return res.status(400).json({ error: 'Cannot set self as parent' });
+            const parent = getOne('SELECT id, parent_variant_id FROM variants WHERE id = ? AND document_id = ?', [parent_variant_id, variant.document_id]);
+            if (!parent) return res.status(400).json({ error: 'Parent variant not found in this document' });
+            if (parent.parent_variant_id != null) return res.status(400).json({ error: 'Cannot nest more than two levels deep' });
+            vote_order = null;
+        }
+
+        const newVoteOrder = vote_order !== undefined ? vote_order : variant.vote_order;
+        const newParentId = parent_variant_id !== undefined ? parent_variant_id : variant.parent_variant_id;
+        run(
+            "UPDATE variants SET vote_order = ?, parent_variant_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+            [newVoteOrder, newParentId, variant.id]
+        );
+        logActivity(req.user.id, variant.document_id, variant.id, 'variant_updated', { vote_order: newVoteOrder, parent_variant_id: newParentId });
+        res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // GET /api/variants/:id/relations
 router.get('/:id/relations', (req, res, next) => {
     try {
