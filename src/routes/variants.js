@@ -11,18 +11,15 @@ function checkDocAccess(doc, req, minLevel) {
     let settings = {};
     try { settings = JSON.parse(doc.settings || '{}'); } catch {}
     const userId = req.user ? req.user.id : null;
-    if (!userId && !settings.allow_anonymous_view) return false;
+    if (!userId && (!settings.allow_anonymous_view || doc.status === 'draft')) return false;
     if (userId && doc.owner_id !== userId) {
         const access = getOne(
             'SELECT blocked, access_level FROM user_document_access WHERE user_id = ? AND document_id = ?',
             [userId, doc.id]
         );
         if (!access || access.blocked) return false;
-        if (minLevel) {
-            const userIdx = ACCESS_LEVELS.indexOf(access.access_level);
-            const minIdx = ACCESS_LEVELS.indexOf(minLevel);
-            if (userIdx < minIdx) return false;
-        }
+        const effective = doc.status === 'draft' ? 'editor' : minLevel;
+        if (effective && ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf(effective)) return false;
     }
     return true;
 }
@@ -51,13 +48,25 @@ router.get('/:id', (req, res, next) => {
         );
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
-        if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+        const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc || (!variant.allow_anonymous_share && !checkDocAccess(doc, req))) return res.status(403).json({ error: 'Access denied' });
 
         res.json({ variant });
     } catch (err) {
         next(err);
     }
+});
+
+// PATCH /api/variants/:id/share  (proposer only — toggle allow_anonymous_share)
+router.patch('/:id/share', requireAuth, (req, res, next) => {
+    try {
+        const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+        if (variant.proposed_by !== req.user.id) return res.status(403).json({ error: 'Not your variant' });
+        const val = req.body.allow_anonymous_share ? 1 : 0;
+        run("UPDATE variants SET allow_anonymous_share = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [val, variant.id]);
+        res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
+    } catch (err) { next(err); }
 });
 
 // PATCH /api/variants/:id
@@ -220,11 +229,29 @@ router.patch('/:id/final-vote', requireAuth, (req, res, next) => {
             "UPDATE variants SET final_yes = ?, final_no = ?, final_abstain = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
             [newYes, newNo, newAbstain, variant.id]
         );
+        run('INSERT INTO final_vote_log (variant_id, user_id, final_yes, final_no, final_abstain, recorded_at) VALUES (?, ?, ?, ?, ?, ?)',
+            [variant.id, req.user.id, newYes, newNo, newAbstain, Date.now()]);
         logActivity(req.user.id, variant.document_id, variant.id, 'variant_updated', { final_yes: newYes, final_no: newNo, final_abstain: newAbstain });
         res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
     } catch (err) {
         next(err);
     }
+});
+
+// GET /api/variants/:id/final-vote-log  (editor/admin only)
+router.get('/:id/final-vote-log', requireAuth, (req, res, next) => {
+    try {
+        const variant = getOne('SELECT id, document_id FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!checkDocAccess(doc, req, 'editor')) return res.status(403).json({ error: 'Editor or admin access required' });
+        const logs = getAll(
+            'SELECT l.*, u.display_name as user_name FROM final_vote_log l JOIN users u ON u.id = l.user_id WHERE l.variant_id = ? ORDER BY l.recorded_at',
+            [variant.id]
+        );
+        res.json({ logs });
+    } catch (err) { next(err); }
 });
 
 // GET /api/variants/:id/relations

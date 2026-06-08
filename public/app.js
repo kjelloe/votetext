@@ -12,6 +12,8 @@ const state = {
     commentAuthorId: null,     // user_id of the variant proposer (for Author's filter)
     lastActivityTime: null,    // ISO timestamp of newest activity event seen
     votingBannerInterval: null,// setInterval handle for voting countdown banner
+    activityUnread: 0,
+    activitySeenTime: null,
 };
 
 /* ===== Utilities ===== */
@@ -130,6 +132,7 @@ async function pollActivity() {
             }
         }
         state.lastActivityTime = newest;
+        if (state.activitySeenTime) { state.activityUnread = events.filter(e => e.created_at > state.activitySeenTime).length; updateHeader(); }
     } catch {}
 }
 
@@ -161,6 +164,8 @@ function updateHeader() {
         loginBtn.classList.remove('hidden');
         userMenu.classList.add('hidden');
     }
+    const badge = document.getElementById('act-badge');
+    if (badge) { badge.textContent = state.activityUnread || ''; badge.classList.toggle('hidden', !state.activityUnread); }
 }
 
 /* ===== Router ===== */
@@ -263,6 +268,7 @@ async function viewLogin() {
             const data = await api('POST', '/auth/verify-otp', { email: document.getElementById('otp-email').textContent, code });
             state.user = data.user;
             updateHeader();
+            if (!state.user.display_name) { showProfileModal(() => { location.hash = '#/documents'; }); return; }
             location.hash = '#/documents';
         } catch (err) {
             otpErr.textContent = err.message; otpErr.style.display = '';
@@ -1282,6 +1288,10 @@ async function viewVariant(variantId) {
     ]);
 
     const doc = docData && docData.document;
+    if (!state.user && !doc) {
+        setMain(`<div class="page-container"><div class="card"><h1>${esc(v.title||'Proposal')}</h1>${v.rationale?`<p style="border-left:3px solid var(--color-border);padding:.5rem .75rem;font-style:italic">${esc(v.rationale)}</p>`:''}<div class="diff-block">${renderDiff(v,null)}</div><p class="text-muted mt-2"><a href="#/login">Log in</a> to view the full document and other proposals.</p></div></div>`);
+        return;
+    }
     const rawVariants = allVariantsData.variants || [];
 
     // Proposal number: id-ascending order (same as sidebar #N)
@@ -1345,7 +1355,7 @@ async function viewVariant(variantId) {
         <div class="card">
             <div class="flex justify-between items-center mb-1">
                 <h1 class="proposal-heading">Proposal ${proposalNum ? `#${esc(proposalNum)}` : ''}</h1>
-                ${statusBadge(v.status)}
+                <div class="flex gap-1 items-center">${statusBadge(v.status)}<button id="share-variant-btn" class="btn btn-ghost btn-sm">Share</button></div>
             </div>
             ${v.title ? `<p style="font-size:1rem;font-weight:600;margin-bottom:0.5rem">${esc(v.title)}</p>` : ''}
             <p class="text-muted mb-2">
@@ -1409,6 +1419,17 @@ async function viewVariant(variantId) {
     `;
 
     setMain(wrap);
+
+    // Share button
+    document.getElementById('share-variant-btn').addEventListener('click', () => {
+        const shareUrl = location.origin + '/#/variants/' + variantId;
+        const isProposer = state.user && v.proposed_by === state.user.id;
+        openModal(`<div class="form-group"><label>Share link</label><div class="flex gap-1"><input id="share-url" value="${esc(shareUrl)}" readonly style="flex:1"><button id="share-copy-btn" class="btn btn-primary btn-sm">Copy</button></div></div>${isProposer?`<label style="display:flex;align-items:center;gap:.5rem;margin-top:.75rem"><input type="checkbox" id="share-anon-cb"${v.allow_anonymous_share?' checked':''}> Allow anyone to view this proposal without logging in</label>`:''}`, 'Share proposal');
+        document.getElementById('share-copy-btn').onclick = () => { navigator.clipboard.writeText(shareUrl).catch(()=>{}); showToast('Link copied!', null, 3); closeModal(); };
+        if (isProposer) document.getElementById('share-anon-cb').addEventListener('change', async function() {
+            try { await api('PATCH', `/variants/${variantId}/share`, { allow_anonymous_share: this.checked?1:0 }); v.allow_anonymous_share = this.checked?1:0; } catch {}
+        });
+    });
 
     // Comment sort buttons
     const sortBar = document.getElementById('comment-sort-bar');
@@ -1891,6 +1912,9 @@ async function renderActivity(mineOnly) {
             }).join('')}
             </div>`}
     `;
+    state.activityUnread = 0;
+    if (state.user) { const k = `act_seen_${state.user.id}`; localStorage.setItem(k, new Date().toISOString()); state.activitySeenTime = new Date().toISOString(); }
+    updateHeader();
     setMain(wrap);
 
     document.getElementById('act-all-btn').addEventListener('click', () => renderActivity(false));
@@ -1925,26 +1949,29 @@ async function viewProfile() {
         const okEl = document.getElementById('profile-ok');
         errEl.style.display = 'none'; okEl.style.display = 'none';
         try {
-            const data = await api('PATCH', '/auth/profile', {
-                display_name: document.getElementById('profile-name').value.trim(),
-                organization: document.getElementById('profile-org').value.trim(),
-                is_non_searchable: document.getElementById('profile-nonsearchable').checked ? 1 : 0,
-            });
-            state.user = data.user;
-            updateHeader();
-            okEl.style.display = '';
+            const d = await api('PATCH', '/auth/profile', { display_name: document.getElementById('profile-name').value.trim(), organization: document.getElementById('profile-org').value.trim(), is_non_searchable: document.getElementById('profile-nonsearchable').checked ? 1 : 0 });
+            state.user = d.user; updateHeader(); okEl.style.display = '';
         } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
     });
 }
 
+/* ===== Profile completion modal ===== */
+function showProfileModal(onDone) {
+    openModal(`<div class="form-group"><label>Email</label><input type="text" value="${esc(state.user.email)}" disabled></div>
+        <div class="form-group"><label>Display name</label><input type="text" id="pm-name" value="${esc(state.user.display_name||'')}"></div>
+        <div class="form-group"><label>Organization <span class="text-muted">(optional)</span></label><input type="text" id="pm-org" value="${esc(state.user.organization||'')}"></div>
+        <div class="flex gap-1 mt-2"><button id="pm-skip" class="btn btn-ghost btn-sm">Skip for now</button><button id="pm-save" class="btn btn-primary btn-sm">Save and continue</button></div>`,
+        'Complete your profile');
+    document.getElementById('pm-skip').onclick = () => { closeModal(); onDone(); };
+    document.getElementById('pm-save').onclick = async () => {
+        try { const d = await api('PATCH', '/auth/profile', { display_name: document.getElementById('pm-name').value.trim(), organization: document.getElementById('pm-org').value.trim() }); state.user = d.user; updateHeader(); } catch {}
+        closeModal(); onDone();
+    };
+}
+
 /* ===== Init ===== */
 document.getElementById('login-btn').addEventListener('click', () => { location.hash = '#/login'; });
-document.getElementById('logout-btn').addEventListener('click', async () => {
-    await api('POST', '/auth/logout');
-    state.user = null;
-    updateHeader();
-    location.hash = '#/login';
-});
+document.getElementById('logout-btn').addEventListener('click', async () => { await api('POST', '/auth/logout'); state.user = null; updateHeader(); location.hash = '#/login'; });
 
 (async function init() {
     try {
@@ -1956,9 +1983,13 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     window.addEventListener('hashchange', () => router());
     await router();
     if (state.user) {
+        const seenKey = `act_seen_${state.user.id}`;
+        state.activitySeenTime = localStorage.getItem(seenKey) || new Date().toISOString();
         try {
             const data = await api('GET', '/activity');
             state.lastActivityTime = (data.activity && data.activity[0]) ? data.activity[0].created_at : new Date().toISOString();
+            state.activityUnread = (data.activity || []).filter(e => e.created_at > state.activitySeenTime).length;
+            updateHeader();
         } catch {}
         setInterval(pollActivity, 30000);
     }

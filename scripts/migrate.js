@@ -61,6 +61,7 @@ addColumnIfMissing('variants', 'parent_variant_id', 'INTEGER REFERENCES variants
 addColumnIfMissing('variants', 'final_yes', 'INTEGER');
 addColumnIfMissing('variants', 'final_no', 'INTEGER');
 addColumnIfMissing('variants', 'final_abstain', 'INTEGER');
+addColumnIfMissing('variants', 'allow_anonymous_share', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('documents', 'doc_vote_yes', 'INTEGER');
 addColumnIfMissing('documents', 'doc_vote_no', 'INTEGER');
 addColumnIfMissing('documents', 'doc_vote_abstain', 'INTEGER');
@@ -151,6 +152,18 @@ if (varSchemaRow && !varSchemaRow.sql.includes('not_applicable')) {
 } else {
     console.log('[skip] variants CHECK constraint already up to date');
 }
+
+// Create final_vote_log table if not exists
+db.prepare(`CREATE TABLE IF NOT EXISTS final_vote_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    variant_id INTEGER NOT NULL REFERENCES variants (id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    final_yes INTEGER, final_no INTEGER, final_abstain INTEGER,
+    recorded_at INTEGER NOT NULL
+)`).run();
+db.prepare('CREATE INDEX IF NOT EXISTS idx_fvl_variant ON final_vote_log (variant_id)').run();
+db.prepare('CREATE INDEX IF NOT EXISTS idx_fvl_user ON final_vote_log (user_id)').run();
+console.log('[done] Ensured final_vote_log table exists');
 
 db.close();
 console.log('Migration complete.');

@@ -411,10 +411,23 @@ async function viewFinalVoting(docId) {
   <button class="btn btn-sm btn-primary fv-save-btn">Save</button>
   <span class="fv-saved-indicator" style="display:none">✓ Saved</span>
 </div>
-<div class="fv-majority"></div>`;
+<div class="fv-majority"></div>
+<div class="fv-audit"><button class="fv-audit-btn">View audit trail</button><div class="fv-audit-list" style="display:none"></div></div>`;
         const saveBtn  = card.querySelector('.fv-save-btn');
         const savedInd = card.querySelector('.fv-saved-indicator');
         const majEl    = card.querySelector('.fv-majority');
+        const auditBtn = card.querySelector('.fv-audit-btn');
+        const auditList = card.querySelector('.fv-audit-list');
+        auditBtn.addEventListener('click', async () => {
+            if (auditList.style.display !== 'none') { auditList.style.display = 'none'; auditBtn.textContent = 'View audit trail'; return; }
+            try {
+                const d = await api('GET', `/variants/${v.id}/final-vote-log`);
+                auditList.innerHTML = d.logs.length ? d.logs.map(l =>
+                    `<div class="fv-audit-entry"><span class="fv-audit-time">${new Date(l.recorded_at).toLocaleString()}</span> <span>${esc(l.user_name)}</span>: yes=${l.final_yes??'–'} no=${l.final_no??'–'} abstain=${l.final_abstain??'–'}</div>`
+                ).join('') : '<div class="fv-audit-entry text-muted">No entries yet.</div>';
+                auditList.style.display = ''; auditBtn.textContent = 'Hide audit trail';
+            } catch {}
+        });
 
         function updateMajority() {
             const yes = varMap[v.id].final_yes || 0, no = varMap[v.id].final_no || 0;

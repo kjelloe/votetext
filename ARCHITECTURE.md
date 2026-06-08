@@ -33,7 +33,7 @@ data/votetext.db  (single SQLite file, WAL mode)
 | HTTP | Express 4 | Minimal, well-understood, enough middleware |
 | Database | SQLite via `better-sqlite3` | Zero-config, single file, synchronous API = simpler code |
 | Auth | Passwordless email OTP | No password storage, Resend SDK covers email delivery |
-| Frontend | Vanilla JS + HTML + CSS | No build step, no framework churn, < 2000 lines total |
+| Frontend | Vanilla JS + HTML + CSS | No build step, no framework churn; `app.js` < 2000 lines, editor views in `review.js` |
 | Deployment target | Single Linux VPS | Single-process, SQLite handles thousands of concurrent readers in WAL mode |
 
 ---
@@ -66,7 +66,8 @@ votetext/
 │       └── activity.js     — user activity feed
 ├── public/
 │   ├── index.html          — SPA shell
-│   ├── app.js              — client router + all views (< 2000 lines)
+│   ├── app.js              — client router + views used by all roles (< 2000 lines)
+│   ├── review.js           — editor/admin-only views: review, conflict resolution, final voting
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   └── test-plan.md        — human-readable test scenarios
@@ -78,7 +79,7 @@ votetext/
 
 ## Database Schema
 
-12 tables in a single SQLite file. Key relationships:
+13 tables in a single SQLite file. Key relationships:
 
 ```
 users ──────────────┬── sessions
@@ -89,7 +90,8 @@ users ──────────────┬── sessions
        │       └── variants ──── variant_relations
        │               │
        │               ├── votes
-       │               └── comments ── comments (self-ref, max 1 level)
+       │               ├── comments ── comments (self-ref, max 1 level)
+       │               └── final_vote_log   (audit trail, unix ms timestamps)
        │
        └── user_document_access (per-user, per-document ACL)
 
@@ -107,6 +109,12 @@ activity_log ── references users, documents, variants
 **Soft delete** — `documents.deleted_at TEXT` (NULL = active). All queries filter `AND deleted_at IS NULL`. Existing DBs need `npm run migrate` to add the column.
 
 **Voting countdown** — `documents.voting_scheduled_at TEXT` stores the ISO-8601 UTC timestamp when an `open` document should auto-transition to `voting`. Checked lazily via `applyVotingSchedules()` (see below). NULL = not scheduled.
+
+**Anonymous share** — `variants.allow_anonymous_share INTEGER DEFAULT 0`. When 1, `GET /api/variants/:id` is allowed for unauthenticated requests even if the document is not publicly viewable. Toggled by the proposer via `PATCH /api/variants/:id/share`.
+
+**Final vote audit log** — `final_vote_log` table stores one row per `PATCH /api/variants/:id/final-vote` save, with the full set of tallies at that moment and a Unix millisecond timestamp (`recorded_at`). Enables post-meeting dispute resolution. Rows are never updated — each save is a new append.
+
+**Draft visibility** — documents in `draft` status are only visible to the owner and users with `editor` or `admin` access. This is enforced in `GET /documents` (SQL filter), `GET /documents/:id` (inline check), and `checkDocAccess()` in variants.js (all variant sub-routes).
 
 **WAL mode** — All reads happen concurrently; writes are serialised by SQLite. Busy timeout is 5 s.
 
@@ -161,7 +169,7 @@ Each level includes all permissions of lower levels:
 ### Decision rules (in `src/middleware/access.js`)
 
 1. Document owner always resolves to `admin`
-2. Anonymous users can access at `viewer` level if `settings.allow_anonymous_view = true`
+2. Anonymous users can access at `viewer` level if `settings.allow_anonymous_view = true` **and** the document is not in `draft` status
 3. Blocked users (explicit record with `blocked = 1`) receive 403 regardless of default access
 4. Users with an explicit access record use that level; level must meet the route's `minLevel`
 5. Users with **no** explicit record fall back to `settings.default_access` (if set and a valid level); if not set or insufficient, 403
@@ -205,14 +213,16 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes /variants, /access, /activity sub-routes)
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
+                       (includes PATCH /:id/share — proposer only, toggle allow_anonymous_share)
                        (includes PATCH /:id/review-status — editor/admin status update)
                        (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution)
                        (includes PATCH /:id/final-vote — final_yes/no/abstain tallies, editor/admin, final_voting only)
+                       (includes GET /:id/final-vote-log — audit trail, editor/admin only)
 /api/comments/*    → src/routes/comments.js   (edit/delete only)
 /api/activity      → src/routes/activity.js
 ```
 
-All write endpoints (except logout) require a valid session cookie. Read endpoints on documents with `allow_anonymous_view = true` permit unauthenticated access.
+All write endpoints (except logout) require a valid session cookie. Read endpoints on documents with `allow_anonymous_view = true` (and status ≠ `draft`) permit unauthenticated access. `GET /api/variants/:id` additionally allows anonymous access when `allow_anonymous_share = 1` on the variant.
 
 ### HTTP status codes used
 
@@ -309,7 +319,7 @@ Single HTML page (`public/index.html`) with hash-based routing:
 - **`esc(str)`** — HTML-escapes all user-supplied values before inserting into innerHTML
 - **`el(tag, attrs, ...children)`** — creates DOM nodes programmatically for dynamic content
 - **Event delegation** — one listener on a container, not per-item
-- **Minimal client state** — `state.user`, `state.config` (server-delivered config: `toast_dismiss_seconds`, `voting_countdown_default_minutes`), `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page), `state.lastActivityTime` (newest activity event seen, for toast deduplication), `state.votingBannerInterval` (live countdown setInterval handle). Fresh fetch on every view render except review (variants mutated in-place after each action)
+- **Minimal client state** — `state.user`, `state.config` (server-delivered config: `toast_dismiss_seconds`, `voting_countdown_default_minutes`), `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page), `state.lastActivityTime` (newest activity event seen, for toast deduplication), `state.votingBannerInterval` (live countdown setInterval handle), `state.activityUnread` (unread badge count), `state.activitySeenTime` (ISO timestamp of last activity page visit, loaded from localStorage). Fresh fetch on every view render except review (variants mutated in-place after each action)
 
 ### Proposals sidebar
 
@@ -518,6 +528,52 @@ Stored in `state.config` during `init()`. Used by `openStatusModal` (default cou
 | `VARIANT_COOLDOWN_SECONDS` | 5 | Submitting a new proposal |
 
 The check queries the user's most recent comment/variant timestamp and returns `429 { error, retry_after }` if within the window. Skipped when `NODE_ENV=test`. The frontend mirrors the cooldown with a live countdown on the submit button after a successful post, and applies `retry_after` seconds from a 429 response.
+
+### Share proposal
+
+`PATCH /api/variants/:id/share { allow_anonymous_share: 0|1 }` — proposer only. No document status requirement. Sets the `allow_anonymous_share` flag which enables anonymous `GET /api/variants/:id` access even on non-public documents.
+
+Frontend: a **Share** button lives in the top-right of every proposal card in `viewVariant`. Clicking it opens a modal with the full URL and a Copy button. For the proposer, an extra checkbox toggles the flag immediately on change (no separate Save needed).
+
+**Anonymous simplified view** — when the frontend fetches a variant that succeeds but the document fetch returns 403 (non-public doc, anonymous user), it detects the `!state.user && !doc` combination and renders a stripped view: title, rationale, diff block, and a "Log in" link. No vote or comment sections are rendered.
+
+### Profile completion modal
+
+After `POST /auth/verify-otp` succeeds, `viewLogin` checks `state.user.display_name`. If empty, it calls `showProfileModal(onDone)` before navigating to `#/documents`. The modal presents: email (read-only), display name input, organization input (optional), Skip / Save buttons. Save calls `PATCH /auth/profile`, updating `state.user` and the header. Skip navigates immediately without saving.
+
+### Activity unread badge
+
+`<span id="act-badge">` sits inside the Activity nav link in `index.html`. `updateHeader()` toggles its `hidden` class and sets its text content from `state.activityUnread`. The count is set in:
+
+- `init()` — loads `act_seen_{userId}` from `localStorage`, counts events newer than that timestamp
+- `pollActivity()` — recounts events newer than `state.activitySeenTime` after each poll
+- `renderActivity()` — resets count to 0, writes current ISO timestamp to `localStorage`, calls `updateHeader()`
+
+### Draft restriction
+
+Documents in `draft` status are restricted to the owner and users with `editor`/`admin` access. Three enforcement points:
+
+1. **`GET /api/documents`** — SQL WHERE adds `AND (d.status != 'draft' OR uda.access_level IN ('editor', 'admin'))` for non-owner rows
+2. **`GET /api/documents/:id`** — inline check after the access record lookup; returns 403 for non-editors on draft docs, and denies anonymous users even if `allow_anonymous_view = true`
+3. **`checkDocAccess()` in `variants.js`** — enforces `effective = doc.status === 'draft' ? 'editor' : minLevel` for all variant sub-routes; also short-circuits anonymous users on drafts
+
+### Final vote audit log
+
+`PATCH /api/variants/:id/final-vote` now always inserts into `final_vote_log(variant_id, user_id, final_yes, final_no, final_abstain, recorded_at)` after updating the variant. `recorded_at` is `Date.now()` (Unix ms). Rows are never updated — every save produces a new row. `GET /api/variants/:id/final-vote-log` (editor+ only) returns all rows ordered by `recorded_at`.
+
+Frontend: each proposal card in the final voting walkthrough has a collapsed `<div class="fv-audit">` below the majority percentage. Clicking **View audit trail** fetches the log and renders one row per entry; clicking again collapses it.
+
+### `app.js` split strategy
+
+`app.js` is capped at 2000 lines. `review.js` already holds the three editor/admin-only views (`viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`) and is not line-capped. If `app.js` approaches the limit again, the recommended split is:
+
+| Candidate file | What to move | Who uses it |
+|---|---|---|
+| `public/review.js` | Already done — reviewer/editor views | editors, admins |
+| `public/auth.js` | `viewLogin`, `showProfileModal` | new/infrequent users only |
+| `public/profile.js` | `viewProfile` | occasional |
+
+The split should be driven by role: views that only editors/admins use go to `review.js`; views for infrequent flows (login, profile) can go to a `public/auth.js`. Core document/variant views should stay in `app.js` since all roles use them constantly.
 
 ---
 

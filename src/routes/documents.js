@@ -74,7 +74,10 @@ router.get('/', (req, res, next) => {
              FROM documents d
              JOIN users u ON u.id = d.owner_id
              LEFT JOIN user_document_access uda ON uda.document_id = d.id AND uda.user_id = ?
-             WHERE d.deleted_at IS NULL AND (d.owner_id = ? OR (uda.user_id IS NOT NULL AND uda.blocked = 0))
+             WHERE d.deleted_at IS NULL AND (
+                 d.owner_id = ?
+                 OR (uda.user_id IS NOT NULL AND uda.blocked = 0 AND (d.status != 'draft' OR uda.access_level IN ('editor', 'admin')))
+             )
              ORDER BY d.updated_at DESC`,
             [req.user.id, req.user.id, req.user.id]
         );
@@ -143,11 +146,14 @@ router.get('/:id', (req, res, next) => {
         const userId = req.user ? req.user.id : null;
 
         if (!userId) {
-            if (!settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
+            if (!settings.allow_anonymous_view || doc.status === 'draft') return res.status(403).json({ error: 'Access denied' });
         } else if (doc.owner_id !== userId) {
             const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [userId, doc.id]);
             if (access && access.blocked) return res.status(403).json({ error: 'Access denied' });
             if (!access && !ACCESS_LEVELS.includes(settings.default_access)) return res.status(403).json({ error: 'Access denied' });
+            if (doc.status === 'draft' && (!access || ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('editor'))) {
+                return res.status(403).json({ error: 'Access denied' });
+            }
         }
 
         res.json({ document: { ...doc, settings } });

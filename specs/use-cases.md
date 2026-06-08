@@ -449,6 +449,8 @@ Within a conflict group, root proposals are voted in vote-order number sequence 
 4. For each proposal, the editor records the physical vote tally: **Yes**, **No**, **Abstain** (integer counts). Clicking **Save** calls `PATCH /api/variants/:id/final-vote`.
    - After saving, a coloured **majority percentage** appears below the inputs: green if yes > 50%, yellow if exactly 50/50, red if yes < 50%.
    - The save indicator shows **"✓ Saved at HH:MM"** (human-readable timestamp).
+   - Each save also writes a new row to `final_vote_log` with a Unix-millisecond timestamp, enabling a full audit trail.
+   - Clicking **"View audit trail"** on a proposal expands a collapsible panel showing all save events — timestamp, user name, and the yes/no/abstain values recorded at each save. Clicking again collapses it.
    - If a **parent** proposal passes (yes > no), its child cards collapse and grey out, showing "Not voting on — parent passed". A **"✓ Passed"** badge appears on the parent card. If the parent fails, a **"✗ Failed"** badge appears and children remain active.
 5. At the bottom, an **Overall document vote** section records the total vote on the document as a whole. Clicking **Save** calls `PATCH /api/documents/:id/doc-vote`.
 6. After all tallies are recorded, the document remains in `final_voting`. The editor uses **Change Status → resolved** to close voting.
@@ -469,8 +471,68 @@ After all individual proposals are voted on, the assembly votes on the document 
 
 ---
 
+## UC-12: Share a proposal via direct link
+
+**Actor:** Any authenticated user viewing a proposal; proposer to control anonymous access  
+**Entry point:** Proposal view (`#/variants/:id`) → **Share** button
+
+### Main flow
+
+1. User clicks **Share** in the top-right of the proposal card.
+2. A modal opens showing the direct link (`origin/#/variants/:id`) and a **Copy** button.
+3. Clicking **Copy** writes the URL to the clipboard, shows a brief toast, and closes the modal.
+4. If the user is the proposer of the variant, the modal also shows a checkbox: **"Allow anyone to view this proposal without logging in"**. The checkbox reflects the current `allow_anonymous_share` setting.
+5. Toggling the checkbox immediately calls `PATCH /api/variants/:id/share` to update the setting.
+
+### Anonymous access via share link
+
+When `allow_anonymous_share = 1`:
+- `GET /api/variants/:id` succeeds for anonymous (unauthenticated) requests even if the document does not allow anonymous viewing.
+- The frontend detects the anonymous-with-no-doc-access scenario and renders a **simplified view**: proposal title, rationale, and diff only — no vote card, no comment section.
+- A **"Log in"** link invites the visitor to register/log in to access the full document.
+
+When `allow_anonymous_share = 0` (default): anonymous access to a non-public document returns 403 as usual.
+
+---
+
+## UC-13: Profile completion after first login
+
+**Actor:** New user who just verified their OTP for the first time (display name not yet set)  
+**Entry point:** Automatic — triggered after `POST /auth/verify-otp` succeeds when `display_name` is empty
+
+### Main flow
+
+1. User verifies their OTP and the server returns a valid session.
+2. Client detects `user.display_name === ''` and shows a **modal overlay** before navigating away.
+3. The modal displays:
+   - **Email** (read-only)
+   - **Display name** text input
+   - **Organization** text input (optional)
+   - **"Skip for now"** and **"Save and continue"** buttons
+4. If user clicks **Save and continue**: client calls `PATCH /auth/profile` with the entered values, updates `state.user`, then navigates to `#/documents`.
+5. If user clicks **Skip for now**: client navigates to `#/documents` without saving. The modal appears again on the next login if the name is still empty.
+
+---
+
+## UC-14: Draft document visibility restriction
+
+**Actor:** Any user  
+**Applies to:** Documents in `draft` status
+
+### Rules
+
+| User type | Can see draft document? |
+|-----------|------------------------|
+| Owner | Yes |
+| User with `editor` or `admin` access | Yes |
+| User with `viewer`, `commenter`, `proposer`, `voter` access | No (403) |
+| Anonymous (even with `allow_anonymous_view = true`) | No (403) |
+
+This restriction applies to both `GET /documents/:id` and the document list (`GET /documents` — draft docs only appear in the list if the requesting user has editor+ access or is the owner). Once a document transitions to `open`, normal access rules apply.
+
+---
+
 ## Planned / future use cases
 
-- **UC-12:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are processed based on vote tallies and `resolution_mode` setting.
-- **UC-13:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-14:** Anonymous viewing — public document accessible without login; read-only.
+- **UC-15:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are processed based on vote tallies and `resolution_mode` setting.
+- **UC-16:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.

@@ -495,12 +495,13 @@ test('PATCH /documents/:id — set default_access grants implicit access to unre
     const before = await req('GET', `/documents/${dId}`, { cookie: viewerCookie });
     assert.equal(before.status, 403, 'denied before default_access set');
 
-    // Set default_access to viewer
+    // Set default_access to viewer and open the document (drafts require editor+)
     await req('PATCH', `/documents/${dId}`, { body: { settings: { default_access: 'viewer' } }, cookie: sessionCookie });
+    await req('POST', `/documents/${dId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
 
     // Bob can now access
     const after = await req('GET', `/documents/${dId}`, { cookie: viewerCookie });
-    assert.equal(after.status, 200, 'accessible after default_access=viewer');
+    assert.equal(after.status, 200, 'accessible after default_access=viewer on open doc');
 });
 
 test('POST /documents/:id/access — cannot grant level above own → 403', async () => {
@@ -761,14 +762,15 @@ let anonDocId;
 
 test('Setup: create public + private doc for anonymous access tests', async () => {
     const priv = await req('POST', '/documents', { body: { title: 'Private doc', text: 'secret content' }, cookie: sessionCookie });
-    anonDocId = priv.data.document.id;
     // Leave allow_anonymous_view = false (default)
 
     const pub = await req('POST', '/documents', {
         body: { title: 'Public doc', text: 'open content', settings: { allow_anonymous_view: true } },
         cookie: sessionCookie,
     });
-    // Store public doc id temporarily for the next test
+    // Open both docs — draft docs are only visible to editor+ even with allow_anonymous_view
+    await req('POST', `/documents/${priv.data.document.id}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${pub.data.document.id}/status`, { body: { status: 'open' }, cookie: sessionCookie });
     anonDocId = { priv: priv.data.document.id, pub: pub.data.document.id };
 });
 
@@ -1387,6 +1389,103 @@ test('GET variant after resolve — yes > no → status = approved', async () =>
     const r = await req('GET', `/variants/${conflictVariant2Id}`, { cookie: sessionCookie });
     assert.equal(r.status, 200);
     assert.equal(r.data.variant.status, 'approved');
+});
+
+// ── GROUP O — Share Proposal ──────────────────────────────────────────────────
+
+let shareDocId, shareVarId;
+
+test('Setup: create doc + variant for share tests', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Share test doc', text: 'some text here' }, cookie: sessionCookie });
+    shareDocId = d.data.document.id;
+    await req('POST', `/documents/${shareDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${shareDocId}/variants`, {
+        body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'other', title: 'Share variant' },
+        cookie: sessionCookie,
+    });
+    shareVarId = v.data.variant.id;
+});
+
+test('GET /variants/:id — anonymous on non-public doc without share → 403', async () => {
+    const r = await req('GET', `/variants/${shareVarId}`);
+    assert.equal(r.status, 403);
+});
+
+test('PATCH /variants/:id/share — by non-proposer → 403', async () => {
+    const r = await req('PATCH', `/variants/${shareVarId}/share`, { body: { allow_anonymous_share: 1 }, cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('PATCH /variants/:id/share — enable anonymous share → 200', async () => {
+    const r = await req('PATCH', `/variants/${shareVarId}/share`, { body: { allow_anonymous_share: 1 }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.allow_anonymous_share, 1);
+});
+
+test('GET /variants/:id — anonymous access after share enabled → 200', async () => {
+    const r = await req('GET', `/variants/${shareVarId}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.id, shareVarId);
+});
+
+test('PATCH /variants/:id/share — disable anonymous share → 200', async () => {
+    const r = await req('PATCH', `/variants/${shareVarId}/share`, { body: { allow_anonymous_share: 0 }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.allow_anonymous_share, 0);
+});
+
+// ── GROUP P — Draft Document Restriction ─────────────────────────────────────
+
+let draftDocId;
+
+test('Setup: create draft doc and grant viewer access to Bob', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Draft restriction doc', text: 'draft content' }, cookie: sessionCookie });
+    draftDocId = d.data.document.id;
+    await req('POST', `/documents/${draftDocId}/access`, { body: { email: 'bob@test.com', access_level: 'viewer' }, cookie: sessionCookie });
+});
+
+test('GET /documents/:id — draft doc, viewer access → 403', async () => {
+    const r = await req('GET', `/documents/${draftDocId}`, { cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('GET /documents — draft doc not visible in Bob\'s list → absent', async () => {
+    const r = await req('GET', '/documents', { cookie: viewerCookie });
+    assert.equal(r.status, 200);
+    assert.ok(!r.data.documents.find(d => d.id === draftDocId), 'draft doc not in list');
+});
+
+test('GET /documents/:id — draft doc, owner → 200', async () => {
+    const r = await req('GET', `/documents/${draftDocId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+});
+
+test('GET /documents/:id — draft doc, anonymous → 403 even if allow_anonymous_view', async () => {
+    await req('PATCH', `/documents/${draftDocId}`, { body: { settings: { allow_anonymous_view: true } }, cookie: sessionCookie });
+    const r = await req('GET', `/documents/${draftDocId}`);
+    assert.equal(r.status, 403);
+});
+
+// ── GROUP Q — Final Vote Log ──────────────────────────────────────────────────
+
+test('GET /variants/:id/final-vote-log — no auth → 401', async () => {
+    const r = await req('GET', `/variants/${conflictVariant2Id}/final-vote-log`);
+    assert.equal(r.status, 401);
+});
+
+test('GET /variants/:id/final-vote-log — viewer → 403', async () => {
+    const r = await req('GET', `/variants/${conflictVariant2Id}/final-vote-log`, { cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('GET /variants/:id/final-vote-log — owner on resolved doc → 200, entries present', async () => {
+    const r = await req('GET', `/variants/${conflictVariant2Id}/final-vote-log`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.data.logs), 'logs is an array');
+    assert.ok(r.data.logs.length > 0, 'at least one log entry from final-vote test');
+    const entry = r.data.logs[0];
+    assert.ok(entry.recorded_at > 0, 'recorded_at is a positive unix ms timestamp');
+    assert.ok(entry.user_name, 'user_name present');
 });
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────

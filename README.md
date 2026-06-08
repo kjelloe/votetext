@@ -43,7 +43,8 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Pre-numbered text: optional strip of leading line numbers before import
 - Automatic page/line structuring (configurable lines per page, default 30)
 - Documents support 1–200 pages, 27–60 lines per page
-- Document status lifecycle: `draft → open → voting → resolved → archived`
+- Document status lifecycle: `draft → open → voting → final_voting → resolved → archived`
+- **Draft visibility** — draft documents are only shown to the owner and users with `editor`/`admin` access; all other roles and anonymous users see 403 until the document is opened
 - **Copy document** — owner can duplicate a document (same title + " (copy)", same text, no proposals) from the viewer toolbar
 
 #### Variant Proposals
@@ -58,6 +59,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Variant relationships: `based_on`, `overlaps`, `conflicts`, `supersedes`
 - Withdraw your own proposals
 - **Proposal detail page** — heading shows "Proposal #N"; ← Prev / Next → arrows navigate between proposals in document order with tooltips; Back to document scrolls to the proposal's location; line context preview (Original/Proposed toggle) shows affected lines with inline highlights
+- **Share proposal** — Share button on every proposal opens a modal with a direct link and Copy button; proposer can toggle "Allow anyone to view" to enable anonymous access via the link; anonymous visitors see a simplified view (title, rationale, diff + login prompt)
 
 #### Voting
 - One vote per user per variant: **for** (+1), **against** (−1), or **abstain** (0)
@@ -84,12 +86,14 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - `?mine=true` filter: only your own actions
 - Activity log tracking all significant events
 - Configurable polling interval for real-time-ish updates
+- **Unread badge** — red counter next to the Activity nav link shows new events since last visit; resets on page open; persisted via `localStorage`
 
 #### Authentication
 - Passwordless email OTP login
 - Session-based auth with secure cookies
 - OTP rate limiting and lockout protection
 - **Non-searchable profile** — users can opt out of appearing in user search results (profile toggle)
+- **Profile completion** — new users without a display name are prompted to fill in their name and organisation in a modal overlay immediately after their first login
 
 ---
 
@@ -112,6 +116,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `comments` | Two-level threaded discussion under each variant |
 | `user_document_access` | Per-user, per-document access level + block flag |
 | `activity_log` | Event log for activity feeds and audit trails |
+| `final_vote_log` | Append-only tally audit trail (one row per final-vote save, Unix ms timestamp) |
 
 #### Key Design Decisions
 
@@ -152,8 +157,11 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `GET`    | `/api/variants/:id` | Get variant details |
 | `PATCH`  | `/api/variants/:id` | Update variant (author only, while pending) |
 | `DELETE` | `/api/variants/:id` | Withdraw variant |
+| `PATCH`  | `/api/variants/:id/share` | Enable / disable anonymous share link (proposer only) |
 | `POST`   | `/api/variants/:id/relations` | Add a variant relation |
 | `GET`    | `/api/variants/:id/relations` | List variant relations |
+| `PATCH`  | `/api/variants/:id/final-vote` | Record final tally (editor/admin, final_voting only) |
+| `GET`    | `/api/variants/:id/final-vote-log` | Full audit trail of tally saves (editor/admin only) |
 
 #### Votes
 | Method | Path | Description |
@@ -340,6 +348,15 @@ sqlite3 /opt/votetext/data/votetext.db ".backup /home/kjelloe/backups/votetext-$
 - [x] Frontend: activity feed
 - [x] Mobile-responsive design
 - [x] Rate limiting and security hardening
+- [x] Document status lifecycle (draft → open → voting → final_voting → resolved → archived)
+- [x] Review view (two-panel, per-proposal action buttons)
+- [x] Conflict resolution view (drag-and-drop ordering, parent/child hierarchy)
+- [x] Final voting walkthrough (tally recording, export CSV, print HTML, audit trail)
+- [x] Voting countdown with live banner and toast notifications
+- [x] Share proposal via direct link (proposer controls anonymous access)
+- [x] Profile completion modal on first login
+- [x] Activity unread badge
+- [x] Draft document visibility restriction
 - [ ] Resolution workflow (auto-apply winning variant to document text)
 - [ ] Export resolved document
 - [ ] Moderation dashboard

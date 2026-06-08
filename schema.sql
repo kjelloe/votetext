@@ -178,6 +178,9 @@ CREATE TABLE IF NOT EXISTS variants (
     final_no        INTEGER,
     final_abstain   INTEGER,
 
+    -- Anonymous share: allow unauthenticated users to view this variant via direct link
+    allow_anonymous_share INTEGER NOT NULL DEFAULT 0,
+
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
 
@@ -312,7 +315,25 @@ CREATE INDEX idx_activity_created    ON activity_log (created_at);
 CREATE INDEX idx_activity_user_time  ON activity_log (user_id, created_at DESC);
 
 -- ---------------------------------------------------------------------------
--- 12. CLEANUP HELPERS
+-- 12. FINAL VOTE LOG  (audit trail for final voting)
+-- ---------------------------------------------------------------------------
+-- Each save of yes/no/abstain on a variant creates a new entry with a full
+-- Unix millisecond timestamp so the voting sequence can be audited.
+CREATE TABLE IF NOT EXISTS final_vote_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    variant_id      INTEGER NOT NULL REFERENCES variants (id) ON DELETE CASCADE,
+    user_id         INTEGER NOT NULL REFERENCES users (id)    ON DELETE CASCADE,
+    final_yes       INTEGER,
+    final_no        INTEGER,
+    final_abstain   INTEGER,
+    recorded_at     INTEGER NOT NULL   -- Unix milliseconds
+);
+
+CREATE INDEX idx_fvl_variant ON final_vote_log (variant_id);
+CREATE INDEX idx_fvl_user    ON final_vote_log (user_id);
+
+-- ---------------------------------------------------------------------------
+-- 13. CLEANUP HELPERS
 -- ---------------------------------------------------------------------------
 -- Periodically delete expired OTP codes and sessions (run from app or cron)
 -- DELETE FROM otp_codes WHERE expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now');

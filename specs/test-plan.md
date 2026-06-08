@@ -220,6 +220,39 @@
 
 ---
 
+## Group O — Share Proposal
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| O1 | GET `/variants/:id` — anonymous on non-public doc, share disabled | 403 |
+| O2 | PATCH `/variants/:id/share` by non-proposer | 403 |
+| O3 | PATCH `/variants/:id/share { allow_anonymous_share: 1 }` by proposer | 200, field updated |
+| O4 | GET `/variants/:id` — anonymous after share enabled | 200, variant returned |
+| O5 | PATCH `/variants/:id/share { allow_anonymous_share: 0 }` — disable | 200, field cleared |
+
+---
+
+## Group P — Draft Document Restriction
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| P1 | GET `/documents/:id` — draft doc, viewer access | 403 |
+| P2 | GET `/documents` — draft doc not visible in non-editor user's list | absent from list |
+| P3 | GET `/documents/:id` — draft doc, owner | 200 |
+| P4 | GET `/documents/:id` — draft doc, anonymous with allow_anonymous_view=true | 403 (draft always blocked) |
+
+---
+
+## Group Q — Final Vote Log
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| Q1 | GET `/variants/:id/final-vote-log` — no auth | 401 |
+| Q2 | GET `/variants/:id/final-vote-log` — viewer | 403 |
+| Q3 | GET `/variants/:id/final-vote-log` — owner on resolved doc | 200, entries with `recorded_at` (unix ms) and `user_name` present |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.
@@ -251,3 +284,8 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Record tally:** enter yes/no/abstain for a proposal → Save → "✓ Saved at HH:MM" appears; majority percentage shows below inputs (green >50%, yellow =50%, red <50%); reload page → values persist
 - [ ] **Parent passes collapse:** record yes > no for a parent proposal → child cards grey out and collapse showing "Not voting on — parent passed"; parent card shows "✓ Passed" badge; record yes ≤ no → "✗ Failed" badge; children remain visible
 - [ ] **Overall document vote:** fill yes/no/abstain at bottom → Save → persists on reload
+- [ ] **Profile completion modal:** log in as new user with no display name → modal appears; fill in name + org → Save and continue → header shows new name; or click Skip → header shows email
+- [ ] **Activity unread badge:** navigate away from Activity page; trigger some activity in another tab → red badge number appears next to "Activity" nav link; click Activity → badge disappears
+- [ ] **Share proposal:** open any proposal → click Share button → modal shows link + Copy button; clicking Copy closes modal and shows toast; proposer sees "Allow anyone to view" checkbox; enable it → open link in private/incognito tab → simplified view appears with proposal and login link
+- [ ] **Draft restriction:** create document (stays in Draft) → log in as viewer/non-editor user → document NOT visible in list and GET returns 403; open the document (→ Open status) → document now visible
+- [ ] **Audit trail:** in Final voting walkthrough, click "View audit trail" on any proposal → collapsible panel shows all save events with timestamp, user, yes/no/abstain values; click again → collapses; save new tally → re-expand → new entry appears
