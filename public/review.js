@@ -232,7 +232,7 @@ function _renderConflictGroup(group, gIdx, save) {
     function buildList() {
         listEl.innerHTML = '';
         const roots = sortedRoots(group);
-        const childrenOf = (pid) => group.filter(v => v.parent_variant_id === pid);
+        const childrenOf = (pid) => [...group.filter(v => v.parent_variant_id === pid)].sort((a, b) => (a.vote_order || Infinity) - (b.vote_order || Infinity));
 
         const mkDZ = (pos) => {
             const dz = el('div', { class: 'conflict-dropzone' });
@@ -252,31 +252,52 @@ function _renderConflictGroup(group, gIdx, save) {
             return dz;
         };
 
+        const mkChildDZ = (parentRoot, pos, siblings) => {
+            const dz = el('div', { class: 'conflict-dropzone conflict-dropzone-child' });
+            dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('active'); });
+            dz.addEventListener('dragleave', () => dz.classList.remove('active'));
+            dz.addEventListener('drop', async e => {
+                e.preventDefault(); dz.classList.remove('active');
+                if (!dragId) return;
+                const dragged = siblings.find(c => c.id === dragId);
+                if (!dragged) return;
+                const filtered = siblings.filter(c => c.id !== dragId);
+                const dragIdx = siblings.findIndex(c => c.id === dragId);
+                const insertAt = dragIdx >= 0 && pos > dragIdx ? Math.min(pos - 1, filtered.length) : Math.min(pos, filtered.length);
+                filtered.splice(insertAt, 0, dragged);
+                await save(filtered.map((c, i) => ({ id: c.id, patch: { vote_order: i + 1, parent_variant_id: parentRoot.id } })));
+            });
+            return dz;
+        };
+
         roots.forEach((root, ri) => {
             listEl.append(mkDZ(ri));
 
             const rc = el('div', { class: 'conflict-card', draggable: 'true' });
-            rc.innerHTML = `<span class="conflict-drag-handle" title="Drag to reorder or drop onto a proposal to make this a child">⠿</span><span class="conflict-order-badge">${ri + 1}</span><span class="conflict-card-body"><span class="conflict-card-title">${esc(root.title || root.operation)}</span> <span class="variant-num">#${root.num}</span><span class="text-muted conflict-card-meta"> · ${esc(root.operation)} · lines ${esc(String(root.line_start || '?'))}–${esc(String(root.line_end || '?'))}</span></span>`;
+            rc.innerHTML = `<span class="conflict-drag-handle" title="Drag to reorder or drop onto a proposal to make this a child">⠿</span><span class="conflict-order-badge">${ri + 1}</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(root.rationale || '')}">${esc(root.title || root.operation)}</span> <span class="variant-num">#${root.num}</span><span class="text-muted conflict-card-meta"> · ${esc(root.operation)} · lines ${esc(String(root.line_start || '?'))}–${esc(String(root.line_end || '?'))}</span></span>`;
             rc.addEventListener('dragstart', e => { dragId = root.id; rc.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
             rc.addEventListener('dragend', () => { dragId = null; rc.classList.remove('dragging'); listEl.querySelectorAll('.conflict-card.drop-target').forEach(x => x.classList.remove('drop-target')); });
             rc.addEventListener('dragover', e => { if (dragId && dragId !== root.id) { e.preventDefault(); e.stopPropagation(); rc.classList.add('drop-target'); } });
             rc.addEventListener('dragleave', () => rc.classList.remove('drop-target'));
             rc.addEventListener('drop', async e => {
                 e.preventDefault(); e.stopPropagation(); rc.classList.remove('drop-target');
-                if (dragId && dragId !== root.id) await save([{ id: dragId, patch: { vote_order: null, parent_variant_id: root.id } }]);
+                if (dragId && dragId !== root.id) await save([{ id: dragId, patch: { parent_variant_id: root.id } }]);
             });
             listEl.append(rc);
 
-            for (const child of childrenOf(root.id)) {
+            const sortedChildren = childrenOf(root.id);
+            sortedChildren.forEach((child, ci) => {
+                listEl.append(mkChildDZ(root, ci, sortedChildren));
                 const cc = el('div', { class: 'conflict-card conflict-card-child', draggable: 'true' });
-                cc.innerHTML = `<span class="conflict-drag-handle" title="Drag to drop zone above to remove from parent">⠿</span><span class="conflict-child-badge">child of #${root.num}</span><span class="conflict-card-body"><span class="conflict-card-title">${esc(child.title || child.operation)}</span> <span class="variant-num">#${child.num}</span></span><button class="conflict-remove-child" title="Remove child relationship">×</button>`;
+                cc.innerHTML = `<span class="conflict-drag-handle" title="Drag to reorder among siblings">⠿</span><span class="conflict-child-order-badge">${ci + 1}</span><span class="conflict-child-badge">child of #${root.num}</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(child.rationale || '')}">${esc(child.title || child.operation)}</span> <span class="variant-num">#${child.num}</span></span><button class="conflict-remove-child" title="Remove child relationship">×</button>`;
                 cc.addEventListener('dragstart', e => { dragId = child.id; cc.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
                 cc.addEventListener('dragend', () => { dragId = null; cc.classList.remove('dragging'); });
                 cc.querySelector('.conflict-remove-child').addEventListener('click', async () => {
                     await save([{ id: child.id, patch: { vote_order: null, parent_variant_id: null } }]);
                 });
                 listEl.append(cc);
-            }
+            });
+            listEl.append(mkChildDZ(root, sortedChildren.length, sortedChildren));
         });
 
         listEl.append(mkDZ(roots.length));
@@ -288,7 +309,7 @@ function _renderConflictGroup(group, gIdx, save) {
             ));
             for (const v of unordered) {
                 const uc = el('div', { class: 'conflict-card conflict-card-unordered', draggable: 'true' });
-                uc.innerHTML = `<span class="conflict-drag-handle">⠿</span><span class="conflict-card-body"><span class="conflict-card-title">${esc(v.title || v.operation)}</span> <span class="variant-num">#${v.num}</span><span class="text-muted conflict-card-meta"> · ${esc(v.operation)} · lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))}</span></span>`;
+                uc.innerHTML = `<span class="conflict-drag-handle">⠿</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(v.rationale || '')}">${esc(v.title || v.operation)}</span> <span class="variant-num">#${v.num}</span><span class="text-muted conflict-card-meta"> · ${esc(v.operation)} · lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))}</span></span>`;
                 uc.addEventListener('dragstart', e => { dragId = v.id; uc.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
                 uc.addEventListener('dragend', () => { dragId = null; uc.classList.remove('dragging'); listEl.querySelectorAll('.conflict-card.drop-target').forEach(x => x.classList.remove('drop-target')); });
                 listEl.append(uc);
@@ -341,19 +362,43 @@ async function viewFinalVoting(docId) {
         progressEl.className = `fv-progress${done === allItems.length ? ' fv-progress-done' : ''}`;
     }
 
+    function updateChildrenState(parentId) {
+        const pv = varMap[parentId];
+        if (!pv) return;
+        const hasTally = pv.final_yes != null || pv.final_no != null;
+        const passed = hasTally && (pv.final_yes || 0) > (pv.final_no || 0);
+        list.querySelectorAll(`[data-parent-id="${parentId}"]`).forEach(childCard => {
+            childCard.classList.toggle('fv-card-child-skipped', passed);
+            const skipNote = childCard.querySelector('.fv-skip-note');
+            if (skipNote) skipNote.style.display = passed ? '' : 'none';
+        });
+        const parentCard = list.querySelector(`[data-id="${parentId}"]`);
+        if (!parentCard || !hasTally) return;
+        let badge = parentCard.querySelector('.fv-result-badge');
+        if (!badge) {
+            badge = document.createElement('span');
+            parentCard.querySelector('.fv-card-header').append(badge);
+        }
+        badge.textContent = passed ? '✓ Passed' : '✗ Failed';
+        badge.className = `fv-result-badge ${passed ? 'fv-result-passed' : 'fv-result-failed'}`;
+    }
+
     function renderProposalCard(v, isChild, parentNum, blockType, groupNum) {
         const orig = fullText.slice(v.char_start, v.char_end);
-        const card = el('div', { class: `fv-card${isChild ? ' fv-card-child' : ''}`, 'data-id': v.id });
+        const cardAttrs = { class: `fv-card${isChild ? ' fv-card-child' : ''}`, 'data-id': String(v.id) };
+        if (isChild) cardAttrs['data-parent-id'] = String(v.parent_variant_id || '');
+        const card = el('div', cardAttrs);
         const statusHtml = `<span class="fv-status-badge fv-status-${v.status}">${esc(v.status)}</span>`;
         const orderBadge = !isChild && blockType === 'group' ? `<span class="fv-order-badge">${esc(String(v.vote_order || ''))}</span>` : '';
         const childNote  = isChild ? `<span class="fv-child-note">↳ child of #${esc(String(parentNum))} — voted only if parent fails</span>` : '';
+        const skipNote   = isChild ? `<span class="fv-skip-note" style="display:none">Not voting on — parent passed</span>` : '';
         card.innerHTML = `
 <div class="fv-card-header">
   ${orderBadge}<strong class="fv-card-num">#${esc(String(v.num))}</strong>
   <span class="fv-card-title">${esc(v.title || v.operation)}</span>
   ${statusHtml}
   <span class="fv-card-meta text-muted">${esc(v.operation)} · lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))}</span>
-  ${childNote}
+  ${childNote}${skipNote}
 </div>
 <div class="fv-card-texts">
   <div class="fv-label">Original</div><div class="fv-text">${esc(orig) || '<em class="text-muted">— empty —</em>'}</div>
@@ -365,9 +410,23 @@ async function viewFinalVoting(docId) {
   <label>Abstain <input class="fv-num-input" type="number" min="0" name="abstain" value="${esc(String(v.final_abstain ?? ''))}"></label>
   <button class="btn btn-sm btn-primary fv-save-btn">Save</button>
   <span class="fv-saved-indicator" style="display:none">✓ Saved</span>
-</div>`;
-        const saveBtn = card.querySelector('.fv-save-btn');
+</div>
+<div class="fv-majority"></div>`;
+        const saveBtn  = card.querySelector('.fv-save-btn');
         const savedInd = card.querySelector('.fv-saved-indicator');
+        const majEl    = card.querySelector('.fv-majority');
+
+        function updateMajority() {
+            const yes = varMap[v.id].final_yes || 0, no = varMap[v.id].final_no || 0;
+            const total = yes + no;
+            if (total === 0) { majEl.textContent = ''; majEl.className = 'fv-majority'; return; }
+            const pct = Math.round(yes / total * 100);
+            const cls = pct > 50 ? 'fv-majority-pass' : (pct === 50 ? 'fv-majority-split' : 'fv-majority-fail');
+            majEl.textContent = `${pct}% yes`;
+            majEl.className = `fv-majority ${cls}`;
+        }
+        updateMajority();
+
         saveBtn.addEventListener('click', async () => {
             const yes     = parseInt(card.querySelector('[name=yes]').value,     10);
             const no      = parseInt(card.querySelector('[name=no]').value,      10);
@@ -379,7 +438,11 @@ async function viewFinalVoting(docId) {
             try {
                 const d = await api('PATCH', `/variants/${v.id}/final-vote`, patch);
                 Object.assign(varMap[v.id], d.variant);
-                saveBtn.style.display = 'none'; savedInd.style.display = '';
+                saveBtn.style.display = 'none';
+                savedInd.style.display = '';
+                savedInd.textContent = '✓ Saved at ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                updateMajority();
+                if (!isChild) updateChildrenState(v.id);
                 updateProgress();
             } catch (e) { alert(e.message); }
         });
@@ -419,6 +482,9 @@ async function viewFinalVoting(docId) {
     wrap.append(list, docVote);
     setMain(wrap);
     updateProgress();
+    for (const block of blocks)
+        for (const { v, isChild } of block.items)
+            if (!isChild) updateChildrenState(v.id);
 
     docVote.querySelector('#dv-save').addEventListener('click', async () => {
         const yes     = parseInt(docVote.querySelector('#dv-yes').value,     10);

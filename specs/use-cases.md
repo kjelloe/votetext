@@ -406,10 +406,12 @@ A conflict group is a set of ≥ 2 active proposals (not withdrawn / rejected / 
 2. Browser navigates to `#/documents/:id/conflicts`.
 3. The conflict resolution view shows one card per conflict group, labelled by line range. Each card starts with all proposals in an **Unassigned** section at the bottom.
 4. For each group, the editor drags proposals into the numbered **ordered list** above:
-   - **Drag to a drop zone** (highlighted line between proposals) → proposal becomes a root at that position, receiving a vote-order number [1], [2], [3]…
-   - **Drag onto a root proposal card** → dropped proposal becomes a **child** (indented, shown with "child of #N" badge). Children are voted only if their parent proposal fails.
+   - **Drag to a drop zone** (highlighted line between roots) → proposal becomes a root at that position, receiving a vote-order number [1], [2], [3]…
+   - **Drag onto a root proposal card** → dropped proposal becomes a **child** of that root (indented, amber "child of #N" badge, amber numbered order badge). Children are voted only if their parent proposal fails.
+   - **Drag between child cards** (drop zones appear between children of the same parent) → reorders children within that parent. Child order determines voting sequence if the parent fails.
 5. To remove a child relationship, the editor clicks **×** on the child card (returns it to Unassigned).
-6. A group is marked **✓ Resolved** once every proposal has either a vote-order number (root) or a parent (child). Max two levels of nesting.
+6. Hovering over any proposal's title shows its **rationale** text (browser tooltip).
+7. A group is marked **✓ Resolved** once every proposal has either a vote-order number (root) or a parent (child). Max two levels of nesting.
 7. When all groups are resolved, the **Ready for final voting** button turns green.
 8. Editor clicks **Ready for final voting** → document transitions to `final_voting` status → browser navigates to document view.
 
@@ -422,7 +424,7 @@ A conflict group is a set of ≥ 2 active proposals (not withdrawn / rejected / 
 
 ### Voting semantics (for future resolve flow)
 
-Within a conflict group, root proposals are voted in vote-order number sequence (1 first, then 2, etc.). If a root proposal **passes**, its children become **Obsoleted by prior vote** (effectively `not_applicable`). If a root **fails**, its children proceed to their own vote normally.
+Within a conflict group, root proposals are voted in vote-order number sequence (1 first, then 2, etc.). If a root proposal **passes**, its children are skipped (become `not_applicable`). If a root **fails**, its children proceed to their own vote in their child-order sequence.
 
 ---
 
@@ -445,6 +447,9 @@ Within a conflict group, root proposals are voted in vote-order number sequence 
    - **Print HTML** button — opens a new browser tab with a print-ready HTML tally sheet.
    - All voteable proposals (pending + ordered conflict proposals) in a scrollable list, ordered by document position. Conflict groups appear as a labelled section; child proposals are indented with a "↳ child of #N — voted only if parent fails" note.
 4. For each proposal, the editor records the physical vote tally: **Yes**, **No**, **Abstain** (integer counts). Clicking **Save** calls `PATCH /api/variants/:id/final-vote`.
+   - After saving, a coloured **majority percentage** appears below the inputs: green if yes > 50%, yellow if exactly 50/50, red if yes < 50%.
+   - The save indicator shows **"✓ Saved at HH:MM"** (human-readable timestamp).
+   - If a **parent** proposal passes (yes > no), its child cards collapse and grey out, showing "Not voting on — parent passed". A **"✓ Passed"** badge appears on the parent card. If the parent fails, a **"✗ Failed"** badge appears and children remain active.
 5. At the bottom, an **Overall document vote** section records the total vote on the document as a whole. Clicking **Save** calls `PATCH /api/documents/:id/doc-vote`.
 6. After all tallies are recorded, the document remains in `final_voting`. The editor uses **Change Status → resolved** to close voting.
 

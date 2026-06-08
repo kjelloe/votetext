@@ -1209,6 +1209,30 @@ test('POST /documents/:id/status — final_voting → voting (back) → 200', as
     assert.equal(r.data.document.status, 'voting');
 });
 
+// ── GROUP N — Auto-assign child vote_order ────────────────────────────────────
+
+test('PATCH /variants/:id/conflict-order — make child without vote_order → auto-assigned → 200', async () => {
+    // Send only parent_variant_id, omitting vote_order → backend assigns MAX(children)+1
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/conflict-order`, {
+        body: { parent_variant_id: reviewVariantId },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.parent_variant_id, reviewVariantId);
+    assert.equal(r.data.variant.vote_order, 1); // first child → 1
+});
+
+test('PATCH /variants/:id/conflict-order — explicit vote_order:null still clears it → 200', async () => {
+    // K9 compatibility: if client explicitly sends null, honour it (no auto-assign)
+    const r = await req('PATCH', `/variants/${conflictVariant2Id}/conflict-order`, {
+        body: { vote_order: null, parent_variant_id: null },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.parent_variant_id, null);
+    assert.equal(r.data.variant.vote_order, null);
+});
+
 // ── GROUP M — Gap Fixes ───────────────────────────────────────────────────────
 
 test('Setup: assign vote_order to conflictVariant2Id for gap-11 test (doc in voting)', async () => {

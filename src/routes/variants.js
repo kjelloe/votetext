@@ -165,7 +165,13 @@ router.patch('/:id/conflict-order', requireAuth, (req, res, next) => {
             const parent = getOne('SELECT id, parent_variant_id FROM variants WHERE id = ? AND document_id = ?', [parent_variant_id, variant.document_id]);
             if (!parent) return res.status(400).json({ error: 'Parent variant not found in this document' });
             if (parent.parent_variant_id != null) return res.status(400).json({ error: 'Cannot nest more than two levels deep' });
-            vote_order = null;
+            if (vote_order === undefined) {
+                const maxRow = getOne(
+                    'SELECT MAX(vote_order) as m FROM variants WHERE parent_variant_id = ? AND id != ?',
+                    [parent_variant_id, variant.id]
+                );
+                vote_order = (maxRow.m || 0) + 1;
+            }
         }
 
         const newVoteOrder = vote_order !== undefined ? vote_order : variant.vote_order;

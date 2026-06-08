@@ -1075,6 +1075,29 @@ mark.preview-ins {
 .fv-progress-done { color: #16a34a; font-weight: 600; }
 .review-final-tally { font-size: 0.8125rem; font-weight: 600; color: var(--color-text); margin: 0.1rem 0 0.3rem; letter-spacing: 0.03em; }
 
+/* Child ordering in conflict resolution */
+.conflict-child-order-badge { display: inline-flex; align-items: center; justify-content: center; width: 1.2rem; height: 1.2rem; border-radius: 50%; background: var(--color-warning); color: #fff; font-size: 0.65rem; font-weight: 700; margin-right: 0.15rem; flex-shrink: 0; }
+.conflict-dropzone-child { height: 5px; margin: 1px 0 1px 2rem; border-radius: 3px; }
+.conflict-dropzone-child.active { height: 14px; background: rgba(37,99,235,0.12); border: 1px dashed var(--color-primary); }
+
+/* Final voting: majority percentage */
+.fv-majority { font-size: 0.8125rem; font-weight: 700; margin-top: 0.3rem; min-height: 1.1em; }
+.fv-majority-pass { color: var(--color-success); }
+.fv-majority-split { color: var(--color-warning); }
+.fv-majority-fail { color: var(--color-danger); }
+
+/* Final voting: child skipped when parent passes */
+.fv-card-child-skipped { opacity: 0.5; background: var(--color-bg-secondary) !important; }
+.fv-card-child-skipped .fv-card-texts,
+.fv-card-child-skipped .fv-inputs,
+.fv-card-child-skipped .fv-majority { display: none; }
+.fv-skip-note { font-size: 0.75rem; color: var(--color-text-muted); font-style: italic; font-weight: 600; }
+
+/* Final voting: result badge on parent cards */
+.fv-result-badge { font-size: 0.7rem; font-weight: 700; padding: 0.1rem 0.45rem; border-radius: 10px; }
+.fv-result-passed { background: #dcfce7; color: #15803d; }
+.fv-result-failed { background: #fee2e2; color: #991b1b; }
+
 /* ===== Responsive ===== */
 @media (max-width: 768px) {
     .doc-layout {

@@ -173,7 +173,7 @@
 | K6 | PATCH on variant in a non-voting document (e.g., archived) | 422 |
 | K7 | PATCH by user with only `viewer` access | 403 |
 | K8 | PATCH `/variants/:id/conflict-order { vote_order: 1 }` — owner on voting doc | 200, `vote_order = 1` |
-| K9 | PATCH `/variants/:id/conflict-order { parent_variant_id: N }` — make child | 200, `parent_variant_id` set, `vote_order` cleared |
+| K9 | PATCH `/variants/:id/conflict-order { vote_order: null, parent_variant_id: N }` — make child with explicit null | 200, `parent_variant_id` set, `vote_order` null |
 | K10 | PATCH with `parent_variant_id` pointing to a child (3-level nesting) | 400 |
 | K11 | PATCH with self as parent | 400 |
 | K12 | PATCH conflict-order on non-voting doc | 422 |
@@ -198,6 +198,28 @@
 
 ---
 
+## Group M — Gap Fixes (voting lifecycle guards)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| M1 | PATCH variant (proposer self-edit) while doc in `voting` | 422 |
+| M2 | POST `/variants/:id/vote` while doc in `final_voting` | 422 |
+| M3 | PATCH `/variants/:id/review-status` in `final_voting` | 200, status updated |
+| M4 | PATCH `/review-status` with `rejected`/`not_applicable`/`withdrawn` — clears `vote_order` | 200, `vote_order = null` |
+| M5 | POST `/documents/:id/status → resolved` — runs `resolveVariants()` | 200, `status = resolved`; variants with yes > no → `approved` |
+| M6 | GET variant after resolve — yes > no variant | `status = approved` |
+
+---
+
+## Group N — Auto-assign child `vote_order`
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| N1 | PATCH `/variants/:id/conflict-order { parent_variant_id: N }` — no `vote_order` sent | 200, `vote_order = 1` (auto-assigned as first child) |
+| N2 | PATCH same endpoint with `{ vote_order: null, parent_variant_id: null }` — explicit null | 200, `vote_order = null`, `parent_variant_id = null` (explicit null honoured, no auto-assign) |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.
@@ -218,11 +240,14 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Cancel schedule:** banner [Cancel] button clears countdown and banner disappears
 - [ ] **Auto-transition:** wait for countdown to reach 0 → page reloads and document is now in `voting` status
 - [ ] **Review view:** document in voting → Review button → two-panel view → action buttons change proposal status; CONFLICT turns yellow, VOTING turns green
-- [ ] **Resolve conflicts:** Review view toolbar → Resolve conflicts → conflict resolution view shows conflict groups; drag proposals to reorder; drag onto root to make child (amber badge, × to remove); vote_order badges appear (blue circle)
+- [ ] **Resolve conflicts:** Review view toolbar → Resolve conflicts → conflict resolution view shows conflict groups; drag proposals to reorder; drag onto root to make child (amber numbered child badge, blue root badge, × to remove); vote_order badges appear on roots (blue circle)
+- [ ] **Child ordering:** drag child drop zones between children of the same root → children reorder, amber number updates; hover proposal title → rationale tooltip appears
+- [ ] **Multiple children:** drop two proposals onto same root → first gets amber [1], second gets [2]; drag between child drop zones to swap order
 - [ ] **Ready for final voting:** all conflict groups resolved → button turns green; click → document transitions to `final_voting`; toolbar shows "Final voting" badge
 - [ ] **Roll back to voting:** final_voting doc → Change status → voting → back in voting with "Resolve conflicts" button visible
 - [ ] **Voting walkthrough:** final_voting doc → Review view → "Voting walkthrough" button → walkthrough view loads with proposals in document order; conflict groups labelled and indented
 - [ ] **Export CSV:** click Export CSV → file downloads; open in spreadsheet — columns correct, encoding correct, semi-colon separated
 - [ ] **Print HTML:** click Print HTML → new tab opens with clean tally sheet; print dialog renders cleanly
-- [ ] **Record tally:** enter yes/no/abstain for a proposal → Save → "✓ Saved" appears; reload page → values persist
+- [ ] **Record tally:** enter yes/no/abstain for a proposal → Save → "✓ Saved at HH:MM" appears; majority percentage shows below inputs (green >50%, yellow =50%, red <50%); reload page → values persist
+- [ ] **Parent passes collapse:** record yes > no for a parent proposal → child cards grey out and collapse showing "Not voting on — parent passed"; parent card shows "✓ Passed" badge; record yes ≤ no → "✗ Failed" badge; children remain visible
 - [ ] **Overall document vote:** fill yes/no/abstain at bottom → Save → persists on reload
