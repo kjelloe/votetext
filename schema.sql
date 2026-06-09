@@ -104,7 +104,11 @@ CREATE TABLE IF NOT EXISTS documents (
     -- Overall document vote (recorded by editor/admin during final_voting stage)
     doc_vote_yes        INTEGER,
     doc_vote_no         INTEGER,
-    doc_vote_abstain    INTEGER
+    doc_vote_abstain    INTEGER,
+
+    -- Resolved state (set when status transitions to 'resolved')
+    resolved_text       TEXT,                                                          -- full document text with approved variants applied
+    resolved_at         TEXT                                                           -- ISO-8601 UTC timestamp of resolution
 );
 
 CREATE INDEX idx_documents_owner_id   ON documents (owner_id);

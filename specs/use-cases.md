@@ -422,7 +422,7 @@ A conflict group is a set of ≥ 2 active proposals (not withdrawn / rejected / 
 | Conflicts remain | Yellow button | Alert explaining what's needed |
 | All resolved | Green **✓ Ready for final voting** | `POST /documents/:id/status { status: 'final_voting' }` |
 
-### Voting semantics (for future resolve flow)
+### Voting semantics (conflict resolution ordering)
 
 Within a conflict group, root proposals are voted in vote-order number sequence (1 first, then 2, etc.). If a root proposal **passes**, its children are skipped (become `not_applicable`). If a root **fails**, its children proceed to their own vote in their child-order sequence.
 
@@ -453,7 +453,8 @@ Within a conflict group, root proposals are voted in vote-order number sequence 
    - Clicking **"View audit trail"** on a proposal expands a collapsible panel showing all save events — timestamp, user name, and the yes/no/abstain values recorded at each save. Clicking again collapses it.
    - If a **parent** proposal passes (yes > no), its child cards collapse and grey out, showing "Not voting on — parent passed". A **"✓ Passed"** badge appears on the parent card. If the parent fails, a **"✗ Failed"** badge appears and children remain active.
 5. At the bottom, an **Overall document vote** section records the total vote on the document as a whole. Clicking **Save** calls `PATCH /api/documents/:id/doc-vote`.
-6. After all tallies are recorded, the document remains in `final_voting`. The editor uses **Change Status → resolved** to close voting.
+6. After all tallies are recorded, the editor can click **Resolved text** in the toolbar to preview the document with all approved variants applied (see UC-15).
+7. The document remains in `final_voting` until the owner clicks **Mark as Resolved** on the resolved-text view (or uses **Change Status → resolved**), which triggers the status transition and stores the resolved text.
 
 ### Proposal ordering in export and walkthrough
 
@@ -532,7 +533,59 @@ This restriction applies to both `GET /documents/:id` and the document list (`GE
 
 ---
 
+---
+
+## UC-15: View and export resolved text
+
+**Actor:** Document owner or editor/admin  
+**Entry point:** Final voting walkthrough toolbar → "Resolved text", or document viewer → "Resolved text" button (owner only, for `final_voting` / `resolved` / `archived` documents)
+
+### Preconditions
+
+- Document is in `final_voting`, `resolved`, or `archived` status.
+- User has at least `editor` access (or is the owner).
+
+### Main flow — during final_voting
+
+1. Editor clicks **Resolved text** from the final-vote walkthrough toolbar.
+2. Browser navigates to `#/documents/:id/resolved-text`.
+3. The system computes the resolved text on-the-fly: all approved variants are applied to the original text in character-offset order (overlapping approved variants are skipped).
+4. The view shows the resolved text in a scrollable read-only pane with line numbers.
+5. The toolbar offers:
+   - **Export Markdown** — downloads `<title>_resolved.md` with a `# Title` heading.
+   - **Print HTML** — opens a print-ready HTML tab.
+   - **Mark as Resolved** (owner only) — transitions the document to `resolved` status, persisting the resolved text and `resolved_at` timestamp.
+   - **← Back** — returns to the final-vote walkthrough.
+
+### Main flow — after resolution
+
+1. Owner navigates to a `resolved` or `archived` document and clicks **Resolved text**.
+2. The view shows the stored resolved text with a **PASSED** or **FAILED** banner (derived from `doc_vote_yes` / `doc_vote_no`).
+   - The banner includes the timestamp: "PASSED at <date/time>" or "FAILED at <date/time>".
+3. Export Markdown and Print HTML include the PASSED/FAILED line with the timestamp.
+4. Owner can click **Fork as new document** to create a new draft based on:
+   - The **resolved text** if the document vote PASSED.
+   - The **original text** if the document vote FAILED.
+   The fork is created as a new document (`<title> (fork)`) owned by the same user.
+
+### Data storage
+
+- On `final_voting → resolved` transition, `resolveVariants()` applies approved variants to the original text and stores the result in `documents.resolved_text`; `resolved_at` is set to the current ISO-8601 timestamp.
+- The `GET /api/documents/:id/resolved-text` endpoint returns `{ text, resolved_at, doc_vote_passed }`.
+  - During `final_voting`: text is computed on-the-fly; `resolved_at` and `doc_vote_passed` are `null`.
+  - After resolution: stored values are returned.
+
+### Access control
+
+| User | Access |
+|------|--------|
+| Owner | Yes |
+| Editor / admin | Yes |
+| Viewer–voter | No (403) |
+| Anonymous | No (401) |
+
+---
+
 ## Planned / future use cases
 
-- **UC-15:** Resolve a document — owner closes voting, document moves to `resolved`; variants with `pending` status are processed based on vote tallies and `resolution_mode` setting.
 - **UC-16:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.

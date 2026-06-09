@@ -1488,6 +1488,68 @@ test('GET /variants/:id/final-vote-log — owner on resolved doc → 200, entrie
     assert.ok(entry.user_name, 'user_name present');
 });
 
+// ── GROUP R — Resolved Text ───────────────────────────────────────────────────
+
+let resolveDocId, resolveVarId;
+
+test('Setup: create doc + variant for resolved-text tests', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Resolve test doc', text: 'Hello world\nLine two' }, cookie: sessionCookie });
+    assert.equal(d.status, 201);
+    resolveDocId = d.data.document.id;
+    await req('POST', `/documents/${resolveDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${resolveDocId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    await req('POST', `/documents/${resolveDocId}/status`, { body: { status: 'final_voting' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${resolveDocId}/variants`, {
+        body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'Hi', title: 'Replace Hello', rationale: 'shorter' },
+        cookie: sessionCookie,
+    });
+    assert.equal(v.status, 201);
+    resolveVarId = v.data.variant.id;
+    const fv = await req('PATCH', `/variants/${resolveVarId}/final-vote`, { body: { yes: 3, no: 1 }, cookie: sessionCookie });
+    assert.equal(fv.status, 200);
+});
+
+test('GET /documents/:id/resolved-text — no auth → 401', async () => {
+    const r = await req('GET', `/documents/${resolveDocId}/resolved-text`);
+    assert.equal(r.status, 401);
+});
+
+test('GET /documents/:id/resolved-text — viewer → 403', async () => {
+    const r = await req('GET', `/documents/${resolveDocId}/resolved-text`, { cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('GET /documents/:id/resolved-text — on-the-fly for final_voting → 200', async () => {
+    const r = await req('GET', `/documents/${resolveDocId}/resolved-text`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.resolved_at, null);
+    assert.equal(r.data.doc_vote_passed, null);
+    assert.ok(typeof r.data.text === 'string', 'text is a string');
+});
+
+test('GET /documents/:id/resolved-text — wrong status → 422', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Open doc', text: 'test' }, cookie: sessionCookie });
+    await req('POST', `/documents/${d.data.document.id}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const r = await req('GET', `/documents/${d.data.document.id}/resolved-text`, { cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+test('POST /documents/:id/status — final_voting → resolved stores resolved_text → 200', async () => {
+    const r = await req('POST', `/documents/${resolveDocId}/status`, { body: { status: 'resolved' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'resolved');
+    assert.ok(r.data.document.resolved_at, 'resolved_at set');
+    assert.ok(typeof r.data.document.resolved_text === 'string', 'resolved_text stored');
+});
+
+test('GET /documents/:id/resolved-text — returns stored text with doc_vote_passed → 200', async () => {
+    const r = await req('GET', `/documents/${resolveDocId}/resolved-text`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.resolved_at, 'resolved_at present');
+    assert.equal(r.data.doc_vote_passed, null, 'null when no doc vote recorded');
+    assert.ok(r.data.text.includes('Hi'), 'approved variant (replace Hello→Hi) applied to resolved text');
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

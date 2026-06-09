@@ -9,6 +9,19 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 
 const router = Router();
 
+function applyVariantsToText(originalText, approvedVariants) {
+    const sorted = [...approvedVariants].sort((a, b) => a.char_start - b.char_start);
+    let result = '';
+    let pos = 0;
+    for (const v of sorted) {
+        if (v.char_start < pos) continue;
+        result += originalText.slice(pos, v.char_start);
+        if (v.operation !== 'delete') result += v.new_text;
+        pos = v.char_end;
+    }
+    return result + originalText.slice(pos);
+}
+
 function resolveVariants(documentId) {
     const voteable = getAll(
         "SELECT * FROM variants WHERE document_id = ? AND status IN ('pending', 'conflict') AND is_hidden = 0",
@@ -32,8 +45,17 @@ function resolveVariants(documentId) {
             const passed = (v.final_yes || 0) > (v.final_no || 0);
             run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
                 [passed ? 'approved' : 'rejected', v.id]);
+            if (passed) approvedIds.add(v.id);
         }
     }
+
+    const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [documentId]);
+    const originalText = lines.map(l => l.original_text).join('\n');
+    const approved = getAll("SELECT * FROM variants WHERE document_id = ? AND status = 'approved'", [documentId]);
+    const resolvedText = applyVariantsToText(originalText, approved);
+    const resolvedAt = new Date().toISOString();
+    run("UPDATE documents SET resolved_text = ?, resolved_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+        [resolvedText, resolvedAt, documentId]);
 }
 
 const VALID_TRANSITIONS = {
@@ -277,6 +299,28 @@ router.get('/:id/text', (req, res, next) => {
         if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
         const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
         res.json({ text: lines.map(l => l.original_text).join('\n') });
+    } catch (err) {
+        next(err);
+    }
+});
+
+// GET /api/documents/:id/resolved-text
+router.get('/:id/resolved-text', requireAuth, requireDocumentAccess('editor'), (req, res, next) => {
+    try {
+        const doc = req.document;
+        if (!['final_voting', 'resolved', 'archived'].includes(doc.status)) {
+            return res.status(422).json({ error: 'Resolved text not available for this document status' });
+        }
+        if (doc.status === 'final_voting') {
+            const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
+            const originalText = lines.map(l => l.original_text).join('\n');
+            const approved = getAll("SELECT * FROM variants WHERE document_id = ? AND status = 'approved' AND is_hidden = 0", [doc.id]);
+            return res.json({ text: applyVariantsToText(originalText, approved), resolved_at: null, doc_vote_passed: null });
+        }
+        const docVotePassed = (doc.doc_vote_yes != null || doc.doc_vote_no != null)
+            ? (doc.doc_vote_yes || 0) > (doc.doc_vote_no || 0)
+            : null;
+        res.json({ text: doc.resolved_text || '', resolved_at: doc.resolved_at, doc_vote_passed: docVotePassed });
     } catch (err) {
         next(err);
     }

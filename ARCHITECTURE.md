@@ -116,6 +116,8 @@ activity_log ── references users, documents, variants
 
 **Draft visibility** — documents in `draft` status are only visible to the owner and users with `editor` or `admin` access. This is enforced in `GET /documents` (SQL filter), `GET /documents/:id` (inline check), and `checkDocAccess()` in variants.js (all variant sub-routes).
 
+**Resolved text storage** — on `final_voting → resolved` transition, `resolveVariants()` applies all approved variants to the concatenated `document_lines` text via `applyVariantsToText()` (char-offset order, overlapping approved variants skipped) and stores the result in `documents.resolved_text TEXT`. `documents.resolved_at TEXT` is set to the current ISO-8601 timestamp. `GET /api/documents/:id/resolved-text` returns the stored text for resolved/archived docs, or computes it on-the-fly for `final_voting` docs (editor+ access required).
+
 **WAL mode** — All reads happen concurrently; writes are serialised by SQLite. Busy timeout is 5 s.
 
 ---
@@ -209,6 +211,7 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes GET /search — user lookup, excludes non-searchable/protected)
 /api/documents/*   → src/routes/documents.js
                        (includes GET /:id/text — full reconstructed text for copy/export)
+                       (includes GET /:id/resolved-text — resolved text with approved variants applied; on-the-fly for final_voting, stored for resolved/archived; editor+)
                        (includes PATCH /:id/doc-vote — overall document vote tallies, editor/admin, final_voting only)
                        (includes /variants, /access, /activity sub-routes)
 /api/variants/*    → src/routes/variants.js
@@ -307,7 +310,8 @@ Single HTML page (`public/index.html`) with hash-based routing:
 #/documents/:id          → viewDocument(id)
 #/documents/:id/review      → viewDocumentReview(id)        — editor/admin two-panel review view
 #/documents/:id/conflicts   → viewConflictResolution(id)    — drag-and-drop conflict ordering (public/review.js)
-#/documents/:id/final-vote  → viewFinalVoting(id)           — final voting walkthrough + export (public/review.js)
+#/documents/:id/final-vote    → viewFinalVoting(id)          — final voting walkthrough + export (public/review.js)
+#/documents/:id/resolved-text → viewResolvedText(id)        — resolved text preview/export, Mark as Resolved, Fork (public/review.js)
 #/variants/:id           → viewVariant(id)
 #/activity               → viewActivity()
 #/profile                → viewProfile()
@@ -569,7 +573,7 @@ Frontend: each proposal card in the final voting walkthrough has a collapsed `<d
 
 | Candidate file | What to move | Who uses it |
 |---|---|---|
-| `public/review.js` | Already done — reviewer/editor views | editors, admins |
+| `public/review.js` | Already done — reviewer/editor views (`viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText`) | editors, admins |
 | `public/auth.js` | `viewLogin`, `showProfileModal` | new/infrequent users only |
 | `public/profile.js` | `viewProfile` | occasional |
 

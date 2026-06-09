@@ -253,6 +253,19 @@
 
 ---
 
+## Group R — Resolved Text
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| R1 | GET `/documents/:id/resolved-text` — no auth | 401 |
+| R2 | GET `/documents/:id/resolved-text` — viewer | 403 |
+| R3 | GET `/documents/:id/resolved-text` — `final_voting` doc, editor | 200, `text` string, `resolved_at: null`, `doc_vote_passed: null` |
+| R4 | GET `/documents/:id/resolved-text` — doc in `open` status | 422 |
+| R5 | POST `/documents/:id/status` `{ status: 'resolved' }` | 200, response doc has `resolved_text` and `resolved_at` set |
+| R6 | GET `/documents/:id/resolved-text` — resolved doc | 200, `resolved_at` present, `doc_vote_passed: null` (no doc vote recorded), approved variant text present in `text` |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.
@@ -289,3 +302,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Share proposal:** open any proposal → click Share button → modal shows link + Copy button; clicking Copy closes modal and shows toast; proposer sees "Allow anyone to view" checkbox; enable it → open link in private/incognito tab → simplified view appears with proposal and login link
 - [ ] **Draft restriction:** create document (stays in Draft) → log in as viewer/non-editor user → document NOT visible in list and GET returns 403; open the document (→ Open status) → document now visible
 - [ ] **Audit trail:** in Final voting walkthrough, click "View audit trail" on any proposal → collapsible panel shows all save events with timestamp, user, yes/no/abstain values; click again → collapses; save new tally → re-expand → new entry appears
+- [ ] **Resolved text preview (final_voting):** in voting walkthrough, click "Resolved text" button → resolved-text view shows document with approved variants applied; Export Markdown downloads `.md`; Print HTML opens clean browser tab; "Mark as Resolved" button visible to owner
+- [ ] **Mark as Resolved:** click Mark as Resolved → confirm → document transitions to `resolved`; resolved-text view reloads showing PASSED/FAILED banner with timestamp
+- [ ] **Fork as new document:** on resolved doc resolved-text view, click "Fork as new document" → new draft document created; if PASSED it contains the resolved text, if FAILED it contains the original text
+- [ ] **Resolved text on document page:** resolved/archived doc → "Resolved text" button appears in document viewer toolbar for owner

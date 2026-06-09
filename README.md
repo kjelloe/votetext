@@ -44,6 +44,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Automatic page/line structuring (configurable lines per page, default 30)
 - Documents support 1–200 pages, 27–60 lines per page
 - Document status lifecycle: `draft → open → voting → final_voting → resolved → archived`
+- **Resolved text** — on transition to `resolved`, approved variants are applied to the original text and stored; preview view shows the resolved text with line numbers, PASSED/FAILED banner (with timestamp), Export Markdown and Print HTML buttons, and a "Fork as new document" option for the owner
 - **Draft visibility** — draft documents are only shown to the owner and users with `editor`/`admin` access; all other roles and anonymous users see 403 until the document is opened
 - **Copy document** — owner can duplicate a document (same title + " (copy)", same text, no proposals) from the viewer toolbar
 
@@ -162,6 +163,11 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `GET`    | `/api/variants/:id/relations` | List variant relations |
 | `PATCH`  | `/api/variants/:id/final-vote` | Record final tally (editor/admin, final_voting only) |
 | `GET`    | `/api/variants/:id/final-vote-log` | Full audit trail of tally saves (editor/admin only) |
+
+#### Resolved Text
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/documents/:id/resolved-text` | Resolved text with approved variants applied; on-the-fly for `final_voting`, stored for `resolved`/`archived` (editor+ only) |
 
 #### Votes
 | Method | Path | Description |
@@ -357,6 +363,6 @@ sqlite3 /opt/votetext/data/votetext.db ".backup /home/kjelloe/backups/votetext-$
 - [x] Profile completion modal on first login
 - [x] Activity unread badge
 - [x] Draft document visibility restriction
-- [ ] Resolution workflow (auto-apply winning variant to document text)
-- [ ] Export resolved document
+- [x] Resolution workflow — resolved text stored on `final_voting → resolved` transition; editor preview, export as Markdown/HTML, PASSED/FAILED banner, fork as new document
+- [ ] Export resolved document (further polish)
 - [ ] Moderation dashboard

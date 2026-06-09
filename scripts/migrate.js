@@ -153,6 +153,9 @@ if (varSchemaRow && !varSchemaRow.sql.includes('not_applicable')) {
     console.log('[skip] variants CHECK constraint already up to date');
 }
 
+addColumnIfMissing('documents', 'resolved_text', 'TEXT');
+addColumnIfMissing('documents', 'resolved_at', 'TEXT');
+
 // Create final_vote_log table if not exists
 db.prepare(`CREATE TABLE IF NOT EXISTS final_vote_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

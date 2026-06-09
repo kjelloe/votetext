@@ -123,6 +123,119 @@ ${body}
     if (win) { win.document.write(html); win.document.close(); }
 }
 
+/* ===== Resolved Text View ===== */
+
+function _downloadMarkdown(doc, text, docVotePassed, resolvedAt) {
+    let md = `# ${doc.title}\n\n`;
+    if (resolvedAt) {
+        const label = docVotePassed === false ? 'FAILED' : 'PASSED';
+        md += `_${label} at ${new Date(resolvedAt).toLocaleString()}_\n\n`;
+    }
+    md += text;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8;' }));
+    a.download = `${doc.title.replace(/[^a-z0-9]/gi, '_')}_resolved.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
+
+function _printResolvedHTML(doc, text, docVotePassed, resolvedAt) {
+    const esc2 = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let statusLine = '';
+    if (resolvedAt) {
+        const label = docVotePassed === false ? 'FAILED' : 'PASSED';
+        statusLine = `<div class="status-banner ${docVotePassed === false ? 'failed' : 'passed'}">${label} at ${new Date(resolvedAt).toLocaleString()}</div>`;
+    }
+    const lines = text.split('\n').map((l, i) =>
+        `<div class="line"><span class="num">${i + 1}</span><span class="text">${esc2(l) || '&nbsp;'}</span></div>`
+    ).join('');
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${esc2(doc.title)} — resolved</title><style>
+body{font-family:Georgia,serif;max-width:820px;margin:2rem auto;color:#111}
+h1{font-size:1.4rem;margin-bottom:.25rem}
+.status-banner{padding:.5rem 1rem;border-radius:4px;font-weight:bold;margin-bottom:1rem}
+.status-banner.passed{background:#d1fae5;color:#065f46}.status-banner.failed{background:#fee2e2;color:#991b1b}
+.meta{color:#777;font-size:.85rem;margin-bottom:1.5rem}
+.line{display:flex;align-items:baseline;font-size:.875rem;line-height:1.6}
+.num{min-width:3rem;color:#9ca3af;font-size:.75rem;text-align:right;padding-right:.75rem;flex-shrink:0;font-family:monospace}
+.text{white-space:pre-wrap;word-break:break-word}@media print{body{margin:1rem}}
+</style></head><body><h1>${esc2(doc.title)}</h1>${statusLine}<div class="meta">Generated: ${new Date().toLocaleString()}</div>${lines}</body></html>`;
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(html); win.document.close(); }
+}
+
+async function viewResolvedText(docId) {
+    if (!state.user) { location.hash = '#/login'; return; }
+    const [docData, rtData] = await Promise.all([
+        api('GET', `/documents/${docId}`),
+        api('GET', `/documents/${docId}/resolved-text`),
+    ]);
+    const doc = docData.document;
+    const text = rtData.text || '';
+    const resolvedAt = rtData.resolved_at;
+    const docVotePassed = rtData.doc_vote_passed;
+    const isOwner = doc.owner_id === state.user.id;
+
+    const wrap = el('div', { class: 'page-container' });
+    const hdr = el('div', { class: 'page-header' });
+    hdr.innerHTML = `<h1 class="page-title">Resolved text — <span style="font-weight:400">${esc(doc.title)}</span></h1>`;
+
+    const toolbar = el('div', { class: 'flex gap-1' });
+    const mdBtn   = el('button', { class: 'btn btn-ghost btn-sm' }, 'Export Markdown');
+    const printBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Print HTML');
+    const backHref = doc.status === 'final_voting' ? `#/documents/${esc(String(docId))}/final-vote` : `#/documents/${esc(String(docId))}`;
+    const backBtn = el('a', { href: backHref, class: 'btn btn-ghost btn-sm' }, '← Back');
+    mdBtn.addEventListener('click', () => _downloadMarkdown(doc, text, docVotePassed, resolvedAt));
+    printBtn.addEventListener('click', () => _printResolvedHTML(doc, text, docVotePassed, resolvedAt));
+    toolbar.append(mdBtn, printBtn, backBtn);
+
+    if (doc.status === 'final_voting' && isOwner) {
+        const resolveBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Mark as Resolved');
+        resolveBtn.addEventListener('click', async () => {
+            if (!confirm('Mark as resolved? This will finalize variant statuses and store the resolved text.')) return;
+            try {
+                await api('POST', `/documents/${docId}/status`, { status: 'resolved' });
+                location.hash = `#/documents/${docId}/resolved-text`;
+            } catch (e) { alert(e.message); }
+        });
+        toolbar.append(resolveBtn);
+    }
+
+    if ((doc.status === 'resolved' || doc.status === 'archived') && isOwner) {
+        const forkBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Fork as new document');
+        forkBtn.addEventListener('click', async () => {
+            let forkText = text;
+            if (docVotePassed === false) {
+                try { const td = await api('GET', `/documents/${docId}/text`); forkText = td.text || text; } catch {}
+            }
+            try {
+                const nd = await api('POST', '/documents', { title: doc.title + ' (fork)', text: forkText });
+                location.hash = `#/documents/${nd.document.id}`;
+            } catch (e) { alert(e.message); }
+        });
+        toolbar.append(forkBtn);
+    }
+
+    hdr.append(toolbar);
+
+    if (doc.status === 'resolved' || doc.status === 'archived') {
+        const passLabel = docVotePassed === false ? 'FAILED' : 'PASSED';
+        const cls = docVotePassed === false ? 'alert-error' : 'alert-success';
+        const banner = el('div', { class: `alert ${cls}`, style: 'margin-top:.75rem' });
+        banner.textContent = resolvedAt ? `${passLabel} at ${new Date(resolvedAt).toLocaleString()}` : passLabel;
+        hdr.append(banner);
+    }
+
+    wrap.append(hdr);
+
+    const lines = text.split('\n');
+    const textDiv = el('div', { class: 'resolved-text-view', style: 'margin-top:1rem' });
+    textDiv.innerHTML = lines.map((line, i) =>
+        `<div class="rt-line"><span class="rt-linenum">${i + 1}</span><span class="rt-text">${esc(line) || ' '}</span></div>`
+    ).join('');
+    wrap.append(textDiv);
+    setMain(wrap);
+}
+
 /* ===== Conflict Resolution View ===== */
 
 function _buildConflictGroups(variants) {
@@ -344,10 +457,11 @@ async function viewFinalVoting(docId) {
     const toolbar = el('div', { class: 'flex gap-1' });
     const csvBtn  = el('button', { class: 'btn btn-ghost btn-sm' }, 'Export CSV');
     const prntBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Print HTML');
+    const rtBtn   = el('a', { href: `#/documents/${esc(String(docId))}/resolved-text`, class: 'btn btn-ghost btn-sm' }, 'Resolved text');
     const backBtn = el('a', { href: `#/documents/${esc(String(docId))}/review`, class: 'btn btn-ghost btn-sm' }, '← Back to review');
     csvBtn.addEventListener('click', () => _downloadCSV(doc, _buildOrderedBlocks(Object.values(varMap), varMap), fullText));
     prntBtn.addEventListener('click', () => _openPrintHTML(doc, _buildOrderedBlocks(Object.values(varMap), varMap), fullText));
-    toolbar.append(csvBtn, prntBtn, backBtn);
+    toolbar.append(csvBtn, prntBtn, rtBtn, backBtn);
     hdr.append(toolbar);
     const progressEl = el('div', { id: 'fv-progress', class: 'fv-progress' });
     hdr.append(progressEl);
