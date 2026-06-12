@@ -70,7 +70,8 @@ votetext/
 │   ├── review.js           — editor/admin-only views: review, conflict resolution, final voting
 │   └── style.css           — design tokens + all component styles
 ├── specs/
-│   └── test-plan.md        — human-readable test scenarios
+│   ├── test-plan.md        — human-readable test scenarios
+│   └── use-cases.md        — detailed user flows (UC-1 …)
 └── tests/
     └── api.test.js         — integration tests (node:test, no extra deps)
 ```
@@ -79,7 +80,7 @@ votetext/
 
 ## Database Schema
 
-13 tables in a single SQLite file. Key relationships:
+12 tables in a single SQLite file. Key relationships:
 
 ```
 users ──────────────┬── sessions
@@ -104,7 +105,7 @@ activity_log ── references users, documents, variants
 
 **Denormalized vote tallies** — `variants.votes_for/against/abstain` are updated atomically alongside the `votes` table insert/update inside a transaction. This gives O(1) tally reads.
 
-**JSON settings blob** — `documents.settings` stores configurable options (`allow_anonymous_view`, `lines_per_page`, `resolution_mode`, etc.) without schema migrations.
+**JSON settings blob** — `documents.settings` stores configurable options (`allow_anonymous_view`, `lines_per_page`, `default_access`, etc.) without schema migrations.
 
 **Soft delete** — `documents.deleted_at TEXT` (NULL = active). All queries filter `AND deleted_at IS NULL`. Existing DBs need `npm run migrate` to add the column.
 

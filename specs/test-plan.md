@@ -266,6 +266,21 @@
 
 ---
 
+## Group S — Copy Document Data (UC-6)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| S1 | POST `/documents/:sourceId/copy-data { target_doc_id, copy_variants: true }` — owner of both | 200, `copied.variants` > 0; copied variants exist on target with `status = pending` |
+| S2 | Copy with `copy_votes: true` | 200, votes copied; target variant tallies match source |
+| S3 | Copy with `copy_comments: true` | 200, comments and replies copied; reply parent remapped to new comment id |
+| S4 | Source has a withdrawn variant | Withdrawn variant not copied |
+| S5 | `copy_votes: true` without `copy_variants` | 200, nothing copied (`copied` all 0) |
+| S6 | `target_doc_id` not owned by requester | 403 |
+| S7 | `target_doc_id` does not exist | 404 |
+| S8 | Requester lacks admin access on source document | 403 |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.

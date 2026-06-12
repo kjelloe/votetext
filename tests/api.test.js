@@ -1550,6 +1550,126 @@ test('GET /documents/:id/resolved-text — returns stored text with doc_vote_pas
     assert.ok(r.data.text.includes('Hi'), 'approved variant (replace Hello→Hi) applied to resolved text');
 });
 
+// ── GROUP S — Copy Document Data ─────────────────────────────────────────────
+
+let copySrcId, copyTgtId, copySrcVarId, bobDocId;
+
+test('Setup: source doc with variant, vote, comments, withdrawn variant + target doc', async () => {
+    const d = await req('POST', '/documents', {
+        body: { title: 'Copy source', text: 'Alpha bravo charlie\nDelta echo foxtrot' },
+        cookie: sessionCookie,
+    });
+    assert.equal(d.status, 201);
+    copySrcId = d.data.document.id;
+    await req('POST', `/documents/${copySrcId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+
+    const v1 = await req('POST', `/documents/${copySrcId}/variants`, {
+        body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'Omega', title: 'First proposal' },
+        cookie: sessionCookie,
+    });
+    assert.equal(v1.status, 201);
+    copySrcVarId = v1.data.variant.id;
+
+    const vt = await req('POST', `/variants/${copySrcVarId}/vote`, { body: { vote_value: 1 }, cookie: sessionCookie });
+    assert.equal(vt.status, 200);
+
+    const c = await req('POST', `/variants/${copySrcVarId}/comments`, { body: { text: 'top level' }, cookie: sessionCookie });
+    assert.equal(c.status, 201);
+    const rep = await req('POST', `/variants/${copySrcVarId}/comments`, {
+        body: { text: 'a reply', parent_comment_id: c.data.comment.id },
+        cookie: sessionCookie,
+    });
+    assert.equal(rep.status, 201);
+
+    const v2 = await req('POST', `/documents/${copySrcId}/variants`, {
+        body: { char_start: 6, char_end: 11, operation: 'delete', title: 'Withdraw me' },
+        cookie: sessionCookie,
+    });
+    assert.equal(v2.status, 201);
+    const w = await req('DELETE', `/variants/${v2.data.variant.id}`, { cookie: sessionCookie });
+    assert.equal(w.status, 200);
+
+    const t = await req('POST', '/documents', {
+        body: { title: 'Copy target', text: 'Alpha bravo charlie\nDelta echo foxtrot' },
+        cookie: sessionCookie,
+    });
+    assert.equal(t.status, 201);
+    copyTgtId = t.data.document.id;
+});
+
+test('POST /documents/:id/copy-data — copy_votes without copy_variants → nothing copied', async () => {
+    const r = await req('POST', `/documents/${copySrcId}/copy-data`, {
+        body: { target_doc_id: copyTgtId, copy_votes: true },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.data.copied, { variants: 0, votes: 0, comments: 0 });
+});
+
+test('POST /documents/:id/copy-data — variants + votes + comments copied', async () => {
+    const r = await req('POST', `/documents/${copySrcId}/copy-data`, {
+        body: { target_doc_id: copyTgtId, copy_variants: true, copy_votes: true, copy_comments: true },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.copied.variants, 1, 'withdrawn variant excluded');
+    assert.equal(r.data.copied.votes, 1);
+    assert.equal(r.data.copied.comments, 2);
+});
+
+test('Copied variant on target — status pending, tallies match source', async () => {
+    const r = await req('GET', `/documents/${copyTgtId}/variants`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variants.length, 1);
+    const v = r.data.variants[0];
+    assert.equal(v.status, 'pending');
+    assert.equal(v.title, 'First proposal');
+    assert.equal(v.votes_for, 1);
+    assert.equal(v.votes_against, 0);
+});
+
+test('Copied comments on target — reply parent remapped to new comment id', async () => {
+    const lst = await req('GET', `/documents/${copyTgtId}/variants`, { cookie: sessionCookie });
+    const newVarId = lst.data.variants[0].id;
+    assert.notEqual(newVarId, copySrcVarId);
+    const r = await req('GET', `/variants/${newVarId}/comments`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.comments.length, 1, 'one top-level comment');
+    assert.equal(r.data.comments[0].text, 'top level');
+    assert.equal(r.data.comments[0].replies.length, 1);
+    assert.equal(r.data.comments[0].replies[0].text, 'a reply');
+});
+
+test('POST /documents/:id/copy-data — target not owned by requester → 403', async () => {
+    const d = await req('POST', '/documents', {
+        body: { title: 'Bob target', text: 'Bob owns this' },
+        cookie: viewerCookie,
+    });
+    assert.equal(d.status, 201);
+    bobDocId = d.data.document.id;
+    const r = await req('POST', `/documents/${copySrcId}/copy-data`, {
+        body: { target_doc_id: bobDocId, copy_variants: true },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
+test('POST /documents/:id/copy-data — target does not exist → 404', async () => {
+    const r = await req('POST', `/documents/${copySrcId}/copy-data`, {
+        body: { target_doc_id: 999999, copy_variants: true },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 404);
+});
+
+test('POST /documents/:id/copy-data — requester lacks admin on source → 403', async () => {
+    const r = await req('POST', `/documents/${copySrcId}/copy-data`, {
+        body: { target_doc_id: bobDocId, copy_variants: true },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

@@ -1,0 +1,164 @@
+#cloud-config
+
+# =============================================================================
+# VoteText — Hetzner cloud-init template (CX23 or similar)
+# =============================================================================
+# This is a sanitised example. To use it:
+#   1. Copy to cloud-init.yaml (gitignored — keep your filled-in copy private)
+#   2. Replace every <PLACEHOLDER>:
+#        <DEPLOY_USER>          — your server username
+#        <YOUR_PUBLIC_SSH_KEY>  — output of: cat ~/.ssh/id_ed25519.pub
+#        <YOUR_DOMAIN>          — e.g. votetext.example.com
+#        <YOUR_EMAIL>           — Let's Encrypt registration email
+#   3. Paste into the Hetzner console when creating the server
+#
+# After first login (ssh -p 2222 <DEPLOY_USER>@<ip>):
+#   1. Copy your code:  scp -P 2222 -r . <DEPLOY_USER>@<ip>:/opt/votetext/
+#   2. Copy your .env:  scp -P 2222 .env <DEPLOY_USER>@<ip>:/opt/votetext/.env
+#      → Remove NODE_ENV from the server .env — the systemd service sets it to production
+#   3. Point DNS:       A record for <YOUR_DOMAIN> → <ip>
+#   4. Run:             ~/first-deploy.sh
+# =============================================================================
+
+users:
+  - name: <DEPLOY_USER>
+    groups: users, admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - <YOUR_PUBLIC_SSH_KEY>
+
+packages:
+  - fail2ban
+  - ufw
+  - nginx
+  - certbot
+  - python3-certbot-nginx
+  - sqlite3
+package_update: true
+package_upgrade: true
+
+write_files:
+
+  # ── SSH hardening ────────────────────────────────────────────────────────
+  - path: /etc/ssh/sshd_config.d/ssh-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      Port 2222
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      MaxAuthTries 2
+      AllowTcpForwarding no
+      X11Forwarding no
+      AllowAgentForwarding no
+      AuthorizedKeysFile .ssh/authorized_keys
+      AllowUsers <DEPLOY_USER>
+
+  # ── nginx — HTTP only; certbot will add the HTTPS block automatically ────
+  - path: /etc/nginx/sites-available/votetext
+    content: |
+      server {
+          listen 80;
+          server_name <YOUR_DOMAIN>;
+
+          location / {
+              proxy_pass         http://127.0.0.1:3000;
+              proxy_http_version 1.1;
+              proxy_set_header   Host              $host;
+              proxy_set_header   X-Real-IP         $remote_addr;
+              proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+              proxy_set_header   X-Forwarded-Proto $scheme;
+          }
+      }
+
+  # ── systemd service ──────────────────────────────────────────────────────
+  - path: /etc/systemd/system/votetext.service
+    content: |
+      [Unit]
+      Description=VoteText
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=<DEPLOY_USER>
+      WorkingDirectory=/opt/votetext
+      Environment=NODE_ENV=production
+      EnvironmentFile=/opt/votetext/.env
+      ExecStart=/usr/bin/node src/server.js
+      Restart=on-failure
+      RestartSec=5
+      StandardOutput=journal
+      StandardError=journal
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # ── first-deploy helper — run once after uploading code ─────────────────
+  - path: /home/<DEPLOY_USER>/first-deploy.sh
+    owner: <DEPLOY_USER>:<DEPLOY_USER>
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+
+      APP=/opt/votetext
+
+      echo "==> Installing dependencies"
+      cd "$APP"
+      npm install --omit=dev
+
+      echo "==> Initialising database"
+      npm run init-db
+
+      echo "==> Starting service"
+      sudo systemctl daemon-reload
+      sudo systemctl enable --now votetext
+
+      echo "==> Obtaining TLS certificate"
+      sudo certbot --nginx \
+        -d <YOUR_DOMAIN> \
+        --non-interactive \
+        --agree-tos \
+        -m <YOUR_EMAIL>
+
+      sudo systemctl reload nginx
+
+      echo ""
+      echo "VoteText is live at https://<YOUR_DOMAIN>"
+      echo "Logs: journalctl -u votetext -f"
+
+  # ── daily SQLite backup (runs at 03:00) ──────────────────────────────────
+  - path: /etc/cron.d/votetext-backup
+    content: |
+      0 3 * * * <DEPLOY_USER> mkdir -p /home/<DEPLOY_USER>/backups && sqlite3 /opt/votetext/data/votetext.db ".backup /home/<DEPLOY_USER>/backups/votetext-$(date +\%F).db" && find /home/<DEPLOY_USER>/backups -name '*.db' -mtime +30 -delete
+
+runcmd:
+  # Node.js 22 LTS via NodeSource
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+
+  # App directory — code uploaded by user after boot
+  - mkdir -p /opt/votetext/data
+  - chown -R <DEPLOY_USER>:<DEPLOY_USER> /opt/votetext
+
+  # fail2ban — SSH brute-force protection
+  - printf "[sshd]\nenabled = true\nport = ssh, 2222\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local
+  - systemctl enable fail2ban
+
+  # Firewall
+  - ufw allow 2222/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+
+  # nginx — activate votetext site, remove default placeholder
+  - ln -s /etc/nginx/sites-available/votetext /etc/nginx/sites-enabled/votetext
+  - rm -f /etc/nginx/sites-enabled/default
+  - systemctl enable nginx
+
+  # Pick up new systemd unit
+  - systemctl daemon-reload
+
+  # Reboot: applies kernel updates, new SSH config, starts fail2ban
+  - reboot

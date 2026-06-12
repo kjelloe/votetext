@@ -46,7 +46,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Document status lifecycle: `draft → open → voting → final_voting → resolved → archived`
 - **Resolved text** — on transition to `resolved`, approved variants are applied to the original text and stored; preview view shows the resolved text with line numbers, PASSED/FAILED banner (with timestamp), Export Markdown and Print HTML buttons, and a "Fork as new document" option for the owner
 - **Draft visibility** — draft documents are only shown to the owner and users with `editor`/`admin` access; all other roles and anonymous users see 403 until the document is opened
-- **Copy document** — owner can duplicate a document (same title + " (copy)", same text, no proposals) from the viewer toolbar
+- **Copy document** — owner can duplicate a document (same title + " (copy)", same text) from the viewer toolbar, with optional checkboxes to also copy proposals, votes, and comments from the source
 
 #### Variant Proposals
 - Select text in the document viewer to set the target range; character offsets are resolved automatically
@@ -54,9 +54,10 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Three operations: **INSERT**, **REPLACE**, **DELETE**
 - Title and rationale fields for context
 - Proposals sidebar shows all proposals ordered by document position; sequential numbers, line ranges, and author tooltips (name + organisation)
-- **Sidebar filter** — All N / On-page N buttons filter the list to all proposals or only those overlapping the current page; filter is persisted per document
+- **Sidebar filter** — All N / On-page N / Top buttons filter the list to all proposals, only those overlapping the current page, or the top `PROPOSALS_TOP_PERCENT`% ranked by total votes; filter is persisted per document
 - Hovering a proposal highlights its lines if on the current page; a go-to-page link is always shown, navigating and scrolling the line into view on click
 - Overlapping proposals show an overlap indicator (⊕ #N, #M) on hover; clicking it highlights all cards in the overlap group in amber
+- **Comment heatmap** — each proposal card shows a 💬 N comment count, coloured orange/red when the proposal holds a configurable share of all document comments (`COMMENT_HEAT_ORANGE` / `COMMENT_HEAT_RED`)
 - Variant relationships: `based_on`, `overlaps`, `conflicts`, `supersedes`
 - Withdraw your own proposals
 - **Proposal detail page** — heading shows "Proposal #N"; ← Prev / Next → arrows navigate between proposals in document order with tooltips; Back to document scrolls to the proposal's location; line context preview (Original/Proposed toggle) shows affected lines with inline highlights
@@ -66,11 +67,12 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - One vote per user per variant: **for** (+1), **against** (−1), or **abstain** (0)
 - Change or retract votes until the document enters resolution phase
 - Denormalized vote tallies for fast display
-- Resolution modes: majority, supermajority, owner decides
+- Resolution: simple majority (yes > no) applied on the `final_voting → resolved` transition; configurable majority thresholds are planned (see Roadmap)
 
 #### Discussion
 - Two-level threaded comments under each variant
-- Moderation support (hide comments)
+- Comment sorting on the proposal page: Oldest / Newest / Most replied / Author's
+- Deleted comments are hidden, not removed (`is_hidden` flag); a full moderation dashboard is planned (see Roadmap)
 
 #### Access Control
 - Per-document access levels: viewer, commenter, proposer, voter, editor, admin
@@ -136,7 +138,9 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `POST` | `/api/auth/request-otp` | Send OTP code to email |
 | `POST` | `/api/auth/verify-otp` | Verify OTP and create session |
 | `POST` | `/api/auth/logout` | Destroy session |
-| `GET`  | `/api/auth/me` | Get current user info |
+| `GET`  | `/api/auth/me` | Get current user info + client config |
+| `PATCH` | `/api/auth/profile` | Update display name, organisation, searchability |
+| `GET`  | `/api/auth/search` | Search users by name/email/organisation (3+ chars; non-searchable/protected excluded) |
 
 #### Documents
 | Method | Path | Description |
@@ -149,6 +153,9 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `POST`   | `/api/documents/:id/status` | Change document status |
 | `GET`    | `/api/documents/:id/lines` | Get paginated document lines |
 | `GET`    | `/api/documents/:id/lines?page=N` | Get lines for specific page |
+| `GET`    | `/api/documents/:id/text` | Full reconstructed document text (for copy/export) |
+| `POST`   | `/api/documents/:id/copy-data` | Copy proposals/votes/comments from source `:id` into a target doc (owner of both) |
+| `PATCH`  | `/api/documents/:id/doc-vote` | Record overall document vote tallies (editor/admin, `final_voting` only) |
 
 #### Variants
 | Method | Path | Description |
@@ -159,6 +166,8 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `PATCH`  | `/api/variants/:id` | Update variant (author only, while pending) |
 | `DELETE` | `/api/variants/:id` | Withdraw variant |
 | `PATCH`  | `/api/variants/:id/share` | Enable / disable anonymous share link (proposer only) |
+| `PATCH`  | `/api/variants/:id/review-status` | Set review status: pending/conflict/rejected/not_applicable/withdrawn (editor/admin) |
+| `PATCH`  | `/api/variants/:id/conflict-order` | Set `vote_order` / `parent_variant_id` for conflict resolution (editor/admin, `voting` only) |
 | `POST`   | `/api/variants/:id/relations` | Add a variant relation |
 | `GET`    | `/api/variants/:id/relations` | List variant relations |
 | `PATCH`  | `/api/variants/:id/final-vote` | Record final tally (editor/admin, final_voting only) |
@@ -217,7 +226,7 @@ cd votetext
 # Install dependencies
 npm install
 
-# Configure environment — fill in SESSION_SECRET and MAILERSEND_API_KEY
+# Configure environment — fill in RESEND_API_KEY (see Configuration below)
 # cp .env.prod .env   ← for production
 # (dev .env is already present with safe defaults)
 
@@ -230,6 +239,36 @@ npm run dev
 
 The application will be available at `http://localhost:3000`.
 
+#### Configuration (environment variables)
+
+All variables are optional except `RESEND_API_KEY` (production email). Defaults shown.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `3000` | HTTP listen port |
+| `NODE_ENV` | `development` | `production` / `development` / `test` — controls email behaviour and cookie flags |
+| `DATABASE_PATH` | `./data/votetext.db` | SQLite file location |
+| `SESSION_LIFETIME_HOURS` | `72` | Session cookie/token lifetime |
+| `SESSION_SECRET` | — | Present in env templates; **not yet used by code** (see Roadmap: signed session tokens) |
+| `OTP_LENGTH` | `6` | OTP code digits |
+| `OTP_EXPIRY_MINUTES` | `10` | OTP validity window |
+| `OTP_MAX_ATTEMPTS` | `5` | OTP requests per email per 15 min |
+| `RESEND_API_KEY` | — | Resend API key for OTP + invite email |
+| `MAIL_FROM_ADDRESS` | — | Sender address (verified domain in Resend) |
+| `MAIL_FROM_NAME` | `VoteText` | Sender display name |
+| `VOTETEXT_URL` | request origin | Absolute app URL used in invite emails |
+| `CORS_ORIGINS` | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
+| `MAX_DOCUMENT_CHARS` | `1000000` | Maximum document size on import |
+| `DEFAULT_LINES_PER_PAGE` | `30` | Lines per page when not specified |
+| `COMMENT_EDIT_WINDOW_MINUTES` | `30` | How long authors can edit their comments |
+| `COMMENT_COOLDOWN_SECONDS` | `5` | Minimum interval between comments per user |
+| `VARIANT_COOLDOWN_SECONDS` | `5` | Minimum interval between proposals per user |
+| `COMMENT_HEAT_ORANGE` | `10` | Heatmap: % of document comments for orange |
+| `COMMENT_HEAT_RED` | `25` | Heatmap: % of document comments for red |
+| `PROPOSALS_TOP_PERCENT` | `10` | Sidebar "Top" filter percentage |
+| `TOAST_DISMISS_SECONDS` | `30` | Toast notification auto-dismiss |
+| `VOTING_COUNTDOWN_DEFAULT_MINUTES` | `5` | Default countdown in the schedule-voting form |
+
 #### Directory Structure
 
 ```
@@ -239,7 +278,7 @@ votetext/
 ├── .env                    # Dev environment (gitignored)
 ├── .env.prod               # Production environment template (gitignored)
 ├── .gitignore
-├── cloud-init.yaml         # Hetzner server provisioning
+├── cloud-init-example.yaml # Hetzner provisioning template (copy to cloud-init.yaml, gitignored)
 ├── data/                   # SQLite database (gitignored)
 │   └── votetext.db
 ├── scripts/
@@ -259,9 +298,15 @@ votetext/
 │       ├── variants.js     # Variant proposals, relations, voting, comments
 │       ├── comments.js     # Comment edit/delete (standalone path)
 │       └── activity.js     # Activity feed
+├── specs/
+│   ├── test-plan.md        # Test scenarios (automated + manual checklist)
+│   └── use-cases.md        # Detailed user flows (UC-1 …)
+├── tests/
+│   └── api.test.js         # Integration tests (node:test, isolated DB)
 └── public/
     ├── index.html          # Single-page application shell
-    ├── app.js              # Client-side logic (vanilla JS)
+    ├── app.js              # Client-side logic (vanilla JS, < 2000 lines)
+    ├── review.js           # Editor/admin views: review, conflicts, final voting, resolved text
     └── style.css           # Styles
 ```
 
@@ -291,7 +336,7 @@ No email account is needed for local development. In `development` mode, the OTP
 
 The application is designed to run on a single Hetzner CX23 VPS (2 vCPU, 4 GB RAM, ~€4.5/month).
 
-Server provisioning is handled by `cloud-init.yaml` — paste it into the Hetzner console when creating the server. It installs Node.js 22 LTS, nginx, certbot, fail2ban, ufw, and configures the systemd service automatically.
+Server provisioning is templated in [`cloud-init-example.yaml`](./cloud-init-example.yaml) — copy it to `cloud-init.yaml` (gitignored), fill in the `<PLACEHOLDER>` values (deploy user, SSH key, domain, email), and paste it into the Hetzner console when creating the server. It installs Node.js 22 LTS, nginx, certbot, fail2ban, ufw, and configures the systemd service automatically.
 
 #### First deploy (after server boot)
 
@@ -299,13 +344,13 @@ Server provisioning is handled by `cloud-init.yaml` — paste it into the Hetzne
 # 1. Copy code (excluding node_modules, data, and env files)
 rsync -av --exclude node_modules --exclude data --exclude .env --exclude .env.prod \
   -e "ssh -p 2222" \
-  . kjelloe@votetext.kjell.solutions:/opt/votetext/
+  . <DEPLOY_USER>@<YOUR_DOMAIN>:/opt/votetext/
 
 # 2. Copy production env
-scp -P 2222 .env.prod kjelloe@votetext.kjell.solutions:/opt/votetext/.env
+scp -P 2222 .env.prod <DEPLOY_USER>@<YOUR_DOMAIN>:/opt/votetext/.env
 
 # 3. Point DNS A record to the server IP, then on the server:
-ssh -p 2222 kjelloe@votetext.kjell.solutions
+ssh -p 2222 <DEPLOY_USER>@<YOUR_DOMAIN>
 ~/first-deploy.sh
 ```
 
@@ -313,11 +358,11 @@ ssh -p 2222 kjelloe@votetext.kjell.solutions
 
 #### Backups
 
-A daily cron job at 03:00 backs up the SQLite database to `/home/kjelloe/backups/` with 30-day retention (configured in `cloud-init.yaml`).
+A daily cron job at 03:00 backs up the SQLite database to `~/backups/` on the server with 30-day retention (configured in the cloud-init template).
 
 ```bash
 # Manual backup
-sqlite3 /opt/votetext/data/votetext.db ".backup /home/kjelloe/backups/votetext-$(date +%F).db"
+sqlite3 /opt/votetext/data/votetext.db ".backup ~/backups/votetext-$(date +%F).db"
 ```
 
 ---
@@ -328,7 +373,7 @@ sqlite3 /opt/votetext/data/votetext.db ".backup /home/kjelloe/backups/votetext-$
 |--------|-----|
 | **Express** over Fastify | More widely known, more middleware ecosystem, good enough perf for this use case |
 | **better-sqlite3** over knex/prisma | Synchronous API = simpler code, faster for single-server SQLite |
-| **Vanilla JS** over React/Vue | Zero build step, smaller bundle, works without JS for basic reading |
+| **Vanilla JS** over React/Vue | Zero build step, smaller bundle, no framework churn |
 | **Email OTP** over passwords | No password storage liability, simpler UX, good enough security for this audience |
 | **SQLite** over Postgres | Single-file, zero-config, trivial backups, handles thousands of concurrent readers in WAL mode |
 | **Single HTML page** over SPA router | Simplicity — URL hash routing for views, no build tool needed |
@@ -365,4 +410,8 @@ sqlite3 /opt/votetext/data/votetext.db ".backup /home/kjelloe/backups/votetext-$
 - [x] Draft document visibility restriction
 - [x] Resolution workflow — resolved text stored on `final_voting → resolved` transition; editor preview, export as Markdown/HTML, PASSED/FAILED banner, fork as new document
 - [ ] Export resolved document (further polish)
-- [ ] Moderation dashboard
+- [ ] Moderation dashboard — UI to hide/unhide variants (`variants.is_hidden` currently has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected` (enforced in search, admin-settable only via SQL today)
+- [ ] Signed session tokens — use `SESSION_SECRET` (already in env templates, unused) to HMAC-sign session IDs
+- [ ] Configurable majority thresholds — absolute majority, 2/3 majority, 3/4 majority (current behaviour: simple majority yes > no). Open design question: per-document setting vs per-proposal setting chosen while preparing the vote (same phase as conflict resolution)
+- [ ] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
+- [ ] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log), giving them version history and offsite backup instead of manual zip copies

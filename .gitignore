@@ -71,9 +71,14 @@ web_modules/
 
 # dotenv environment variable files
 .env
-<<<<<<< HEAD
 .env.*
 !.env.example
+
+# Private ops files — sanitised template is cloud-init-example.yaml
+cloud-init.yaml
+ssh-*.sh
+dev-prompts.md
+*.zip
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

@@ -48,7 +48,8 @@ src/routes/
     comments.js     — PATCH/DELETE /api/comments/:id only
     activity.js     — GET /api/activity (user feed)
 public/
-    app.js          — hash router (#/documents, #/variants/:id, …); all views; esc() for XSS
+    app.js          — hash router (#/documents, #/variants/:id, …); all-role views; esc() for XSS
+    review.js       — editor/admin views: review, conflict resolution, final voting, resolved text
     style.css       — CSS custom properties (--color-*, --font-*); mobile-first
 ```
 

@@ -589,3 +589,5 @@ This restriction applies to both `GET /documents/:id` and the document list (`GE
 ## Planned / future use cases
 
 - **UC-16:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-17:** Configurable majority thresholds — absolute majority, 2/3 majority, 3/4 majority (current behaviour is simple majority, yes > no, applied in `resolveVariants()`). Open design question: a per-document option, or a per-proposal setting chosen while preparing the vote (same phase as conflict resolution). To be discussed before implementation.
+- **UC-18:** Moderation dashboard — hide/unhide variants (`variants.is_hidden` is filtered everywhere but has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected`.
