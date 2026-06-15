@@ -49,6 +49,7 @@ src/routes/
     activity.js     — GET /api/activity (user feed)
 public/
     app.js          — hash router (#/documents, #/variants/:id, …); all-role views; esc() for XSS
+    auth.js         — viewLogin, showProfileModal, viewProfile (depends on app.js globals)
     review.js       — editor/admin views: review, conflict resolution, final voting, resolved text
     style.css       — CSS custom properties (--color-*, --font-*); mobile-first
 ```

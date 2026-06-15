@@ -33,7 +33,7 @@ data/votetext.db  (single SQLite file, WAL mode)
 | HTTP | Express 4 | Minimal, well-understood, enough middleware |
 | Database | SQLite via `better-sqlite3` | Zero-config, single file, synchronous API = simpler code |
 | Auth | Passwordless email OTP | No password storage, Resend SDK covers email delivery |
-| Frontend | Vanilla JS + HTML + CSS | No build step, no framework churn; `app.js` < 2000 lines, editor views in `review.js` |
+| Frontend | Vanilla JS + HTML + CSS | No build step, no framework churn; `app.js` < 2000 lines, split by role into `auth.js` and `review.js` |
 | Deployment target | Single Linux VPS | Single-process, SQLite handles thousands of concurrent readers in WAL mode |
 
 ---
@@ -66,8 +66,9 @@ votetext/
 │       └── activity.js     — user activity feed
 ├── public/
 │   ├── index.html          — SPA shell
-│   ├── app.js              — client router + views used by all roles (< 2000 lines)
-│   ├── review.js           — editor/admin-only views: review, conflict resolution, final voting
+│   ├── app.js              — client router + all-role views (< 2000 lines)
+│   ├── auth.js             — login, profile completion modal, profile page
+│   ├── review.js           — editor/admin views: review, conflict resolution, final voting, resolved text
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
@@ -309,7 +310,7 @@ Single HTML page (`public/index.html`) with hash-based routing:
 #/login                  → viewLogin()
 #/documents              → viewDocumentList()
 #/documents/:id          → viewDocument(id)
-#/documents/:id/review      → viewDocumentReview(id)        — editor/admin two-panel review view
+#/documents/:id/review      → viewDocumentReview(id)        — editor/admin two-panel review view (public/review.js)
 #/documents/:id/conflicts   → viewConflictResolution(id)    — drag-and-drop conflict ordering (public/review.js)
 #/documents/:id/final-vote    → viewFinalVoting(id)          — final voting walkthrough + export (public/review.js)
 #/documents/:id/resolved-text → viewResolvedText(id)        — resolved text preview/export, Mark as Resolved, Fork (public/review.js)
@@ -570,15 +571,17 @@ Frontend: each proposal card in the final voting walkthrough has a collapsed `<d
 
 ### `app.js` split strategy
 
-`app.js` is capped at 2000 lines. `review.js` already holds the three editor/admin-only views (`viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`) and is not line-capped. If `app.js` approaches the limit again, the recommended split is:
+`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,764 lines as of the Phase 1 split):
 
-| Candidate file | What to move | Who uses it |
+| File | Contents | Audience |
 |---|---|---|
-| `public/review.js` | Already done — reviewer/editor views (`viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText`) | editors, admins |
-| `public/auth.js` | `viewLogin`, `showProfileModal` | new/infrequent users only |
-| `public/profile.js` | `viewProfile` | occasional |
+| `app.js` | Router, helpers, document/variant/comment/activity/access views | all roles, every session |
+| `auth.js` | `viewLogin`, `showProfileModal`, `viewProfile` | once per session / infrequent |
+| `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText` | editors and admins only |
 
-The split should be driven by role: views that only editors/admins use go to `review.js`; views for infrequent flows (login, profile) can go to a `public/auth.js`. Core document/variant views should stay in `app.js` since all roles use them constantly.
+If `app.js` approaches the limit again, the next candidates are the owner/admin modals (`openAccessModal`, `openStatusModal`, `openDocSettingsModal`, ~250 lines) which could move to a `public/admin.js`, followed by `openCreateDocModal` (~197 lines). Core document/variant rendering stays in `app.js` since all roles use it on every page.
+
+All files share globals: `app.js` loads first and defines the helpers (`esc`, `el`, `api`, `state`, etc.); `auth.js` and `review.js` depend on those globals. Cross-file dependency contracts are verified by `tests/frontend.test.js`.
 
 ---
 

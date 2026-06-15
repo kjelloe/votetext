@@ -190,21 +190,32 @@ test('router dispatches only to declared functions', () => {
 });
 
 test('review.js only uses globals that app.js exports (no missing cross-file deps)', () => {
-    // The globals review.js is allowed to consume from app.js
     const APP_GLOBALS_USED_BY_REVIEW = ['esc', 'el', 'api', 'setMain', 'state',
         'openModal', 'closeModal', 'showToast', 'showError',
         'renderLines', 'renderPagination', 'timeAgo', 'statusBadge'];
 
     const appSrc  = readSrc('app.js');
     const appDecl = new Set(topLevelFunctions(appSrc));
-    // state is a const, not a function — check it exists in app.js as a declaration
     assert.ok(/\bconst state\b/.test(appSrc), '"state" const not found in app.js');
 
     for (const name of APP_GLOBALS_USED_BY_REVIEW) {
-        if (name === 'state') continue; // checked above
-        assert.ok(
-            appDecl.has(name),
-            `review.js depends on "${name}" but it is not declared as a function in app.js`
-        );
+        if (name === 'state') continue;
+        assert.ok(appDecl.has(name),
+            `review.js depends on "${name}" but it is not declared as a function in app.js`);
+    }
+});
+
+test('auth.js only uses globals that app.js exports (no missing cross-file deps)', () => {
+    const APP_GLOBALS_USED_BY_AUTH = ['esc', 'el', 'api', 'setMain', 'state',
+        'openModal', 'closeModal', 'updateHeader', 'showError'];
+
+    const appSrc  = readSrc('app.js');
+    const appDecl = new Set(topLevelFunctions(appSrc));
+    assert.ok(/\bconst state\b/.test(appSrc), '"state" const not found in app.js');
+
+    for (const name of APP_GLOBALS_USED_BY_AUTH) {
+        if (name === 'state') continue;
+        assert.ok(appDecl.has(name),
+            `auth.js depends on "${name}" but it is not declared as a function in app.js`);
     }
 });
