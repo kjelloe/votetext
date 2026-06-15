@@ -586,8 +586,62 @@ This restriction applies to both `GET /documents/:id` and the document list (`GE
 
 ---
 
+## UC-17: Configurable majority thresholds
+
+**Status: designed (2026-06-12), not yet implemented.**
+
+**Actor:** Document owner (default) / editor or admin (per-proposal override)
+**Entry points:** Document settings (document default); review view proposal cards (per-proposal override)
+
+### Threshold semantics
+
+| Value | Rule | Boundary |
+|-------|------|----------|
+| `simple` (default) | yes > no — abstentions ignored | strict: exact tie fails |
+| `absolute` | yes > ½ × (yes + no + abstain) | strict: exactly half fails |
+| `two_thirds` | yes ≥ ⅔ × (yes + no + abstain) | inclusive: exactly ⅔ passes |
+| `three_quarters` | yes ≥ ¾ × (yes + no + abstain) | inclusive: exactly ¾ passes |
+
+- All non-simple thresholds use the **full vote count including abstentions** as denominator — abstaining works against the proposal.
+- Zero votes recorded (denominator 0) always fails.
+- Comparisons use integer math to avoid float edge cases: `2*yes > total`, `3*yes >= 2*total`, `4*yes >= 3*total`.
+
+### Storage
+
+- **Document default:** `documents.settings.majority_threshold` (JSON blob, no migration). Absent = `simple` — fully backward compatible.
+- **Per-proposal override:** new column `variants.majority_threshold TEXT` (NULL = inherit document default). Requires a `schema.sql` change + `migrate.js` addition.
+
+### API
+
+- Document default saved via existing `PATCH /api/documents/:id` (settings merge); value validated against the four allowed strings.
+- Per-proposal: new `PATCH /api/variants/:id/threshold { majority_threshold: <value|null> }` — mirrors the share/conflict-order endpoint pattern. Requires editor/admin access and document status `voting` **or** `final_voting` (editable during the walkthrough; final state is fixed at resolve). `null` resets to inherit. Invalid value → 400; wrong status → 422; insufficient access → 403.
+- New activity action `variant_threshold_changed` (requires `activity_log` CHECK constraint update — see `vt-new-action` skill).
+
+### Where it is applied
+
+A single shared `passesThreshold(yes, no, abstain, threshold)` helper, implemented once server-side (used by `resolveVariants()` for roots and children) and mirrored in `review.js` (no build step — the two copies must be kept in sync):
+
+1. `resolveVariants()` — approved/rejected decision on `final_voting → resolved`
+2. Walkthrough parent ✓ Passed / ✗ Failed badge and child-skip logic
+3. Walkthrough majority indicator — shows percentage against the correct denominator plus the requirement, e.g. `64% yes — requires ⅔`
+
+The **overall document vote** (`doc-vote`, PASSED/FAILED banner) intentionally stays simple majority — out of scope for this feature.
+
+### UI
+
+- **Document default:** selector in the document settings area (same place as `allow_anonymous_view` / `default_access`), labelled "Majority required", options: Simple majority / Absolute majority / ⅔ majority / ¾ majority.
+- **Per-proposal:** compact dropdown on each review-view proposal card, default option "(document default)", saving immediately on change like the existing action buttons.
+- **Walkthrough:** each card shows its effective threshold; CSV export and print HTML gain a `Threshold` column.
+
+### Test plan (future Group T)
+
+- Threshold endpoint: valid set → 200; invalid value → 400; viewer → 403; doc in `open` → 422; null resets inherit → 200
+- Resolve math: `two_thirds` 6/3/0 → 6 ≥ 6 approved (boundary); 5/3/1 → rejected; `absolute` 5/4/2 → 10 > 11 false → rejected; `simple` tie → rejected
+- Per-proposal override beats document default; doc-vote banner unaffected by thresholds
+
+---
+
 ## Planned / future use cases
 
 - **UC-16:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
-- **UC-17:** Configurable majority thresholds — absolute majority, 2/3 majority, 3/4 majority (current behaviour is simple majority, yes > no, applied in `resolveVariants()`). Open design question: a per-document option, or a per-proposal setting chosen while preparing the vote (same phase as conflict resolution). To be discussed before implementation.
 - **UC-18:** Moderation dashboard — hide/unhide variants (`variants.is_hidden` is filtered everywhere but has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected`.
