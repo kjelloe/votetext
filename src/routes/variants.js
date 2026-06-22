@@ -69,6 +69,31 @@ router.patch('/:id/share', requireAuth, (req, res, next) => {
     } catch (err) { next(err); }
 });
 
+// PATCH /api/variants/:id/threshold  (editor/admin; doc must be voting or final_voting)
+router.patch('/:id/threshold', requireAuth, (req, res, next) => {
+    try {
+        const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!checkDocAccess(doc, req, 'editor')) return res.status(403).json({ error: 'Editor or admin access required' });
+        if (!['voting', 'final_voting'].includes(doc.status)) {
+            return res.status(422).json({ error: 'Document must be in voting or final_voting status' });
+        }
+        const { majority_threshold } = req.body;
+        const VALID = ['simple', 'absolute', 'two_thirds', 'three_quarters'];
+        if (majority_threshold != null && majority_threshold !== '' && !VALID.includes(majority_threshold)) {
+            return res.status(400).json({ error: 'Invalid threshold. Use simple, absolute, two_thirds, or three_quarters.' });
+        }
+        const value = majority_threshold || null;
+        run("UPDATE variants SET majority_threshold = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [value, variant.id]);
+        logActivity(req.user.id, doc.id, variant.id, 'variant_threshold_changed', { threshold: value });
+        res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // PATCH /api/variants/:id
 router.patch('/:id', requireAuth, (req, res, next) => {
     try {

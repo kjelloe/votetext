@@ -219,6 +219,7 @@ Routes are grouped by resource and mounted in `server.js`:
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
                        (includes PATCH /:id/share — proposer only, toggle allow_anonymous_share)
+                       (includes PATCH /:id/threshold — editor/admin, voting/final_voting only, sets majority_threshold)
                        (includes PATCH /:id/review-status — editor/admin status update)
                        (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution)
                        (includes PATCH /:id/final-vote — final_yes/no/abstain tallies, editor/admin, final_voting only)
@@ -487,14 +488,18 @@ After all conflicts are resolved and the document is in `final_voting`, the edit
 
 1. Fetches variants and the full document text (`GET /documents/:id/text` for original-text extraction by char range).
 2. Builds an ordered proposal list using `_buildOrderedBlocks()`: all voteable proposals (pending + conflict, excluding withdrawn/rejected/not_applicable/hidden) sorted by document position. Conflict groups appear as a labelled unit at their earliest character offset; within each group roots are ordered by `vote_order`, children follow their parent.
-3. Renders each proposal with Original / Proposed text, and yes/no/abstain integer inputs. Clicking **Save** calls `PATCH /api/variants/:id/final-vote`.
-4. Provides **Export CSV** (Nordic format: semi-colon separated, double-quoted, UTF-8 BOM) and **Print HTML** (standalone printable tally sheet opened in a new tab via Blob URL) — both generated client-side from in-memory data.
-5. An **Overall document vote** section at the bottom records yes/no/abstain totals for the whole document via `PATCH /api/documents/:id/doc-vote`.
+3. Renders each proposal with Original / Proposed text, and yes/no/abstain integer inputs. A **Threshold** dropdown (default: doc default; options: simple/absolute/⅔/¾) calls `PATCH /api/variants/:id/threshold` on change. Clicking **Save** calls `PATCH /api/variants/:id/final-vote`.
+4. A majority indicator shows below the inputs: `X% yes — needs <threshold>`. Percentage denominator is `yes+no` for simple, `yes+no+abstain` for all other thresholds. Colour: green = passes, yellow = simple tie, red = fails.
+5. Provides **Export CSV** (Nordic format: semi-colon separated, double-quoted, UTF-8 BOM; includes Threshold column) and **Print HTML** (standalone printable tally sheet with threshold label per proposal) — both generated client-side from in-memory data.
+6. An **Overall document vote** section at the bottom records yes/no/abstain totals for the whole document via `PATCH /api/documents/:id/doc-vote`.
 
-Both new PATCH endpoints require `final_voting` document status (422 otherwise) and editor/admin access (403 otherwise). Partial updates are supported: omitted fields retain their current value.
+Both PATCH endpoints require `final_voting` document status (422 otherwise) and editor/admin access (403 otherwise). Partial updates supported.
+
+**`passesThreshold(yes, no, abstain, threshold)`** — pure helper implementing the four threshold rules with integer math. Lives in `src/routes/documents.js` and is mirrored verbatim in `public/review.js`. Used by `resolveVariants()` (server-side) and the walkthrough's `updateChildrenState()` + `updateMajority()` (client-side). Both copies must stay in sync.
 
 **New schema fields:**
 - `variants.final_yes`, `variants.final_no`, `variants.final_abstain` — INTEGER, null until recorded
+- `variants.majority_threshold TEXT` — NULL = inherit document default (`documents.settings.majority_threshold`, absent = `simple`)
 - `documents.doc_vote_yes`, `documents.doc_vote_no`, `documents.doc_vote_abstain` — INTEGER, null until recorded
 
 ---

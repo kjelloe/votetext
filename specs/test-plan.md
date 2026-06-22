@@ -281,6 +281,21 @@
 
 ---
 
+## Group T — Majority Thresholds (UC-17)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| T1 | Create doc in `voting` status with one variant (owner) | 200, `threshDocId` and `threshVarId` captured |
+| T2 | `PATCH /variants/:id/threshold { majority_threshold: 'absolute' }` — viewer | 403 |
+| T3 | `PATCH /variants/:id/threshold { majority_threshold: 'half_and_half' }` — owner | 400 |
+| T4 | `PATCH /variants/:id/threshold { majority_threshold: 'two_thirds' }` — owner | 200, `variant.majority_threshold = 'two_thirds'` |
+| T5 | `GET /variants/:id` | 200, `majority_threshold` persists |
+| T6 | `PATCH /documents/:id { settings: { majority_threshold: 'consensus' } }` | 400 |
+| T7 | `PATCH /documents/:id { settings: { majority_threshold: 'absolute' } }` | 200, settings updated |
+| T8 | Move doc to `final_voting`, record 2/2/2 tally, resolve — variant has `two_thirds` threshold | variant.status = `rejected` (3×2=6 < 2×6=12) |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.
@@ -309,7 +324,11 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Voting walkthrough:** final_voting doc → Review view → "Voting walkthrough" button → walkthrough view loads with proposals in document order; conflict groups labelled and indented
 - [ ] **Export CSV:** click Export CSV → file downloads; open in spreadsheet — columns correct, encoding correct, semi-colon separated
 - [ ] **Print HTML:** click Print HTML → new tab opens with clean tally sheet; print dialog renders cleanly
-- [ ] **Record tally:** enter yes/no/abstain for a proposal → Save → "✓ Saved at HH:MM" appears; majority percentage shows below inputs (green >50%, yellow =50%, red <50%); reload page → values persist
+- [ ] **Record tally:** enter yes/no/abstain for a proposal → Save → "✓ Saved at HH:MM" appears; majority percentage shows below inputs with threshold label (e.g. "64% yes — needs ⅔ majority"); reload page → values persist
+- [ ] **Threshold dropdown (walkthrough):** each proposal card has a "Threshold" selector defaulting to "Doc default (Simple)"; change to "⅔ majority" → percentage recalculates using yes+no+abstain as denominator; change back to doc default → uses doc default rule
+- [ ] **Threshold dropdown (review list):** review view proposal cards show a compact "Threshold" selector; changing value immediately calls `PATCH /variants/:id/threshold`
+- [ ] **Export CSV threshold:** Export CSV from final voting walkthrough → open in spreadsheet → last column is "Threshold" showing effective threshold label per proposal
+- [ ] **Print HTML threshold:** Print HTML → each proposal's tally row shows "Threshold: X · Yes: __ No: __ Abstain: __"
 - [ ] **Parent passes collapse:** record yes > no for a parent proposal → child cards grey out and collapse showing "Not voting on — parent passed"; parent card shows "✓ Passed" badge; record yes ≤ no → "✗ Failed" badge; children remain visible
 - [ ] **Overall document vote:** fill yes/no/abstain at bottom → Save → persists on reload
 - [ ] **Profile completion modal:** log in as new user with no display name → modal appears; fill in name + org → Save and continue → header shows new name; or click Skip → header shows email

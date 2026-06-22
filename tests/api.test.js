@@ -1670,6 +1670,87 @@ test('POST /documents/:id/copy-data — requester lacks admin on source → 403'
     assert.equal(r.status, 403);
 });
 
+// ── GROUP T — MAJORITY THRESHOLDS (UC-17) ─────────────────────────────────────
+
+let threshDocId, threshVarId;
+
+test('T1: Setup — create doc in voting status with a variant', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Threshold test doc', text: 'Original text here' }, cookie: sessionCookie });
+    threshDocId = d.data.document.id;
+    await req('POST', `/documents/${threshDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${threshDocId}/variants`, {
+        body: { char_start: 0, char_end: 8, operation: 'replace', new_text: 'Changed', title: 'Threshold variant' },
+        cookie: sessionCookie,
+    });
+    threshVarId = v.data.variant.id;
+    const r = await req('POST', `/documents/${threshDocId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'voting');
+});
+
+test('T2: PATCH /variants/:id/threshold — non-editor (viewer) → 403', async () => {
+    const r = await req('PATCH', `/variants/${threshVarId}/threshold`, {
+        body: { majority_threshold: 'absolute' },
+        cookie: viewerCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
+test('T3: PATCH /variants/:id/threshold — invalid value → 400', async () => {
+    const r = await req('PATCH', `/variants/${threshVarId}/threshold`, {
+        body: { majority_threshold: 'half_and_half' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('T4: PATCH /variants/:id/threshold — owner sets two_thirds → 200, value stored', async () => {
+    const r = await req('PATCH', `/variants/${threshVarId}/threshold`, {
+        body: { majority_threshold: 'two_thirds' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.majority_threshold, 'two_thirds');
+});
+
+test('T5: GET /variants/:id — majority_threshold persists across request', async () => {
+    const r = await req('GET', `/variants/${threshVarId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.majority_threshold, 'two_thirds');
+});
+
+test('T6: PATCH /documents/:id settings — invalid majority_threshold → 400', async () => {
+    const r = await req('PATCH', `/documents/${threshDocId}`, {
+        body: { settings: { majority_threshold: 'consensus' } },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
+test('T7: PATCH /documents/:id settings — valid majority_threshold stored in settings', async () => {
+    const r = await req('PATCH', `/documents/${threshDocId}`, {
+        body: { settings: { majority_threshold: 'absolute' } },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 200);
+    const updatedSettings = JSON.parse(r.data.document.settings || '{}');
+    assert.equal(updatedSettings.majority_threshold, 'absolute');
+});
+
+test('T8: Resolve — variant two_thirds threshold with 2/2/2 tally (6 total, needs ⅔) → rejected', async () => {
+    const fvr = await req('POST', `/documents/${threshDocId}/status`, { body: { status: 'final_voting' }, cookie: sessionCookie });
+    assert.equal(fvr.status, 200);
+    // 2 yes of 6 total: 3*2=6, 2*6=12 → 6 < 12 → fails two_thirds
+    await req('PATCH', `/variants/${threshVarId}/final-vote`, {
+        body: { yes: 2, no: 2, abstain: 2 },
+        cookie: sessionCookie,
+    });
+    const r = await req('POST', `/documents/${threshDocId}/status`, { body: { status: 'resolved' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    const vr = await req('GET', `/variants/${threshVarId}`, { cookie: sessionCookie });
+    assert.equal(vr.data.variant.status, 'rejected', 'variant must be rejected — 2/6 does not meet ⅔ threshold');
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

@@ -2,6 +2,20 @@
 
 /* ===== Shared helpers ===== */
 
+const THRESHOLD_LABELS = { simple: 'Simple', absolute: 'Absolute', two_thirds: '⅔ majority', three_quarters: '¾ majority' };
+
+function passesThreshold(yes, no, abstain, threshold) {
+    yes = yes || 0; no = no || 0; abstain = abstain || 0;
+    const total = yes + no + abstain;
+    if (total === 0) return false;
+    switch (threshold) {
+        case 'absolute':       return 2 * yes > total;
+        case 'two_thirds':     return 3 * yes >= 2 * total;
+        case 'three_quarters': return 4 * yes >= 3 * total;
+        default:               return yes > no;
+    }
+}
+
 function _buildOrderedBlocks(variants, varMap) {
     const voteable = variants.filter(v => !['withdrawn', 'rejected', 'not_applicable'].includes(v.status) && !v.is_hidden);
     const groups = _buildConflictGroups(voteable);
@@ -40,16 +54,21 @@ function _csvCell(val) {
 }
 
 function _downloadCSV(doc, blocks, fullText) {
+    const docSettings = (doc.settings && typeof doc.settings === 'object') ? doc.settings : {};
+    const docDefaultThreshold = docSettings.majority_threshold || 'simple';
     const rows = [
         ['Order', 'Proposal #', 'Title', 'Type', 'Line Start', 'Line End',
          'Proposer', 'Organization', 'Original Text', 'Proposed Text',
-         'Conflict Group', 'Vote Order', 'Parent Proposal #', 'Yes', 'No', 'Abstain']
+         'Conflict Group', 'Vote Order', 'Parent Proposal #', 'Yes', 'No', 'Abstain', 'Threshold']
     ];
     let order = 0;
     for (const block of blocks) {
         for (const { v, isChild, parentNum } of block.items) {
             order++;
             const orig = fullText ? fullText.slice(v.char_start, v.char_end) : '';
+            const thresholdLabel = v.majority_threshold
+                ? THRESHOLD_LABELS[v.majority_threshold] || v.majority_threshold
+                : `doc default (${THRESHOLD_LABELS[docDefaultThreshold] || docDefaultThreshold})`;
             rows.push([
                 order, v.num, v.title || v.operation, v.operation,
                 v.line_start || '', v.line_end || '',
@@ -58,7 +77,8 @@ function _downloadCSV(doc, blocks, fullText) {
                 block.type === 'group' ? `Group ${block.groupNum}` : '',
                 isChild ? 'child' : (v.vote_order || ''),
                 parentNum || '',
-                v.final_yes ?? '', v.final_no ?? '', v.final_abstain ?? ''
+                v.final_yes ?? '', v.final_no ?? '', v.final_abstain ?? '',
+                thresholdLabel
             ]);
         }
     }
@@ -72,6 +92,8 @@ function _downloadCSV(doc, blocks, fullText) {
 
 function _openPrintHTML(doc, blocks, fullText) {
     const esc2 = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const docSettings = (doc.settings && typeof doc.settings === 'object') ? doc.settings : {};
+    const docDefaultThreshold = docSettings.majority_threshold || 'simple';
     let order = 0;
     let body = '';
     for (const block of blocks) {
@@ -84,10 +106,13 @@ function _openPrintHTML(doc, blocks, fullText) {
             const orig = fullText ? fullText.slice(v.char_start, v.char_end) : '';
             const childNote = isChild ? `<span class="child-note">Child of #${parentNum} — voted only if parent fails</span>` : '';
             const orderBadge = !isChild && block.type === 'group' ? `<span class="order-badge">${v.vote_order}</span>` : '';
+            const thresholdLbl = v.majority_threshold
+                ? THRESHOLD_LABELS[v.majority_threshold] || v.majority_threshold
+                : `doc default — ${THRESHOLD_LABELS[docDefaultThreshold] || docDefaultThreshold}`;
             body += `<div class="proposal${isChild ? ' child' : ''}">
 <div class="proposal-header">${orderBadge}<strong>#${esc2(v.num)} ${esc2(v.title || v.operation)}</strong> <span class="op">${esc2(v.operation)}</span> · Lines ${esc2(v.line_start)}–${esc2(v.line_end)} · ${esc2(v.proposer_name || '')}${v.proposer_org ? ` (${esc2(v.proposer_org)})` : ''}${childNote}</div>
 <div class="texts"><div class="label">Original:</div><div class="text">${esc2(orig) || '<em>—</em>'}</div><div class="label">Proposed:</div><div class="text">${esc2(v.new_text) || '<em>—</em>'}</div></div>
-<div class="tally">Yes: ______ &nbsp;&nbsp; No: ______ &nbsp;&nbsp; Abstain: ______</div>
+<div class="tally">Threshold: ${esc2(thresholdLbl)} &nbsp;·&nbsp; Yes: ______ &nbsp;&nbsp; No: ______ &nbsp;&nbsp; Abstain: ______</div>
 </div>`;
         }
         if (block.type === 'group') body += '</div>';
@@ -446,6 +471,9 @@ async function viewFinalVoting(docId) {
     const doc = docData.document;
     if (doc.status !== 'final_voting') { location.hash = `#/documents/${docId}/review`; return; }
 
+    const docSettings = (doc.settings && typeof doc.settings === 'object') ? doc.settings : {};
+    const docDefaultThreshold = docSettings.majority_threshold || 'simple';
+
     const idOrder = Object.fromEntries([...varData.variants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
     const varMap = Object.fromEntries(varData.variants.map(v => [v.id, { ...v, num: idOrder[v.id] }]));
     const fullText = textData.text || '';
@@ -480,7 +508,8 @@ async function viewFinalVoting(docId) {
         const pv = varMap[parentId];
         if (!pv) return;
         const hasTally = pv.final_yes != null || pv.final_no != null;
-        const passed = hasTally && (pv.final_yes || 0) > (pv.final_no || 0);
+        const threshold = pv.majority_threshold || docDefaultThreshold;
+        const passed = hasTally && passesThreshold(pv.final_yes, pv.final_no, pv.final_abstain, threshold);
         list.querySelectorAll(`[data-parent-id="${parentId}"]`).forEach(childCard => {
             childCard.classList.toggle('fv-card-child-skipped', passed);
             const skipNote = childCard.querySelector('.fv-skip-note');
@@ -525,6 +554,7 @@ async function viewFinalVoting(docId) {
   <button class="btn btn-sm btn-primary fv-save-btn">Save</button>
   <span class="fv-saved-indicator" style="display:none">✓ Saved</span>
 </div>
+<div class="fv-threshold"><label class="text-muted" style="font-size:.85rem">Threshold <select class="fv-threshold-sel"><option value="">Doc default (${esc(THRESHOLD_LABELS[docDefaultThreshold] || 'Simple')})</option><option value="simple">Simple</option><option value="absolute">Absolute</option><option value="two_thirds">⅔ majority</option><option value="three_quarters">¾ majority</option></select></label></div>
 <div class="fv-majority"></div>
 <div class="fv-audit"><button class="fv-audit-btn">View audit trail</button><div class="fv-audit-list" style="display:none"></div></div>`;
         const saveBtn  = card.querySelector('.fv-save-btn');
@@ -543,13 +573,29 @@ async function viewFinalVoting(docId) {
             } catch {}
         });
 
+        const thresholdSel = card.querySelector('.fv-threshold-sel');
+        thresholdSel.value = v.majority_threshold || '';
+        thresholdSel.addEventListener('change', async () => {
+            const val = thresholdSel.value || null;
+            try {
+                const d = await api('PATCH', `/variants/${v.id}/threshold`, { majority_threshold: val });
+                Object.assign(varMap[v.id], d.variant);
+                updateMajority();
+            } catch (e) { alert(e.message); thresholdSel.value = varMap[v.id].majority_threshold || ''; }
+        });
+
         function updateMajority() {
-            const yes = varMap[v.id].final_yes || 0, no = varMap[v.id].final_no || 0;
-            const total = yes + no;
-            if (total === 0) { majEl.textContent = ''; majEl.className = 'fv-majority'; return; }
-            const pct = Math.round(yes / total * 100);
-            const cls = pct > 50 ? 'fv-majority-pass' : (pct === 50 ? 'fv-majority-split' : 'fv-majority-fail');
-            majEl.textContent = `${pct}% yes`;
+            const pv = varMap[v.id];
+            const yes = pv.final_yes || 0, no = pv.final_no || 0, abstain = pv.final_abstain || 0;
+            const threshold = pv.majority_threshold || docDefaultThreshold;
+            const isSimple = !threshold || threshold === 'simple';
+            const denominator = isSimple ? (yes + no) : (yes + no + abstain);
+            if (denominator === 0) { majEl.textContent = ''; majEl.className = 'fv-majority'; return; }
+            const pct = Math.round(yes / denominator * 100);
+            const passed = passesThreshold(yes, no, abstain, threshold);
+            const lbl = (THRESHOLD_LABELS[threshold] || 'Simple').toLowerCase();
+            const cls = passed ? 'fv-majority-pass' : (isSimple && yes === no ? 'fv-majority-split' : 'fv-majority-fail');
+            majEl.textContent = `${pct}% yes — needs ${lbl}`;
             majEl.className = `fv-majority ${cls}`;
         }
         updateMajority();
@@ -643,6 +689,8 @@ async function viewDocumentReview(docId) {
     const doc = docData.document;
     if (doc.status !== 'voting' && doc.status !== 'final_voting') { location.hash = `#/documents/${docId}`; return; }
     const isFinalVoting = doc.status === 'final_voting';
+    const docSettings = (doc.settings && typeof doc.settings === 'object') ? doc.settings : {};
+    const docDefaultThreshold = docSettings.majority_threshold || 'simple';
     const rawV = varData.variants || [];
     const idOrder = Object.fromEntries([...rawV].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
     let variants = rawV.map(v => ({ ...v, num: idOrder[v.id] }));
@@ -691,7 +739,17 @@ async function viewDocumentReview(docId) {
             const tallyHtml = isFinalVoting && hasTally
                 ? `<div class="review-final-tally">✓ ${v.final_yes ?? 0} &nbsp;✗ ${v.final_no ?? 0} &nbsp;◯ ${v.final_abstain ?? 0}</div>`
                 : '';
-            card.innerHTML = `<div class="review-card-header"><span class="variant-num">#${v.num}</span><span class="review-card-title">${esc(v.title || v.operation)}</span>${oc ? `<span class="review-overlap-badge">⊕${oc}</span>` : ''}</div><div class="text-muted review-card-meta">Lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))} · ${esc(v.operation)} · ▲${v.votes_for} ▼${v.votes_against}</div>${tallyHtml}<div class="review-actions"><button class="review-btn review-btn-voting${isVoting ? ' review-btn-active' : ''}" data-action="pending">VOTING</button><button class="review-btn review-btn-conflict${v.status === 'conflict' || suggestConflict ? ' review-btn-active' : ''}" data-action="conflict">CONFLICT</button><button class="review-btn review-btn-danger${v.status === 'rejected' ? ' review-btn-active' : ''}" data-action="rejected">NOT VOTING</button><button class="review-btn review-btn-danger${v.status === 'not_applicable' ? ' review-btn-active' : ''}" data-action="not_applicable">Not applicable</button><button class="review-btn review-btn-danger${v.status === 'withdrawn' ? ' review-btn-active' : ''}" data-action="withdrawn">Withdrawn</button></div>`;
+            card.innerHTML = `<div class="review-card-header"><span class="variant-num">#${v.num}</span><span class="review-card-title">${esc(v.title || v.operation)}</span>${oc ? `<span class="review-overlap-badge">⊕${oc}</span>` : ''}</div><div class="text-muted review-card-meta">Lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))} · ${esc(v.operation)} · ▲${v.votes_for} ▼${v.votes_against}</div>${tallyHtml}<div class="review-actions"><button class="review-btn review-btn-voting${isVoting ? ' review-btn-active' : ''}" data-action="pending">VOTING</button><button class="review-btn review-btn-conflict${v.status === 'conflict' || suggestConflict ? ' review-btn-active' : ''}" data-action="conflict">CONFLICT</button><button class="review-btn review-btn-danger${v.status === 'rejected' ? ' review-btn-active' : ''}" data-action="rejected">NOT VOTING</button><button class="review-btn review-btn-danger${v.status === 'not_applicable' ? ' review-btn-active' : ''}" data-action="not_applicable">Not applicable</button><button class="review-btn review-btn-danger${v.status === 'withdrawn' ? ' review-btn-active' : ''}" data-action="withdrawn">Withdrawn</button></div><div class="review-threshold text-muted" style="font-size:.8rem;margin-top:.4rem">Threshold <select class="review-thresh-sel"><option value="">Doc default (${esc(THRESHOLD_LABELS[docDefaultThreshold] || 'Simple')})</option><option value="simple">Simple</option><option value="absolute">Absolute</option><option value="two_thirds">⅔</option><option value="three_quarters">¾</option></select></div>`;
+            const threshSel = card.querySelector('.review-thresh-sel');
+            threshSel.value = v.majority_threshold || '';
+            threshSel.addEventListener('change', async () => {
+                const val = threshSel.value || null;
+                try {
+                    const d = await api('PATCH', `/variants/${v.id}/threshold`, { majority_threshold: val });
+                    const idx = variants.findIndex(x => x.id === v.id);
+                    if (idx >= 0) variants[idx] = { ...variants[idx], majority_threshold: d.variant.majority_threshold };
+                } catch (e) { showError(wrap, e.message); threshSel.value = v.majority_threshold || ''; }
+            });
             card.querySelectorAll('.review-btn').forEach(btn => btn.addEventListener('click', async () => {
                 try {
                     const data = await api('PATCH', `/variants/${v.id}/review-status`, { status: btn.dataset.action });

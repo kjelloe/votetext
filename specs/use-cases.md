@@ -588,7 +588,7 @@ This restriction applies to both `GET /documents/:id` and the document list (`GE
 
 ## UC-17: Configurable majority thresholds
 
-**Status: designed (2026-06-12), not yet implemented.**
+**Status: implemented (designed 2026-06-12, shipped 2026-06-19).**
 
 **Actor:** Document owner (default) / editor or admin (per-proposal override)
 **Entry points:** Document settings (document default); review view proposal cards (per-proposal override)
@@ -633,15 +633,27 @@ The **overall document vote** (`doc-vote`, PASSED/FAILED banner) intentionally s
 - **Per-proposal:** compact dropdown on each review-view proposal card, default option "(document default)", saving immediately on change like the existing action buttons.
 - **Walkthrough:** each card shows its effective threshold; CSV export and print HTML gain a `Threshold` column.
 
-### Test plan (future Group T)
+### Implementation notes
 
-- Threshold endpoint: valid set → 200; invalid value → 400; viewer → 403; doc in `open` → 422; null resets inherit → 200
-- Resolve math: `two_thirds` 6/3/0 → 6 ≥ 6 approved (boundary); 5/3/1 → rejected; `absolute` 5/4/2 → 10 > 11 false → rejected; `simple` tie → rejected
-- Per-proposal override beats document default; doc-vote banner unaffected by thresholds
+- `passesThreshold(yes, no, abstain, threshold)` lives in `src/routes/documents.js` (server-side) and is mirrored verbatim in `public/review.js` (client-side). These must stay in sync.
+- The doc-settings modal frontend dropdown for the document-level default is **not yet implemented** — the backend accepts `majority_threshold` in `settings` via the existing PATCH endpoint, but there is no UI control in the modal yet.
+- `VALID_THRESHOLDS` Set defined at module level in `documents.js`; inline `VALID` array in `variants.js` — both guard `simple|absolute|two_thirds|three_quarters`.
+
+### Test plan (Group T, 8 tests)
+
+- T1: Setup (doc → voting + variant)
+- T2: viewer → 403
+- T3: invalid value → 400
+- T4: owner sets `two_thirds` → 200, value stored
+- T5: GET /variants/:id confirms threshold persists
+- T6: PATCH /documents/:id with invalid `settings.majority_threshold` → 400
+- T7: PATCH /documents/:id with valid threshold → stored in settings
+- T8: resolve with `two_thirds` and 2/2/2 tally → rejected (boundary: 3×2=6 < 2×6=12)
 
 ---
 
 ## Planned / future use cases
 
-- **UC-16:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation.
+- **UC-16:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation. Title pre-fills as "Your variant of {original title}". Allowed on `open` documents for proposer+; on `voting`/`final_voting` documents for editor/admin and (future) supervisor. See UC-19.
+- **UC-19:** Supervisor access role — a new per-document role between `voter` and `editor`. Grants proposer rights plus the ability to fork variants and manage the voting process during `voting`/`final_voting`, without full document-editing rights. Intended for a meeting chair or secretary who is not the document owner. Requires: adding `supervisor` to `ACCESS_LEVELS` in `access.js`, updating `checkDocAccess()`, updating conflict-resolution and final-voting view guards, and adding the role to the invite UI. **Design this before widening any voting-phase permissions beyond editor/admin.**
 - **UC-18:** Moderation dashboard — hide/unhide variants (`variants.is_hidden` is filtered everywhere but has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected`.

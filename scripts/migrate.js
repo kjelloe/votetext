@@ -62,6 +62,43 @@ addColumnIfMissing('variants', 'final_yes', 'INTEGER');
 addColumnIfMissing('variants', 'final_no', 'INTEGER');
 addColumnIfMissing('variants', 'final_abstain', 'INTEGER');
 addColumnIfMissing('variants', 'allow_anonymous_share', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('variants', 'majority_threshold', 'TEXT');
+// Extend activity_log CHECK constraint with variant_threshold_changed
+const actSchemaRow2 = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='activity_log'").get();
+if (actSchemaRow2 && !actSchemaRow2.sql.includes('variant_threshold_changed')) {
+    console.log('[migrating] Extending activity_log CHECK constraint with variant_threshold_changed…');
+    db.exec(`
+        CREATE TABLE activity_log_new2 (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+            document_id INTEGER          REFERENCES documents (id) ON DELETE CASCADE,
+            variant_id  INTEGER          REFERENCES variants (id) ON DELETE SET NULL,
+            action      TEXT    NOT NULL
+                                CHECK (action IN (
+                                    'document_created', 'document_updated', 'document_status_changed',
+                                    'variant_proposed', 'variant_updated', 'variant_withdrawn',
+                                    'vote_cast', 'vote_changed', 'vote_retracted',
+                                    'comment_added', 'comment_updated',
+                                    'user_invited', 'user_blocked', 'user_unblocked',
+                                    'voting_scheduled', 'voting_schedule_cancelled',
+                                    'variant_threshold_changed'
+                                )),
+            metadata    TEXT    NOT NULL DEFAULT '{}',
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        INSERT INTO activity_log_new2 SELECT * FROM activity_log;
+        DROP TABLE activity_log;
+        ALTER TABLE activity_log_new2 RENAME TO activity_log;
+        CREATE INDEX idx_activity_user      ON activity_log (user_id);
+        CREATE INDEX idx_activity_document  ON activity_log (document_id);
+        CREATE INDEX idx_activity_created   ON activity_log (created_at);
+        CREATE INDEX idx_activity_user_time ON activity_log (user_id, created_at DESC);
+    `);
+    console.log('[done] Extended activity_log CHECK constraint');
+} else {
+    console.log('[skip] activity_log variant_threshold_changed already present');
+}
+
 addColumnIfMissing('documents', 'doc_vote_yes', 'INTEGER');
 addColumnIfMissing('documents', 'doc_vote_no', 'INTEGER');
 addColumnIfMissing('documents', 'doc_vote_abstain', 'INTEGER');

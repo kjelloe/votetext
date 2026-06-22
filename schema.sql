@@ -185,6 +185,9 @@ CREATE TABLE IF NOT EXISTS variants (
     -- Anonymous share: allow unauthenticated users to view this variant via direct link
     allow_anonymous_share INTEGER NOT NULL DEFAULT 0,
 
+    -- Per-proposal majority threshold override (NULL = inherit from document settings.majority_threshold)
+    majority_threshold TEXT,
+
     created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
 
@@ -307,7 +310,8 @@ CREATE TABLE IF NOT EXISTS activity_log (
                             'vote_cast', 'vote_changed', 'vote_retracted',
                             'comment_added', 'comment_updated',
                             'user_invited', 'user_blocked', 'user_unblocked',
-                            'voting_scheduled', 'voting_schedule_cancelled'
+                            'voting_scheduled', 'voting_schedule_cancelled',
+                            'variant_threshold_changed'
                         )),
     metadata    TEXT    NOT NULL DEFAULT '{}',   -- JSON with action-specific data
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

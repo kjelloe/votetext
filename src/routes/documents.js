@@ -22,7 +22,26 @@ function applyVariantsToText(originalText, approvedVariants) {
     return result + originalText.slice(pos);
 }
 
+function passesThreshold(yes, no, abstain, threshold) {
+    yes = yes || 0; no = no || 0; abstain = abstain || 0;
+    const total = yes + no + abstain;
+    if (total === 0) return false;
+    switch (threshold) {
+        case 'absolute':      return 2 * yes > total;
+        case 'two_thirds':    return 3 * yes >= 2 * total;
+        case 'three_quarters': return 4 * yes >= 3 * total;
+        default:              return yes > no;
+    }
+}
+
+const VALID_THRESHOLDS = new Set(['simple', 'absolute', 'two_thirds', 'three_quarters']);
+
 function resolveVariants(documentId) {
+    const docRow = getOne('SELECT settings FROM documents WHERE id = ?', [documentId]);
+    let docSettings = {};
+    try { docSettings = JSON.parse(docRow?.settings || '{}'); } catch {}
+    const docDefaultThreshold = docSettings.majority_threshold || 'simple';
+
     const voteable = getAll(
         "SELECT * FROM variants WHERE document_id = ? AND status IN ('pending', 'conflict') AND is_hidden = 0",
         [documentId]
@@ -33,7 +52,8 @@ function resolveVariants(documentId) {
 
     for (const v of roots) {
         if (v.final_yes == null && v.final_no == null) continue;
-        const passed = (v.final_yes || 0) > (v.final_no || 0);
+        const threshold = v.majority_threshold || docDefaultThreshold;
+        const passed = passesThreshold(v.final_yes, v.final_no, v.final_abstain, threshold);
         run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
             [passed ? 'approved' : 'rejected', v.id]);
         if (passed) approvedIds.add(v.id);
@@ -42,7 +62,8 @@ function resolveVariants(documentId) {
         if (approvedIds.has(v.parent_variant_id)) {
             run("UPDATE variants SET status = 'not_applicable', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [v.id]);
         } else if (v.final_yes != null || v.final_no != null) {
-            const passed = (v.final_yes || 0) > (v.final_no || 0);
+            const threshold = v.majority_threshold || docDefaultThreshold;
+            const passed = passesThreshold(v.final_yes, v.final_no, v.final_abstain, threshold);
             run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
                 [passed ? 'approved' : 'rejected', v.id]);
             if (passed) approvedIds.add(v.id);
@@ -194,6 +215,10 @@ router.patch('/:id', requireAuth, requireDocumentAccess('editor'), (req, res, ne
         try { currentSettings = JSON.parse(doc.settings || '{}'); } catch {}
 
         const newSettings = settings ? { ...currentSettings, ...settings } : currentSettings;
+
+        if (newSettings.majority_threshold != null && !VALID_THRESHOLDS.has(newSettings.majority_threshold)) {
+            return res.status(400).json({ error: 'Invalid majority_threshold. Use simple, absolute, two_thirds, or three_quarters.' });
+        }
 
         run(
             "UPDATE documents SET title = ?, description = ?, settings = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",

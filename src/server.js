@@ -45,6 +45,10 @@ app.get('*', (req, res) => {
 app.use(errorHandler);
 
 if (require.main === module) {
+    if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+        console.error('SESSION_SECRET is not set. Generate one and add it to .env before starting in production.');
+        process.exit(1);
+    }
     app.listen(PORT, () => {
         console.log(`VoteText running on http://localhost:${PORT}`);
     });

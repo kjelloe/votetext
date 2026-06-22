@@ -111,6 +111,12 @@ write_files:
       echo "==> Initialising database"
       npm run init-db
 
+      echo "==> Ensuring SESSION_SECRET is set"
+      if ! grep -q "SESSION_SECRET=" "$APP/.env" 2>/dev/null; then
+          echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$APP/.env"
+          echo "    (generated new SESSION_SECRET — back it up for disaster recovery)"
+      fi
+
       echo "==> Starting service"
       sudo systemctl daemon-reload
       sudo systemctl enable --now votetext
