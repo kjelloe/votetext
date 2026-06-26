@@ -159,6 +159,21 @@ router.get('/search', requireAuth, (req, res, next) => {
     }
 });
 
+// GET /api/auth/test-otp?email=... — test env only; returns latest unused OTP code for an email
+if (process.env.NODE_ENV === 'test') {
+    router.get('/test-otp', (req, res) => {
+        const email = (req.query.email || '').trim().toLowerCase();
+        if (!email) return res.status(400).json({ error: 'email required' });
+        const now = new Date().toISOString();
+        const row = getOne(
+            `SELECT code FROM otp_codes WHERE email = ? AND used = 0 AND expires_at > ? ORDER BY id DESC LIMIT 1`,
+            [email, now]
+        );
+        if (!row) return res.status(404).json({ error: 'No valid OTP found' });
+        res.json({ code: row.code });
+    });
+}
+
 // PATCH /api/auth/profile
 router.patch('/profile', requireAuth, (req, res, next) => {
     try {

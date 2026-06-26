@@ -1751,6 +1751,86 @@ test('T8: Resolve — variant two_thirds threshold with 2/2/2 tally (6 total, ne
     assert.equal(vr.data.variant.status, 'rejected', 'variant must be rejected — 2/6 does not meet ⅔ threshold');
 });
 
+// ── GROUP U — FORK VARIANT (UC-16) ───────────────────────────────────────────
+
+let forkDocId, forkSrcId, forkNewId;
+
+test('U1: Setup — create doc in open status with a variant to fork', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Fork test doc', text: 'Fork source text here' }, cookie: sessionCookie });
+    forkDocId = d.data.document.id;
+    await req('POST', `/documents/${forkDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${forkDocId}/variants`, {
+        body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'Fork', title: 'Original proposal' },
+        cookie: sessionCookie,
+    });
+    forkSrcId = v.data.variant.id;
+    assert.ok(forkSrcId);
+});
+
+test('U2: POST /variants/:id/fork — unauthenticated → 401', async () => {
+    const r = await req('POST', `/variants/${forkSrcId}/fork`, { body: { title: 'My fork' } });
+    assert.equal(r.status, 401);
+});
+
+test('U3: POST /variants/:id/fork — doc in draft → 422', async () => {
+    // create a draft doc with a variant
+    const d = await req('POST', '/documents', { body: { title: 'Draft doc', text: 'some text' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${d.data.document.id}/variants`, {
+        body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'x', title: 'Draft variant' },
+        cookie: sessionCookie,
+    });
+    const r = await req('POST', `/variants/${v.data.variant.id}/fork`, { body: {}, cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+test('U4: POST /variants/:id/fork — viewer lacks proposer access → 403', async () => {
+    const r = await req('POST', `/variants/${forkSrcId}/fork`, { body: { title: 'Viewer fork' }, cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('U5: POST /variants/:id/fork — owner on open doc → 201, new variant created', async () => {
+    const r = await req('POST', `/variants/${forkSrcId}/fork`, {
+        body: { title: 'My fork', new_text: 'Forked text', rationale: 'Slightly different take' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.variant.title, 'My fork');
+    assert.equal(r.data.variant.new_text, 'Forked text');
+    assert.equal(r.data.variant.char_start, 0);
+    assert.equal(r.data.variant.char_end, 4);
+    assert.equal(r.data.variant.document_id, forkDocId);
+    forkNewId = r.data.variant.id;
+    assert.notEqual(forkNewId, forkSrcId);
+});
+
+test('U6: Title pre-fills to "Your variant of …" when omitted', async () => {
+    const r = await req('POST', `/variants/${forkSrcId}/fork`, { body: {}, cookie: sessionCookie });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.variant.title, 'Your variant of Original proposal');
+});
+
+test('U7: GET /variants/:id/relations — fork has based_on relation to original', async () => {
+    const r = await req('GET', `/variants/${forkNewId}/relations`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    const rel = r.data.relations.find(x => x.relation_type === 'based_on' && x.to_variant_id === forkSrcId);
+    assert.ok(rel, 'based_on relation must exist from fork to original');
+});
+
+test('U8: POST /variants/:id/fork — doc in voting → viewer gets 403', async () => {
+    await req('POST', `/documents/${forkDocId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    const r = await req('POST', `/variants/${forkSrcId}/fork`, { body: {}, cookie: viewerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('U9: POST /variants/:id/fork — doc in voting → editor (owner) can fork → 201', async () => {
+    const r = await req('POST', `/variants/${forkSrcId}/fork`, {
+        body: { title: 'Voting-phase fork', rationale: 'Clarification during voting' },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.variant.title, 'Voting-phase fork');
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

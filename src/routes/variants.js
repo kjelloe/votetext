@@ -69,6 +69,42 @@ router.patch('/:id/share', requireAuth, (req, res, next) => {
     } catch (err) { next(err); }
 });
 
+// POST /api/variants/:id/fork  (proposer+ on open; editor/admin on voting/final_voting)
+router.post('/:id/fork', requireAuth, (req, res, next) => {
+    try {
+        const original = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!original) return res.status(404).json({ error: 'Variant not found' });
+        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [original.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!['open', 'voting', 'final_voting'].includes(doc.status)) {
+            return res.status(422).json({ error: 'Forking is only allowed on open, voting, or final_voting documents' });
+        }
+        const minLevel = ['voting', 'final_voting'].includes(doc.status) ? 'editor' : 'proposer';
+        if (!checkDocAccess(doc, req, minLevel)) {
+            return res.status(403).json({ error: ['voting', 'final_voting'].includes(doc.status) ? 'Editor or admin access required during voting' : 'Proposer access required' });
+        }
+        const { title, new_text, rationale } = req.body;
+        const newTitle = (title && title.trim()) || `Your variant of ${original.title || original.operation}`;
+        const newText  = new_text !== undefined ? new_text : original.new_text;
+        const newRationale = (rationale && rationale.trim()) || '';
+        const newId = transaction(() => {
+            const r = run(
+                "INSERT INTO variants (document_id, proposed_by, char_start, char_end, operation, new_text, title, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [original.document_id, req.user.id, original.char_start, original.char_end, original.operation, newText, newTitle, newRationale]
+            );
+            run("INSERT INTO variant_relations (from_variant_id, to_variant_id, relation_type) VALUES (?, ?, 'based_on')",
+                [r.lastInsertRowid, original.id]);
+            logActivity(req.user.id, original.document_id, r.lastInsertRowid, 'variant_proposed', { title: newTitle, forked_from: original.id });
+            return r.lastInsertRowid;
+        });
+        const newVariant = getOne(
+            'SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.id = ?',
+            [newId]
+        );
+        res.status(201).json({ variant: newVariant });
+    } catch (err) { next(err); }
+});
+
 // PATCH /api/variants/:id/threshold  (editor/admin; doc must be voting or final_voting)
 router.patch('/:id/threshold', requireAuth, (req, res, next) => {
     try {

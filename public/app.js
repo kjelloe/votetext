@@ -853,6 +853,17 @@ function openDocSettingsModal(doc) {
         <div class="form-group">
             <label><input type="checkbox" id="s-anon" ${settings.allow_anonymous_view ? 'checked' : ''}> Allow anonymous viewing</label>
         </div>
+        <div class="form-group">
+            <label>Majority required for proposals
+                <select id="s-threshold">
+                    <option value="">Simple majority (default)</option>
+                    <option value="simple">Simple majority</option>
+                    <option value="absolute">Absolute majority</option>
+                    <option value="two_thirds">⅔ majority</option>
+                    <option value="three_quarters">¾ majority</option>
+                </select>
+            </label>
+        </div>
         <p id="settings-err" class="error-msg" style="display:none"></p>
         <div class="form-actions">
             <button id="save-settings" class="btn btn-primary">Save</button>
@@ -860,14 +871,17 @@ function openDocSettingsModal(doc) {
         </div>
     `, 'Document settings');
 
+    document.getElementById('s-threshold').value = settings.majority_threshold || '';
+
     document.getElementById('save-settings').addEventListener('click', async () => {
         const errEl = document.getElementById('settings-err');
         errEl.style.display = 'none';
+        const thresholdVal = document.getElementById('s-threshold').value || null;
         try {
             await api('PATCH', `/documents/${doc.id}`, {
                 title: document.getElementById('s-title').value.trim(),
                 description: document.getElementById('s-desc').value.trim(),
-                settings: { allow_anonymous_view: document.getElementById('s-anon').checked },
+                settings: { allow_anonymous_view: document.getElementById('s-anon').checked, majority_threshold: thresholdVal },
             });
             closeModal();
             location.reload();
@@ -1254,6 +1268,10 @@ async function viewVariant(variantId) {
 
     const wrap = el('div', { class: 'variant-layout' });
 
+    const canFork = state.user && doc &&
+        ['open', 'voting', 'final_voting'].includes(doc.status) &&
+        !['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(v.status);
+
     const prevLabel = prevV ? `#${prevV.proposal_num} ${prevV.title || prevV.operation}` : '';
     const nextLabel = nextV ? `#${nextV.proposal_num} ${nextV.title || nextV.operation}` : '';
 
@@ -1268,7 +1286,7 @@ async function viewVariant(variantId) {
         <div class="card">
             <div class="flex justify-between items-center mb-1">
                 <h1 class="proposal-heading">Proposal ${proposalNum ? `#${esc(proposalNum)}` : ''}</h1>
-                <div class="flex gap-1 items-center">${statusBadge(v.status)}<button id="share-variant-btn" class="btn btn-ghost btn-sm">Share</button></div>
+                <div class="flex gap-1 items-center">${statusBadge(v.status)}<button id="share-variant-btn" class="btn btn-ghost btn-sm">Share</button>${canFork ? '<button id="fork-variant-btn" class="btn btn-ghost btn-sm">Fork</button>' : ''}</div>
             </div>
             ${v.title ? `<p style="font-size:1rem;font-weight:600;margin-bottom:0.5rem">${esc(v.title)}</p>` : ''}
             <p class="text-muted mb-2">
@@ -1343,6 +1361,36 @@ async function viewVariant(variantId) {
             try { await api('PATCH', `/variants/${variantId}/share`, { allow_anonymous_share: this.checked?1:0 }); v.allow_anonymous_share = this.checked?1:0; } catch {}
         });
     });
+
+    // Fork button
+    if (canFork) {
+        document.getElementById('fork-variant-btn').addEventListener('click', () => {
+            const defaultTitle = `Your variant of ${v.title || v.operation}`;
+            openModal(`
+                <div class="form-group"><label>Title</label><input type="text" id="fork-title" value="${esc(defaultTitle)}"></div>
+                <div class="form-group"><label>Proposed text</label><textarea id="fork-text" class="comment-form" rows="4">${esc(v.new_text)}</textarea></div>
+                <div class="form-group"><label>Rationale</label><textarea id="fork-rationale" class="comment-form" rows="2" placeholder="Why does this variant differ?"></textarea></div>
+                <p id="fork-err" class="error-msg" style="display:none"></p>
+                <div class="form-actions">
+                    <button id="fork-submit-btn" class="btn btn-primary">Submit fork</button>
+                    <button onclick="closeModal()" class="btn btn-ghost">Cancel</button>
+                </div>
+            `, 'Fork proposal');
+            document.getElementById('fork-submit-btn').addEventListener('click', async () => {
+                const errEl = document.getElementById('fork-err');
+                errEl.style.display = 'none';
+                try {
+                    const d = await api('POST', `/variants/${variantId}/fork`, {
+                        title: document.getElementById('fork-title').value.trim(),
+                        new_text: document.getElementById('fork-text').value,
+                        rationale: document.getElementById('fork-rationale').value.trim(),
+                    });
+                    closeModal();
+                    location.hash = `#/variants/${d.variant.id}`;
+                } catch (e) { errEl.textContent = e.message; errEl.style.display = ''; }
+            });
+        });
+    }
 
     // Comment sort buttons
     const sortBar = document.getElementById('comment-sort-bar');

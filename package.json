@@ -10,7 +10,8 @@
     "seed": "node scripts/seed.js",
     "clean-db": "rm -f data/votetext.db data/votetext.db-shm data/votetext.db-wal && npm run init-db",
     "migrate": "node scripts/migrate.js",
-    "test": "node --test tests/api.test.js"
+    "test": "node --test tests/api.test.js",
+    "test:e2e": "playwright test"
   },
   "keywords": [
     "voting",
@@ -30,6 +31,7 @@
     "resend": "^4.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
     "nodemon": "^3.1.9"
   },
   "engines": {
