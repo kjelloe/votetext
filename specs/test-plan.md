@@ -296,6 +296,60 @@
 
 ---
 
+## Group U — Fork Variant (UC-16)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| U1 | Create open doc with a variant | 200, `forkDocId` and `forkVarId` captured |
+| U2 | `POST /variants/:id/fork` — unauthenticated | 401 |
+| U3 | `POST /variants/:id/fork` on a draft document | 422 |
+| U4 | `POST /variants/:id/fork` by viewer | 403 |
+| U5 | `POST /variants/:id/fork` by owner (open doc) — valid body | 201, new variant returned |
+| U6 | Forked variant title pre-filled from original | `new_title` matches `"Your variant of …"` prefix |
+| U7 | `GET /variants/:newId/relations` | 200, `based_on` relation to original present |
+| U8 | `POST /variants/:id/fork` on voting doc by viewer | 403 |
+| U9 | `POST /variants/:id/fork` on voting doc by editor | 201 |
+
+---
+
+## Playwright E2E Suite
+
+> Tests live in `tests/e2e/crossfile.spec.js`. Run with `npm run test:e2e`.
+> Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
+> The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
+
+### Currently covered (smoke — page renders only)
+
+| Test | Maps to | What it checks |
+|------|---------|---------------|
+| Login page renders | US-1 | Email field and "Send code" button visible |
+| Profile page renders (authed) | US-3 / UC-13 | Display name field shows "Alice E2E" |
+| Unauthenticated /profile redirects to login | auth guard | Login page shown when no session |
+| Document review renders | US-8 / UC-9 | `.review-layout` and Proposals heading visible |
+| Conflict resolution renders | US-8 / UC-10 | Page container visible for voting doc |
+| Final voting walkthrough renders | US-9 / UC-11 | `.fv-list` and "Final voting" heading visible |
+| Resolved text page renders | US-10 / UC-15 | Page visible, Export Markdown button visible |
+| US-1 full OTP login flow | US-1 | Complete request-OTP → verify-OTP → land on document list |
+
+### Coverage gaps (not yet tested by Playwright)
+
+These flows have no e2e coverage. Prioritised by user impact:
+
+| Priority | Story | Flow not yet covered |
+|----------|-------|---------------------|
+| 1 — High | US-6 | Cast vote (For / Against / Abstain), change vote, retract — tally counters update in UI |
+| 2 — High | US-4 | Text selection → Propose change modal → submit → variant card appears in sidebar |
+| 3 — High | US-3 | Post comment → reply → edit within 30-min window |
+| 4 — High | US-2 | Document list → open doc → text view with amber highlights → sidebar filter → click proposal |
+| 5 — High | US-9 | Enter tallies → threshold dropdown changes label → child auto-greys when parent passes → progress bar |
+| 6 — Medium | US-8 | Status buttons (VOTING / CONFLICT / NOT VOTING) → drag conflict order → Ready for final voting |
+| 7 — Medium | US-5 | Edit proposal fields and save; withdraw and confirm |
+| 8 — Medium | US-10 | Export Markdown download; Print HTML new tab; PASSED/FAILED banner |
+| 9 — Medium | US-1 | First-time profile modal appears; Save and continue / Skip both work |
+| 10 — Low | US-7 | Enable anonymous share → open link unauthenticated → simplified view shown |
+
+---
+
 ## Manual UI Checklist
 
 Run `npm run dev` then open `http://localhost:3000`.
