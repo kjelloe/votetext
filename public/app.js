@@ -170,7 +170,7 @@ function updateHeader() {
 
 /* ===== Router ===== */
 const routes = [
-    [/^#\/login$/, viewLogin],
+    [/^#\/login$/, () => viewLogin()],
     [/^#\/documents$/, viewDocumentList],
     [/^#\/documents\/(\d+)\/conflicts$/, params => viewConflictResolution(params[1])],
     [/^#\/documents\/(\d+)\/final-vote$/, params => viewFinalVoting(params[1])],
@@ -179,7 +179,7 @@ const routes = [
     [/^#\/documents\/(\d+)$/, params => viewDocument(params[1])],
     [/^#\/variants\/(\d+)$/, params => viewVariant(params[1])],
     [/^#\/activity$/, viewActivity],
-    [/^#\/profile$/, viewProfile],
+    [/^#\/profile$/, () => viewProfile()],
 ];
 
 async function router() {

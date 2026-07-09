@@ -67,7 +67,7 @@ test.describe('review.js routes', () => {
     test('resolved text page renders for final_voting doc (viewResolvedText — review.js)', async ({ page }) => {
         const { fvDocId } = fixtures();
         await page.goto(`/#/documents/${fvDocId}/resolved-text`);
-        await expect(page.locator('.resolved-text-view, .page-container')).toBeVisible();
+        await expect(page.locator('.resolved-text-view')).toBeVisible();
         await expect(page.getByRole('button', { name: /export markdown/i })).toBeVisible();
     });
 });
@@ -82,7 +82,7 @@ test.describe('US-1: sign-in flow', () => {
         await page.goto('/#/login');
         await page.locator('input[type=email], input[placeholder*=email i]').first().fill(email);
         await page.getByRole('button', { name: /send code/i }).click();
-        await expect(page.getByText(/enter.*code|code.*sent/i)).toBeVisible();
+        await expect(page.getByText(/code sent to/i)).toBeVisible();
 
         // Get OTP from DB via test helper (the server logs it to console in test mode)
         const otpRes = await request.get(`http://localhost:3001/api/auth/test-otp?email=${encodeURIComponent(email)}`);
@@ -91,8 +91,8 @@ test.describe('US-1: sign-in flow', () => {
         test.skip(!otpRes.ok(), 'OTP debug endpoint not available — see tests/e2e/README.md');
 
         const { code } = await otpRes.json();
-        await page.locator('input[name=code], input[placeholder*=code i]').first().fill(code);
-        await page.getByRole('button', { name: /verify/i }).click();
+        // Filling 6 digits auto-submits (input listener clicks Verify)
+        await page.locator('#otp-input').fill(code);
 
         // Profile modal may appear for first-time user
         const skipBtn = page.getByRole('button', { name: /skip/i });
