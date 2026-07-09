@@ -1831,6 +1831,35 @@ test('U9: POST /variants/:id/fork — doc in voting → editor (owner) can fork 
     assert.equal(r.data.variant.title, 'Voting-phase fork');
 });
 
+// ── GROUP V: HMAC SESSION SIGNING ────────────────────────────────────────────
+
+test('V1: GET /auth/me — signed session cookie → 200', async () => {
+    const signed = sessionCookie.replace('session_id=', '');
+    assert.ok(signed.includes('.'), 'cookie value must be sessionId.signature');
+    const r = await req('GET', '/auth/me', { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+});
+
+test('V2: GET /auth/me — tampered signature → 401', async () => {
+    const signed = sessionCookie.replace('session_id=', '');
+    const flipped = signed.slice(0, -1) + (signed.endsWith('a') ? 'b' : 'a');
+    const r = await req('GET', '/auth/me', { cookie: `session_id=${flipped}` });
+    assert.equal(r.status, 401);
+});
+
+test('V3: GET /auth/me — raw session id without signature → 401', async () => {
+    const raw = sessionCookie.replace('session_id=', '').split('.')[0];
+    const r = await req('GET', '/auth/me', { cookie: `session_id=${raw}` });
+    assert.equal(r.status, 401);
+});
+
+test('V4: GET /auth/me — signature over a different session id → 401', async () => {
+    const [, sig] = sessionCookie.replace('session_id=', '').split('.');
+    const other = 'f'.repeat(64);
+    const r = await req('GET', '/auth/me', { cookie: `session_id=${other}.${sig}` });
+    assert.equal(r.status, 401);
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

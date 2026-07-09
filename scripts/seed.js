@@ -3,6 +3,7 @@
 require('dotenv').config();
 const crypto = require('crypto');
 const { db, run, getOne, transaction } = require('../src/db');
+const { signSessionId } = require('../src/middleware/auth');
 
 const SAMPLE_TEXT = `Article 1 — General Principles
 
@@ -66,8 +67,9 @@ transaction(() => {
         const sid = crypto.randomBytes(32).toString('hex');
         run('INSERT OR IGNORE INTO sessions (session_id, user_id, expires_at) VALUES (?, ?, ?)', [sid, user.id, expiresAt]);
         if (user.id === alice.id) {
-            console.log(`Alice session cookie: ${sid}`);
-            console.log('  → Set in browser: document.cookie = "session_id=' + sid + '; path=/"');
+            const signed = signSessionId(sid);
+            console.log(`Alice session cookie: ${signed}`);
+            console.log('  → Set in browser: document.cookie = "session_id=' + signed + '; path=/"');
         }
     }
 

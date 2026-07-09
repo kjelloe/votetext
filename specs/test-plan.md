@@ -312,6 +312,21 @@
 
 ---
 
+## Group V — HMAC Session Signing
+
+> Session cookies carry `sessionId.hmac` where the HMAC-SHA256 signature (keyed by
+> `SESSION_SECRET`) is verified in `optionalAuth` before any DB lookup. Tampered or
+> unsigned cookies never reach the sessions table.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| V1 | GET `/auth/me` with a properly signed session cookie | 200; cookie value contains `.` separator |
+| V2 | GET `/auth/me` with tampered signature (last char flipped) | 401 |
+| V3 | GET `/auth/me` with raw session id, no signature | 401 |
+| V4 | GET `/auth/me` with valid signature over a different session id | 401 |
+
+---
+
 ## Playwright E2E Suite
 
 > Tests live in `tests/e2e/crossfile.spec.js`. Run with `npm run test:e2e`.

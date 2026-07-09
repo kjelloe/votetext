@@ -3,7 +3,7 @@
 const crypto = require('crypto');
 const { Router } = require('express');
 const { getOne, getAll, run } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, signSessionId, unwrapSessionId } = require('../middleware/auth');
 
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -107,7 +107,7 @@ router.post('/verify-otp', (req, res, next) => {
             [sessionId, user.id, req.ip || '', req.headers['user-agent'] || '', expiresAt]
         );
 
-        res.cookie('session_id', sessionId, {
+        res.cookie('session_id', signSessionId(sessionId), {
             httpOnly: true,
             sameSite: 'lax',
             secure: process.env.NODE_ENV === 'production',
@@ -124,7 +124,7 @@ router.post('/verify-otp', (req, res, next) => {
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-    const sid = req.cookies && req.cookies.session_id;
+    const sid = unwrapSessionId(req.cookies && req.cookies.session_id);
     if (sid) run('DELETE FROM sessions WHERE session_id = ?', [sid]);
     res.clearCookie('session_id');
     res.json({ message: 'Logged out' });

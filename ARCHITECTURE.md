@@ -140,15 +140,17 @@ Client                          Server                       DB
   │                               │── UPDATE otp used = 1     │
   │                               │── UPSERT users            │
   │                               │── INSERT sessions         │
-  │◀── 200 { user } + Set-Cookie: session_id=<hex> ────────────
+  │◀── 200 { user } + Set-Cookie: session_id=<hex>.<hmac> ─────
   │                               │                           │
   │── (subsequent requests) ──────▶                           │
-  │   Cookie: session_id=<hex>    │── optionalAuth middleware  │
+  │   Cookie: session_id=<hex>.<hmac>                         │
+  │                               │── optionalAuth middleware  │
+  │                               │   verifies HMAC signature │
   │                               │   joins sessions + users  │
   │                               │   attaches req.user       │
 ```
 
-Session tokens are 32-byte random hex strings stored as plain values in the `sessions` table. HttpOnly + SameSite=Lax cookies. Secure flag is set when `NODE_ENV=production`.
+Session tokens are 32-byte random hex strings stored as plain values in the `sessions` table. The cookie carries `sessionId.signature` where the signature is HMAC-SHA256 over the session id, keyed by `SESSION_SECRET` (`signSessionId`/`unwrapSessionId` in `middleware/auth.js`). `optionalAuth` verifies the signature with a timing-safe compare before any DB lookup, so forged or tampered cookies never touch the sessions table. HttpOnly + SameSite=Lax cookies. Secure flag is set when `NODE_ENV=production`, and the server refuses to start in production without `SESSION_SECRET`.
 
 OTP codes are rate-limited at 5 per email per 15 minutes using an in-memory Map (resets on server restart, acceptable for this scale). In production, OTP expiry is 10 minutes.
 
@@ -219,6 +221,7 @@ Routes are grouped by resource and mounted in `server.js`:
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
                        (includes PATCH /:id/share — proposer only, toggle allow_anonymous_share)
+                       (includes POST /:id/fork — new variant based on an existing one, based_on relation; proposer+ on open docs, editor/admin on voting/final_voting)
                        (includes PATCH /:id/threshold — editor/admin, voting/final_voting only, sets majority_threshold)
                        (includes PATCH /:id/review-status — editor/admin status update)
                        (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution)
@@ -362,6 +365,7 @@ Proposal numbers (`#1`, `#2` …) are assigned client-side in creation order (`i
 - **Proposal number** (`#N`) — id-ascending order, same as sidebar numbering
 - **Prev / Next** — document-position order (`char_start ASC, created_at ASC`); buttons show `← Prev` / `Next →` with a native `title` tooltip of `#N Title`
 - **Back to document** — stores `state.pendingVariantJump = { docId, page, lineStart }` before navigating; `viewDocument` consumes it at the end and calls `navigatePage(page, lineStart)` to scroll the proposal into view
+- **Fork button** — shown when the user is authenticated, the document is `open`/`voting`/`final_voting`, and the variant is not withdrawn/rejected/not_applicable/merged. Opens the proposal modal pre-filled with "Your variant of {title}" and the original proposed text; submits to `POST /api/variants/:id/fork` and navigates to the new proposal. The backend enforces the access level (proposer+ on open, editor/admin on voting phases) — insufficient access surfaces as a 403 error toast.
 
 `GET /api/documents/:id` returns `owner_organization` (joined from `users`) in addition to `owner_name`. Both are shown in the document info sidebar with a dotted-underline tooltip (`Name · Organisation`) matching the proposal author tooltip style.
 

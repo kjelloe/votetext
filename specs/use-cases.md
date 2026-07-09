@@ -652,8 +652,28 @@ The **overall document vote** (`doc-vote`, PASSED/FAILED banner) intentionally s
 
 ---
 
+## UC-16: Fork a variant
+
+**Status: implemented (shipped 2026-06-22). Pending manual validation — see `specs/manual-validation.md`.**
+
+**Actor:** Proposer (open documents); editor/admin (voting/final_voting documents — supervisor once UC-19 lands)
+
+**Goal:** Create a new variant based on an existing one, e.g. an alternative wording of someone else's proposal.
+
+**Flow:**
+
+1. User opens a proposal detail page. A **Fork** button is shown when the document is `open`/`voting`/`final_voting` and the variant is not withdrawn/rejected/not_applicable/merged.
+2. Clicking Fork opens the proposal modal pre-filled with title "Your variant of {original title}", the original proposed text, and an empty rationale.
+3. Submitting calls `POST /api/variants/:id/fork` — creates the new variant, a `based_on` relation to the original, and logs `variant_proposed` with `forked_from`.
+4. The user is navigated to the new proposal's detail page.
+
+**Access:** proposer+ on `open` documents; editor/admin on `voting`/`final_voting` (the button is shown to any authenticated user in an eligible status — the backend enforces the level, 403 otherwise). Draft/resolved/archived documents → 422.
+
+**Tests:** Group U in `tests/api.test.js` (9 tests) — see `specs/test-plan.md`.
+
+---
+
 ## Planned / future use cases
 
-- **UC-16:** Fork a variant — proposer creates a new variant based on an existing one with a `based_on` relation. Title pre-fills as "Your variant of {original title}". Allowed on `open` documents for proposer+; on `voting`/`final_voting` documents for editor/admin and (future) supervisor. See UC-19.
 - **UC-19:** Supervisor access role — a new per-document role between `voter` and `editor`. Grants proposer rights plus the ability to fork variants and manage the voting process during `voting`/`final_voting`, without full document-editing rights. Intended for a meeting chair or secretary who is not the document owner. Requires: adding `supervisor` to `ACCESS_LEVELS` in `access.js`, updating `checkDocAccess()`, updating conflict-resolution and final-voting view guards, and adding the role to the invite UI. **Design this before widening any voting-phase permissions beyond editor/admin.**
 - **UC-18:** Moderation dashboard — hide/unhide variants (`variants.is_hidden` is filtered everywhere but has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected`.
