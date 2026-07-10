@@ -75,7 +75,8 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Deleted comments are hidden, not removed (`is_hidden` flag); a full moderation dashboard is planned (see Roadmap)
 
 #### Access Control
-- Per-document access levels: viewer, commenter, proposer, voter, editor, admin
+- Per-document access levels: viewer, commenter, proposer, voter, supervisor, editor, admin
+- **Supervisor role** — runs the voting process (review, conflict resolution, tallies, thresholds, voting-cycle status transitions, invites new participants up to own level) without document-editing rights; ideal for a meeting chair who is not the document owner
 - **Default access** — set a fallback role (viewer–voter) granted to any signed-in user not explicitly invited; invite-only when unset
 - Invite users by searching name, email, or organisation (3+ chars); non-searchable/protected users excluded from search but invitable by exact email
 - Invitation email sent to new users (fire-and-forget via Resend); names inviter, document, and role
@@ -93,7 +94,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 
 #### Authentication
 - Passwordless email OTP login
-- Session-based auth with secure cookies
+- Session-based auth with secure cookies; session IDs HMAC-signed with `SESSION_SECRET`, verified before any DB lookup
 - OTP rate limiting and lockout protection
 - **Non-searchable profile** — users can opt out of appearing in user search results (profile toggle)
 - **Profile completion** — new users without a display name are prompted to fill in their name and organisation in a modal overlay immediately after their first login
@@ -155,7 +156,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `GET`    | `/api/documents/:id/lines?page=N` | Get lines for specific page |
 | `GET`    | `/api/documents/:id/text` | Full reconstructed document text (for copy/export) |
 | `POST`   | `/api/documents/:id/copy-data` | Copy proposals/votes/comments from source `:id` into a target doc (owner of both) |
-| `PATCH`  | `/api/documents/:id/doc-vote` | Record overall document vote tallies (editor/admin, `final_voting` only) |
+| `PATCH`  | `/api/documents/:id/doc-vote` | Record overall document vote tallies (supervisor+, `final_voting` only) |
 
 #### Variants
 | Method | Path | Description |
@@ -166,17 +167,19 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `PATCH`  | `/api/variants/:id` | Update variant (author only, while pending) |
 | `DELETE` | `/api/variants/:id` | Withdraw variant |
 | `PATCH`  | `/api/variants/:id/share` | Enable / disable anonymous share link (proposer only) |
-| `PATCH`  | `/api/variants/:id/review-status` | Set review status: pending/conflict/rejected/not_applicable/withdrawn (editor/admin) |
-| `PATCH`  | `/api/variants/:id/conflict-order` | Set `vote_order` / `parent_variant_id` for conflict resolution (editor/admin, `voting` only) |
+| `POST`   | `/api/variants/:id/fork` | Fork a variant — new variant with `based_on` relation (proposer+ on open docs, supervisor+ during voting phases) |
+| `PATCH`  | `/api/variants/:id/review-status` | Set review status: pending/conflict/rejected/not_applicable/withdrawn (supervisor+) |
+| `PATCH`  | `/api/variants/:id/conflict-order` | Set `vote_order` / `parent_variant_id` for conflict resolution (supervisor+, `voting` only) |
+| `PATCH`  | `/api/variants/:id/threshold` | Set per-proposal majority threshold override (supervisor+, voting phases only) |
 | `POST`   | `/api/variants/:id/relations` | Add a variant relation |
 | `GET`    | `/api/variants/:id/relations` | List variant relations |
-| `PATCH`  | `/api/variants/:id/final-vote` | Record final tally (editor/admin, final_voting only) |
-| `GET`    | `/api/variants/:id/final-vote-log` | Full audit trail of tally saves (editor/admin only) |
+| `PATCH`  | `/api/variants/:id/final-vote` | Record final tally (supervisor+, final_voting only) |
+| `GET`    | `/api/variants/:id/final-vote-log` | Full audit trail of tally saves (supervisor+ only) |
 
 #### Resolved Text
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/documents/:id/resolved-text` | Resolved text with approved variants applied; on-the-fly for `final_voting`, stored for `resolved`/`archived` (editor+ only) |
+| `GET` | `/api/documents/:id/resolved-text` | Resolved text with approved variants applied; on-the-fly for `final_voting`, stored for `resolved`/`archived` (supervisor+ only) |
 
 #### Votes
 | Method | Path | Description |
@@ -202,9 +205,9 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Access Control
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`    | `/api/documents/:id/access` | List users with access |
-| `POST`   | `/api/documents/:id/access` | Invite user / set access level |
-| `PATCH`  | `/api/documents/:id/access/:userId` | Update access level |
+| `GET`    | `/api/documents/:id/access` | List users with access (supervisor+; read-only below admin) |
+| `POST`   | `/api/documents/:id/access` | Invite user (supervisor+; capped at own level; only admin may change an existing record) |
+| `PATCH`  | `/api/documents/:id/access/:userId` | Update access level / block (admin only) |
 | `DELETE` | `/api/documents/:id/access/:userId` | Revoke access |
 
 ---
@@ -249,7 +252,7 @@ All variables are optional except `RESEND_API_KEY` (production email). Defaults 
 | `NODE_ENV` | `development` | `production` / `development` / `test` — controls email behaviour and cookie flags |
 | `DATABASE_PATH` | `./data/votetext.db` | SQLite file location |
 | `SESSION_LIFETIME_HOURS` | `72` | Session cookie/token lifetime |
-| `SESSION_SECRET` | — | Present in env templates; **not yet used by code** (see Roadmap: signed session tokens) |
+| `SESSION_SECRET` | — | HMAC key for signing session cookies (`sessionId.hmac`). Required in production (server refuses to start without it); dev/test fall back to a built-in dev secret. Rotating it invalidates all sessions |
 | `OTP_LENGTH` | `6` | OTP code digits |
 | `OTP_EXPIRY_MINUTES` | `10` | OTP validity window |
 | `OTP_MAX_ATTEMPTS` | `5` | OTP requests per email per 15 min |
@@ -302,7 +305,8 @@ votetext/
 │   ├── test-plan.md        # Test scenarios (automated + manual checklist)
 │   └── use-cases.md        # Detailed user flows (UC-1 …)
 ├── tests/
-│   └── api.test.js         # Integration tests (node:test, isolated DB)
+│   ├── api.test.js         # Integration tests (node:test, isolated DB)
+│   └── e2e/                # Playwright browser tests (own server + isolated DB)
 └── public/
     ├── index.html          # Single-page application shell
     ├── app.js              # Client-side logic (vanilla JS, < 2000 lines)
@@ -317,6 +321,10 @@ votetext/
 ```bash
 # Start with auto-reload
 npm run dev
+
+# Run tests
+npm test              # API integration tests (isolated DB, no email needed)
+npm run test:e2e      # Playwright browser tests (first time: sudo npx playwright install-deps)
 
 # Reset database
 npm run clean-db
@@ -409,9 +417,11 @@ sqlite3 /opt/votetext/data/votetext.db ".backup ~/backups/votetext-$(date +%F).d
 - [x] Activity unread badge
 - [x] Draft document visibility restriction
 - [x] Resolution workflow — resolved text stored on `final_voting → resolved` transition; editor preview, export as Markdown/HTML, PASSED/FAILED banner, fork as new document
+- [x] Signed session tokens — session cookies carry `sessionId.hmac` (HMAC-SHA256 keyed by `SESSION_SECRET`), verified before any DB lookup
+- [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
+- [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
+- [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
+- [x] Playwright e2e suite (`npm run test:e2e`) — 41 tests covering all 10 user stories: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [ ] Export resolved document (further polish)
 - [ ] Moderation dashboard — UI to hide/unhide variants (`variants.is_hidden` currently has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected` (enforced in search, admin-settable only via SQL today)
-- [ ] Signed session tokens — use `SESSION_SECRET` (already in env templates, unused) to HMAC-sign session IDs
-- [ ] Configurable majority thresholds — absolute majority, 2/3 majority, 3/4 majority (current behaviour: simple majority yes > no). Open design question: per-document setting vs per-proposal setting chosen while preparing the vote (same phase as conflict resolution)
-- [ ] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [ ] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log), giving them version history and offsite backup instead of manual zip copies

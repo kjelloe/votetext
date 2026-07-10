@@ -62,7 +62,7 @@ The stories assume a document has already been created and is in **Open** status
 4. User scrolls to the **Comments** section and types a comment in the text field.
 5. User clicks **Post comment**. The comment appears immediately, showing their display name and "just now".
 6. Another user sees the comment and clicks **Reply**. Their reply appears indented beneath the original comment.
-7. Within the edit window (default 30 minutes), the original commenter can click the **✎** icon on their comment, update the text, and click **Save**.
+7. *(Not yet in the UI)* Within the edit window (default 30 minutes), the original commenter can update their comment. The API supports this (`PATCH /api/comments/:id`) but no edit button is rendered yet — commenters currently delete and repost instead. Candidate UI addition.
 
 ---
 
@@ -176,6 +176,8 @@ The stories assume a document has already been created and is in **Open** status
 ---
 
 ## Coverage map
+
+> All 10 stories have Playwright coverage as of 2026-07-10 (41 tests in `tests/e2e/`) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
 
 | Story | Playwright priority | Video segment |
 |-------|--------------------|-|

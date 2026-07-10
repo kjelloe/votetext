@@ -356,39 +356,35 @@
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/crossfile.spec.js`. Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (41 tests). Run with `npm run test:e2e`.
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
+> Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
 
-### Currently covered (smoke — page renders only)
+### Coverage by file
 
-| Test | Maps to | What it checks |
-|------|---------|---------------|
-| Login page renders | US-1 | Email field and "Send code" button visible |
-| Profile page renders (authed) | US-3 / UC-13 | Display name field shows "Alice E2E" |
-| Unauthenticated /profile redirects to login | auth guard | Login page shown when no session |
-| Document review renders | US-8 / UC-9 | `.review-layout` and Proposals heading visible |
-| Conflict resolution renders | US-8 / UC-10 | Page container visible for voting doc |
-| Final voting walkthrough renders | US-9 / UC-11 | `.fv-list` and "Final voting" heading visible |
-| Resolved text page renders | US-10 / UC-15 | Page visible, Export Markdown button visible |
-| US-1 full OTP login flow | US-1 | Complete request-OTP → verify-OTP → land on document list |
+| File | Story | Flows covered |
+|------|-------|---------------|
+| `crossfile.spec.js` | US-1 + smoke | Login page, full OTP login flow, profile page, unauth redirect, review/conflicts/final-vote/resolved-text render |
+| `navigation.spec.js` | US-2 | Doc list → open doc → line highlights → sidebar All/On-page filter → card click → detail → back button |
+| `comment.spec.js` | US-3 | Post comment (author + "just now") → indented reply → delete own reply. *Edit-in-window (story step 7) has no UI — API only* |
+| `proposal.spec.js` | US-4, US-5 | Programmatic text selection → propose modal → submit → card + highlight; submit disabled without selection; edit title/rationale; withdraw with confirm |
+| `vote.spec.js` | US-6 | Cast For → change to Against → click again retracts → Abstain; sidebar tally reflects votes |
+| `share.spec.js` | US-7 | Enable anonymous share via checkbox (persists) → anonymous visitor sees read-only proposal + login button → blocked after disable |
+| `review-flow.spec.js` | US-8 | Review cards + overlap badge; CONFLICT/NOT VOTING buttons; unresolved group gates Ready (alert); ordering (via API — HTML5 DnD not automatable) turns Ready green → transitions to final_voting |
+| `final-voting.spec.js` | US-9 | Progress bar 0→1 of 3; tally save + ✓ Saved + majority label + persistence; threshold dropdown recalculates (70% simple → 64% needs ⅔); child greys when parent passes; audit trail; overall doc vote |
+| `resolved.spec.js` | US-10 | Mark as Resolved (confirm) → PASSED banner + applied text; Export Markdown download; Print HTML popup; Resolved text toolbar button |
 
-### Coverage gaps (not yet tested by Playwright)
+### Known limitations
 
-These flows have no e2e coverage. Prioritised by user impact:
+- **Conflict drag-and-drop** (US-8 steps 6–7) — HTML5 DnD events are not reliably automatable; ordering is set via `PATCH /conflict-order` and the UI badges are asserted after reload. Drag itself remains a manual-checklist item.
+- **Comment edit window** (US-3 step 7) — the UI renders no edit button; only the API supports comment editing (covered by Group F). Story and UI disagree — candidate UI addition.
 
-| Priority | Story | Flow not yet covered |
-|----------|-------|---------------------|
-| 1 — High | US-6 | Cast vote (For / Against / Abstain), change vote, retract — tally counters update in UI |
-| 2 — High | US-4 | Text selection → Propose change modal → submit → variant card appears in sidebar |
-| 3 — High | US-3 | Post comment → reply → edit within 30-min window |
-| 4 — High | US-2 | Document list → open doc → text view with amber highlights → sidebar filter → click proposal |
-| 5 — High | US-9 | Enter tallies → threshold dropdown changes label → child auto-greys when parent passes → progress bar |
-| 6 — Medium | US-8 | Status buttons (VOTING / CONFLICT / NOT VOTING) → drag conflict order → Ready for final voting |
-| 7 — Medium | US-5 | Edit proposal fields and save; withdraw and confirm |
-| 8 — Medium | US-10 | Export Markdown download; Print HTML new tab; PASSED/FAILED banner |
-| 9 — Medium | US-1 | First-time profile modal appears; Save and continue / Skip both work |
-| 10 — Low | US-7 | Enable anonymous share → open link unauthenticated → simplified view shown |
+### App fixes driven by this suite
+
+- `viewLogin`/`viewProfile` lazy route references (app boot was broken in real browsers)
+- "Mark as Resolved" on the resolved-text view now re-renders (identical-hash assignment fired no hashchange)
+- Vote retract: clicking your active vote button now retracts via `DELETE /vote` (previously the UI only re-cast; retraction was API-only)
 
 ---
 
@@ -403,6 +399,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] Propose variant: fill form → appears in sidebar on document view
 - [ ] Vote buttons: clicking For/Against/Abstain updates count immediately
 - [ ] Changing vote: count adjusts correctly
+- [ ] Retract vote: clicking the currently active vote button retracts the vote; counts and highlight reset
 - [ ] Comment thread: post comment → post reply → reply is indented; trying a 3rd level is blocked
 - [ ] Activity feed: shows recent actions with correct labels; `voting_scheduled` events have amber highlight
 - [ ] Profile: update display name → header reflects new name
@@ -438,3 +435,5 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Mark as Resolved:** click Mark as Resolved → confirm → document transitions to `resolved`; resolved-text view reloads showing PASSED/FAILED banner with timestamp
 - [ ] **Fork as new document:** on resolved doc resolved-text view, click "Fork as new document" → new draft document created; if PASSED it contains the resolved text, if FAILED it contains the original text
 - [ ] **Resolved text on document page:** resolved/archived doc → "Resolved text" button appears in document viewer toolbar for owner
+- [ ] **Supervisor access modal:** invite a user as `supervisor` → they see Manage access button; modal is read-only (no Remove, no Default access selector); their invite dropdown caps at supervisor
+- [ ] **Supervisor voting cycle:** as supervisor: open → voting → review buttons work → resolve conflicts → final voting → record tallies → Mark as Resolved; archiving the resolved doc is refused (admin only)

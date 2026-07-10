@@ -177,6 +177,13 @@ Below the heading a metadata line shows: `operation · position · proposed by N
 
 For **INSERT** proposals the position is shown as `char N` (a single insertion point — there is no range being removed). For **replace** and **delete** the position is `chars N–M`.
 
+### Voting (voter+ access)
+
+Three vote buttons — **▲ For**, **▼ Against**, **◆ Abstain** — show live tallies and highlight the user's current vote:
+
+- Clicking a button casts that vote (or changes an existing vote — the previous count decrements, the new one increments).
+- Clicking the **currently active** vote button retracts the vote entirely (`DELETE /api/variants/:id/vote`); all counts return to their pre-vote values. *(Added to the UI 2026-07-10 — previously retraction was API-only.)*
+
 ### Comment sorting
 
 A row of sort/filter buttons appears above the comment list:
@@ -745,5 +752,4 @@ Supervisor may `POST /documents/:id/access` for users **without an existing acce
 
 ## Planned / future use cases
 
-- **UC-19:** Supervisor access role — designed, see full spec below. Moved out of this list 2026-07-10.
 - **UC-18:** Moderation dashboard — hide/unhide variants (`variants.is_hidden` is filtered everywhere but has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected`.

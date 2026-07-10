@@ -68,13 +68,14 @@ votetext/
 │   ├── index.html          — SPA shell
 │   ├── app.js              — client router + all-role views (< 2000 lines)
 │   ├── auth.js             — login, profile completion modal, profile page
-│   ├── review.js           — editor/admin views: review, conflict resolution, final voting, resolved text
+│   ├── review.js           — supervisor/editor/admin views: review, conflict resolution, final voting, resolved text
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
 │   └── use-cases.md        — detailed user flows (UC-1 …)
 └── tests/
-    └── api.test.js         — integration tests (node:test, no extra deps)
+    ├── api.test.js         — integration tests (node:test, no extra deps)
+    └── e2e/                — Playwright browser tests (Firefox; own server + isolated DB)
 ```
 
 ---
@@ -118,7 +119,7 @@ activity_log ── references users, documents, variants
 
 **Draft visibility** — documents in `draft` status are only visible to the owner and users with `editor` or `admin` access. This is enforced in `GET /documents` (SQL filter), `GET /documents/:id` (inline check), and `checkDocAccess()` in variants.js (all variant sub-routes).
 
-**Resolved text storage** — on `final_voting → resolved` transition, `resolveVariants()` applies all approved variants to the concatenated `document_lines` text via `applyVariantsToText()` (char-offset order, overlapping approved variants skipped) and stores the result in `documents.resolved_text TEXT`. `documents.resolved_at TEXT` is set to the current ISO-8601 timestamp. `GET /api/documents/:id/resolved-text` returns the stored text for resolved/archived docs, or computes it on-the-fly for `final_voting` docs (editor+ access required).
+**Resolved text storage** — on `final_voting → resolved` transition, `resolveVariants()` applies all approved variants to the concatenated `document_lines` text via `applyVariantsToText()` (char-offset order, overlapping approved variants skipped) and stores the result in `documents.resolved_text TEXT`. `documents.resolved_at TEXT` is set to the current ISO-8601 timestamp. `GET /api/documents/:id/resolved-text` returns the stored text for resolved/archived docs, or computes it on-the-fly for `final_voting` docs (supervisor+ access required).
 
 **WAL mode** — All reads happen concurrently; writes are serialised by SQLite. Busy timeout is 5 s.
 
@@ -191,7 +192,7 @@ Each level includes all permissions of lower levels:
 
 ### Invite cap
 
-`POST /api/documents/:id/access` enforces that the assigned `access_level` index ≤ the inviter's own level index (`ACCESS_LEVELS` from `src/middleware/access.js`). Returns 403 with a descriptive message if exceeded.
+`POST /api/documents/:id/access` (supervisor+) enforces that the assigned `access_level` index ≤ the inviter's own level index (`ACCESS_LEVELS` from `src/middleware/access.js`). Returns 403 with a descriptive message if exceeded. Because the endpoint upserts, non-admins are additionally rejected when the target user already has an access record — modifying existing access is admin-only.
 
 ### User searchability
 
@@ -218,18 +219,18 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes GET /search — user lookup, excludes non-searchable/protected)
 /api/documents/*   → src/routes/documents.js
                        (includes GET /:id/text — full reconstructed text for copy/export)
-                       (includes GET /:id/resolved-text — resolved text with approved variants applied; on-the-fly for final_voting, stored for resolved/archived; editor+)
-                       (includes PATCH /:id/doc-vote — overall document vote tallies, editor/admin, final_voting only)
+                       (includes GET /:id/resolved-text — resolved text with approved variants applied; on-the-fly for final_voting, stored for resolved/archived; supervisor+)
+                       (includes PATCH /:id/doc-vote — overall document vote tallies, supervisor+, final_voting only)
                        (includes /variants, /access, /activity sub-routes)
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
                        (includes PATCH /:id/share — proposer only, toggle allow_anonymous_share)
-                       (includes POST /:id/fork — new variant based on an existing one, based_on relation; proposer+ on open docs, editor/admin on voting/final_voting)
-                       (includes PATCH /:id/threshold — editor/admin, voting/final_voting only, sets majority_threshold)
-                       (includes PATCH /:id/review-status — editor/admin status update)
-                       (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution)
-                       (includes PATCH /:id/final-vote — final_yes/no/abstain tallies, editor/admin, final_voting only)
-                       (includes GET /:id/final-vote-log — audit trail, editor/admin only)
+                       (includes POST /:id/fork — new variant based on an existing one, based_on relation; proposer+ on open docs, supervisor+ on voting/final_voting)
+                       (includes PATCH /:id/threshold — supervisor+, voting/final_voting only, sets majority_threshold)
+                       (includes PATCH /:id/review-status — supervisor+ status update)
+                       (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution, supervisor+)
+                       (includes PATCH /:id/final-vote — final_yes/no/abstain tallies, supervisor+, final_voting only)
+                       (includes GET /:id/final-vote-log — audit trail, supervisor+ only)
 /api/comments/*    → src/routes/comments.js   (edit/delete only)
 /api/activity      → src/routes/activity.js
 ```
@@ -317,7 +318,7 @@ Single HTML page (`public/index.html`) with hash-based routing:
 #/login                  → viewLogin()
 #/documents              → viewDocumentList()
 #/documents/:id          → viewDocument(id)
-#/documents/:id/review      → viewDocumentReview(id)        — editor/admin two-panel review view (public/review.js)
+#/documents/:id/review      → viewDocumentReview(id)        — supervisor+ two-panel review view (public/review.js)
 #/documents/:id/conflicts   → viewConflictResolution(id)    — drag-and-drop conflict ordering (public/review.js)
 #/documents/:id/final-vote    → viewFinalVoting(id)          — final voting walkthrough + export (public/review.js)
 #/documents/:id/resolved-text → viewResolvedText(id)        — resolved text preview/export, Mark as Resolved, Fork (public/review.js)
@@ -368,7 +369,8 @@ Proposal numbers (`#1`, `#2` …) are assigned client-side in creation order (`i
 - **Proposal number** (`#N`) — id-ascending order, same as sidebar numbering
 - **Prev / Next** — document-position order (`char_start ASC, created_at ASC`); buttons show `← Prev` / `Next →` with a native `title` tooltip of `#N Title`
 - **Back to document** — stores `state.pendingVariantJump = { docId, page, lineStart }` before navigating; `viewDocument` consumes it at the end and calls `navigatePage(page, lineStart)` to scroll the proposal into view
-- **Fork button** — shown when the user is authenticated, the document is `open`/`voting`/`final_voting`, and the variant is not withdrawn/rejected/not_applicable/merged. Opens the proposal modal pre-filled with "Your variant of {title}" and the original proposed text; submits to `POST /api/variants/:id/fork` and navigates to the new proposal. The backend enforces the access level (proposer+ on open, editor/admin on voting phases) — insufficient access surfaces as a 403 error toast.
+- **Fork button** — shown when the user is authenticated, the document is `open`/`voting`/`final_voting`, and the variant is not withdrawn/rejected/not_applicable/merged. Opens the proposal modal pre-filled with "Your variant of {title}" and the original proposed text; submits to `POST /api/variants/:id/fork` and navigates to the new proposal. The backend enforces the access level (proposer+ on open, supervisor+ on voting phases) — insufficient access surfaces as a 403 error toast.
+- **Vote buttons** — For/Against/Abstain post `POST /api/variants/:id/vote`; clicking the currently active vote button retracts it via `DELETE /api/variants/:id/vote` (tallies re-fetched from `GET /votes`). The handler tracks `currentVote` locally so the toggle works without a page reload.
 
 `GET /api/documents/:id` returns `owner_organization` (joined from `users`) in addition to `owner_name`. Both are shown in the document info sidebar with a dotted-underline tooltip (`Name · Organisation`) matching the proposal author tooltip style.
 
@@ -428,9 +430,9 @@ The `variants.status` column tracks a proposal through its lifecycle:
 | Status | Set by | Meaning |
 |--------|--------|---------|
 | `pending` | Default on creation; review endpoint | In the vote — will count toward the final decision |
-| `conflict` | Review endpoint (editor/admin) | Overlaps another proposal; excluded from final vote |
-| `rejected` | Review endpoint (editor/admin) | Explicitly not voted on |
-| `not_applicable` | Review endpoint (editor/admin) | No longer applies to the current document wording |
+| `conflict` | Review endpoint (supervisor+) | Overlaps another proposal; excluded from final vote |
+| `rejected` | Review endpoint (supervisor+) | Explicitly not voted on |
+| `not_applicable` | Review endpoint (supervisor+) | No longer applies to the current document wording |
 | `withdrawn` | Proposer or review endpoint | Proposer or editor retracted the proposal |
 | `approved` | Resolve flow (future) | Won the vote |
 | `merged` | Resolve flow (future) | Applied to the document text |
@@ -487,7 +489,7 @@ A standalone JS file (loaded after `app.js`) that defines `viewConflictResolutio
 2. The document to be in `voting` status (422 otherwise)
 3. The user to be the document owner, or to have `editor` or `admin` access level (403 otherwise)
 
-The review route (`#/documents/:id/review`) is shown to all authenticated users on voting documents; users without editor/admin access will receive a 403 on the first status-update attempt, which triggers an inline error.
+The review route (`#/documents/:id/review`) is shown to all authenticated users on voting documents; users without supervisor+ access will receive a 403 on the first status-update attempt, which triggers an inline error.
 
 ### Final voting walkthrough (`public/review.js`)
 
@@ -500,7 +502,7 @@ After all conflicts are resolved and the document is in `final_voting`, the edit
 5. Provides **Export CSV** (Nordic format: semi-colon separated, double-quoted, UTF-8 BOM; includes Threshold column) and **Print HTML** (standalone printable tally sheet with threshold label per proposal) — both generated client-side from in-memory data.
 6. An **Overall document vote** section at the bottom records yes/no/abstain totals for the whole document via `PATCH /api/documents/:id/doc-vote`.
 
-Both PATCH endpoints require `final_voting` document status (422 otherwise) and editor/admin access (403 otherwise). Partial updates supported.
+Both PATCH endpoints require `final_voting` document status (422 otherwise) and supervisor+ access (403 otherwise). Partial updates supported.
 
 **`passesThreshold(yes, no, abstain, threshold)`** — pure helper implementing the four threshold rules with integer math. Lives in `src/routes/documents.js` and is mirrored verbatim in `public/review.js`. Used by `resolveVariants()` (server-side) and the walkthrough's `updateChildrenState()` + `updateMajority()` (client-side). Both copies must stay in sync.
 
@@ -577,7 +579,7 @@ Documents in `draft` status are restricted to the owner and users with `editor`/
 
 ### Final vote audit log
 
-`PATCH /api/variants/:id/final-vote` now always inserts into `final_vote_log(variant_id, user_id, final_yes, final_no, final_abstain, recorded_at)` after updating the variant. `recorded_at` is `Date.now()` (Unix ms). Rows are never updated — every save produces a new row. `GET /api/variants/:id/final-vote-log` (editor+ only) returns all rows ordered by `recorded_at`.
+`PATCH /api/variants/:id/final-vote` now always inserts into `final_vote_log(variant_id, user_id, final_yes, final_no, final_abstain, recorded_at)` after updating the variant. `recorded_at` is `Date.now()` (Unix ms). Rows are never updated — every save produces a new row. `GET /api/variants/:id/final-vote-log` (supervisor+ only) returns all rows ordered by `recorded_at`.
 
 Frontend: each proposal card in the final voting walkthrough has a collapsed `<div class="fv-audit">` below the majority percentage. Clicking **View audit trail** fetches the log and renders one row per entry; clicking again collapses it.
 
@@ -589,7 +591,9 @@ Frontend: each proposal card in the final voting walkthrough has a collapsed `<d
 |---|---|---|
 | `app.js` | Router, helpers, document/variant/comment/activity/access views | all roles, every session |
 | `auth.js` | `viewLogin`, `showProfileModal`, `viewProfile` | once per session / infrequent |
-| `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText` | editors and admins only |
+| `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText` | supervisors, editors, admins |
+
+⚠ Route handlers defined in `auth.js`/`review.js` and referenced from the `routes` array in `app.js` **must be wrapped in arrow functions** (`() => viewLogin()`), never referenced bare — `app.js` executes before the other files load, so a bare reference throws a `ReferenceError` that kills the entire script. This broke the app in real browsers after the initial split; the e2e smoke suite now guards it.
 
 If `app.js` approaches the limit again, the next candidates are the owner/admin modals (`openAccessModal`, `openStatusModal`, `openDocSettingsModal`, ~250 lines) which could move to a `public/admin.js`, followed by `openCreateDocModal` (~197 lines). Core document/variant rendering stays in `app.js` since all roles use it on every page.
 
@@ -601,8 +605,11 @@ All files share globals: `app.js` loads first and defines the helpers (`esc`, `e
 
 ```bash
 npm test          # integration tests (node:test, isolated test DB on port 3099)
+npm run test:e2e  # Playwright browser tests (Firefox, own server on port 3001)
 npm run init-db   # (re)create database from schema
 npm run seed      # seed dev data + print session cookie for browser login
 ```
 
-Tests use Node's built-in `node:test` runner — no additional test framework. They spin up the Express server programmatically on port 3099 against an ephemeral `data/test_votetext.db` that is deleted after each run. OTPs are read directly from the test database to avoid SMTP dependency.
+API tests use Node's built-in `node:test` runner — no additional test framework. They spin up the Express server programmatically on port 3099 against an ephemeral `data/test_votetext.db` that is deleted after each run. OTPs are read directly from the test database to avoid SMTP dependency.
+
+E2E tests (`tests/e2e/*.spec.js`) run under `@playwright/test` (the only extra dev dependency) against Firefox. `global-setup.js` owns the server lifecycle: it creates `data/e2e_votetext.db` from `schema.sql` **before** spawning `src/server.js` on port 3001 (db.js opens the SQLite file at module load, so Playwright's built-in `webServer` cannot be used), logs in the fixture users via the OTP flow, and stores their session cookies as Playwright `storageState` files under `tests/e2e/.auth/`. `global-teardown.js` kills the server via its PID file and deletes the DB. Specs create their own documents through the API (`tests/e2e/helpers.js`), so files stay order-independent. A test-only endpoint `GET /api/auth/test-otp` (registered only when `NODE_ENV === 'test'`) exposes the latest OTP for browser-driven login flows. Coverage maps to the user stories in `specs/user-stories.md` — see the Playwright section of `specs/test-plan.md`.

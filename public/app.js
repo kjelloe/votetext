@@ -1451,20 +1451,31 @@ async function viewVariant(variantId) {
         btn.addEventListener('click', () => { location.hash = `#/variants/${btn.dataset.navId}`; });
     });
 
-    // Vote buttons
+    // Vote buttons — clicking the active vote again retracts it
     const voteCard = document.getElementById('vote-card');
+    let currentVote = myVote;
     voteCard.addEventListener('click', async e => {
         const btn = e.target.closest('.vote-btn[data-value]');
         if (!btn || !state.user) return;
         const value = parseInt(btn.dataset.value);
         try {
-            const result = await api('POST', `/variants/${variantId}/vote`, { vote_value: value });
-            v.votes_for = result.tallies.votes_for;
-            v.votes_against = result.tallies.votes_against;
-            v.votes_abstain = result.tallies.votes_abstain;
+            let tallies;
+            if (currentVote === value) {
+                await api('DELETE', `/variants/${variantId}/vote`);
+                const d = await api('GET', `/variants/${variantId}/votes`);
+                tallies = d.tallies;
+                currentVote = undefined;
+            } else {
+                const result = await api('POST', `/variants/${variantId}/vote`, { vote_value: value });
+                tallies = result.tallies;
+                currentVote = value;
+            }
+            v.votes_for = tallies.votes_for;
+            v.votes_against = tallies.votes_against;
+            v.votes_abstain = tallies.votes_abstain;
             voteCard.innerHTML = `
                 <div class="sidebar-header" style="margin:-1.25rem -1.25rem 1rem;padding:.875rem 1.25rem;background:var(--color-bg-secondary);border-bottom:1px solid var(--color-border);border-radius:12px 12px 0 0">Votes</div>
-                ${renderVoteSection(v, value)}`;
+                ${renderVoteSection(v, currentVote)}`;
         } catch (err) { alert(err.message); }
     });
 

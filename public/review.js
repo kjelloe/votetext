@@ -219,7 +219,9 @@ async function viewResolvedText(docId) {
             if (!confirm('Mark as resolved? This will finalize variant statuses and store the resolved text.')) return;
             try {
                 await api('POST', `/documents/${docId}/status`, { status: 'resolved' });
-                location.hash = `#/documents/${docId}/resolved-text`;
+                // Setting an identical hash fires no hashchange — re-render explicitly
+                if (location.hash === `#/documents/${docId}/resolved-text`) viewResolvedText(docId);
+                else location.hash = `#/documents/${docId}/resolved-text`;
             } catch (e) { alert(e.message); }
         });
         toolbar.append(resolveBtn);
