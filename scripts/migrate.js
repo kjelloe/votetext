@@ -235,5 +235,46 @@ if (udaSchemaRow && !udaSchemaRow.sql.includes('supervisor')) {
     console.log('[skip] user_document_access supervisor already present');
 }
 
+addColumnIfMissing('comments', 'hidden_by', 'INTEGER REFERENCES users (id) ON DELETE SET NULL');
+
+// Extend activity_log CHECK constraint with moderation actions (UC-18)
+const actSchemaRow3 = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='activity_log'").get();
+if (actSchemaRow3 && !actSchemaRow3.sql.includes('variant_hidden')) {
+    console.log('[migrating] Extending activity_log CHECK constraint with moderation actions…');
+    db.exec(`
+        CREATE TABLE activity_log_new3 (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+            document_id INTEGER          REFERENCES documents (id) ON DELETE CASCADE,
+            variant_id  INTEGER          REFERENCES variants (id) ON DELETE SET NULL,
+            action      TEXT    NOT NULL
+                                CHECK (action IN (
+                                    'document_created', 'document_updated', 'document_status_changed',
+                                    'variant_proposed', 'variant_updated', 'variant_withdrawn',
+                                    'vote_cast', 'vote_changed', 'vote_retracted',
+                                    'comment_added', 'comment_updated',
+                                    'user_invited', 'user_blocked', 'user_unblocked',
+                                    'voting_scheduled', 'voting_schedule_cancelled',
+                                    'variant_threshold_changed',
+                                    'variant_hidden', 'variant_unhidden',
+                                    'comment_hidden', 'comment_unhidden',
+                                    'user_protected', 'user_unprotected'
+                                )),
+            metadata    TEXT    NOT NULL DEFAULT '{}',
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        INSERT INTO activity_log_new3 SELECT * FROM activity_log;
+        DROP TABLE activity_log;
+        ALTER TABLE activity_log_new3 RENAME TO activity_log;
+        CREATE INDEX idx_activity_user      ON activity_log (user_id);
+        CREATE INDEX idx_activity_document  ON activity_log (document_id);
+        CREATE INDEX idx_activity_created   ON activity_log (created_at);
+        CREATE INDEX idx_activity_user_time ON activity_log (user_id, created_at DESC);
+    `);
+    console.log('[done] Extended activity_log CHECK constraint with moderation actions');
+} else {
+    console.log('[skip] activity_log moderation actions already present');
+}
+
 db.close();
 console.log('Migration complete.');

@@ -72,7 +72,14 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 #### Discussion
 - Two-level threaded comments under each variant
 - Comment sorting on the proposal page: Oldest / Newest / Most replied / Author's
-- Deleted comments are hidden, not removed (`is_hidden` flag); a full moderation dashboard is planned (see Roadmap)
+- Deleted comments are hidden, not removed (`is_hidden` flag); author deletes are permanent, moderator hides are reversible (`hidden_by`)
+
+#### Moderation (UC-18)
+- Supervisor+ can hide/unhide proposals — hidden proposals vanish from listings and 404 by direct link for participants, stay visible (with banner) to supervisors
+- Supervisor+ can hide comments — participants see a "hidden by moderator" placeholder (text/author redacted server-side); distinct from author delete and reversible
+- Per-document **Moderation page** lists everything hidden with unhide actions
+- Superadmin **Users page** manages `is_protected` (excludes users from invite search)
+- Every moderation action is written to the activity log
 
 #### Access Control
 - Per-document access levels: viewer, commenter, proposer, voter, supervisor, editor, admin
@@ -175,6 +182,8 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `GET`    | `/api/variants/:id/relations` | List variant relations |
 | `PATCH`  | `/api/variants/:id/final-vote` | Record final tally (supervisor+, final_voting only) |
 | `GET`    | `/api/variants/:id/final-vote-log` | Full audit trail of tally saves (supervisor+ only) |
+| `POST`   | `/api/variants/:id/hide` | Hide a proposal from participants (supervisor+; hidden proposals 404 for others) |
+| `POST`   | `/api/variants/:id/unhide` | Restore a hidden proposal (supervisor+) |
 
 #### Resolved Text
 | Method | Path | Description |
@@ -191,10 +200,12 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Comments
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`    | `/api/variants/:id/comments` | List comments for a variant |
+| `GET`    | `/api/variants/:id/comments` | List comments for a variant (moderator-hidden comments returned redacted for non-supervisors) |
 | `POST`   | `/api/variants/:id/comments` | Add a comment |
 | `PATCH`  | `/api/comments/:id` | Edit a comment (author only) |
-| `DELETE` | `/api/comments/:id` | Delete a comment |
+| `DELETE` | `/api/comments/:id` | Delete a comment (author = permanent; doc admin deleting another's = reversible moderation hide) |
+| `POST`   | `/api/comments/:id/hide` | Hide a comment as moderation action (supervisor+) |
+| `POST`   | `/api/comments/:id/unhide` | Restore a moderator-hidden comment (supervisor+; author deletes → 422) |
 
 #### Activity Feed
 | Method | Path | Description |
@@ -209,6 +220,13 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `POST`   | `/api/documents/:id/access` | Invite user (supervisor+; capped at own level; only admin may change an existing record) |
 | `PATCH`  | `/api/documents/:id/access/:userId` | Update access level / block (admin only) |
 | `DELETE` | `/api/documents/:id/access/:userId` | Revoke access |
+
+#### Moderation & Users
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`   | `/api/documents/:id/moderation` | Hidden proposals + moderator-hidden comments for a document (supervisor+) |
+| `GET`   | `/api/users` | List all users with protection status (superadmin only; `?q=` filter) |
+| `PATCH` | `/api/users/:id/protection` | Toggle `is_protected` — excludes user from invite search (superadmin only) |
 
 ---
 
@@ -299,8 +317,9 @@ votetext/
 │       ├── auth.js         # OTP login/logout + profile
 │       ├── documents.js    # Document CRUD + import + access sub-routes
 │       ├── variants.js     # Variant proposals, relations, voting, comments
-│       ├── comments.js     # Comment edit/delete (standalone path)
-│       └── activity.js     # Activity feed
+│       ├── comments.js     # Comment edit/delete + moderation hide/unhide (standalone path)
+│       ├── activity.js     # Activity feed
+│       └── users.js        # Superadmin user list + protection management
 ├── specs/
 │   ├── test-plan.md        # Test scenarios (automated + manual checklist)
 │   └── use-cases.md        # Detailed user flows (UC-1 …)
@@ -310,7 +329,7 @@ votetext/
 └── public/
     ├── index.html          # Single-page application shell
     ├── app.js              # Client-side logic (vanilla JS, < 2000 lines)
-    ├── review.js           # Editor/admin views: review, conflicts, final voting, resolved text
+    ├── review.js           # Supervisor/editor/admin views: review, conflicts, final voting, resolved text, moderation, user admin
     └── style.css           # Styles
 ```
 
@@ -422,6 +441,6 @@ sqlite3 /opt/votetext/data/votetext.db ".backup ~/backups/votetext-$(date +%F).d
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
 - [x] Playwright e2e suite (`npm run test:e2e`) — 41 tests covering all 10 user stories: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Moderation dashboard (UC-18) — supervisor+ hide/unhide for proposals and comments (moderator hides reversible via `hidden_by`, author deletes permanent), per-document moderation page, superadmin user-protection management
 - [ ] Export resolved document (further polish)
-- [ ] Moderation dashboard — UI to hide/unhide variants (`variants.is_hidden` currently has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected` (enforced in search, admin-settable only via SQL today)
 - [ ] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log), giving them version history and offsite backup instead of manual zip copies

@@ -166,6 +166,8 @@ function updateHeader() {
     }
     const badge = document.getElementById('act-badge');
     if (badge) { badge.textContent = state.activityUnread || ''; badge.classList.toggle('hidden', !state.activityUnread); }
+    const usersLink = document.getElementById('nav-users-link');
+    if (usersLink) usersLink.classList.toggle('hidden', !(state.user && state.user.role === 'superadmin'));
 }
 
 /* ===== Router ===== */
@@ -176,6 +178,8 @@ const routes = [
     [/^#\/documents\/(\d+)\/final-vote$/, params => viewFinalVoting(params[1])],
     [/^#\/documents\/(\d+)\/resolved-text$/, params => viewResolvedText(params[1])],
     [/^#\/documents\/(\d+)\/review$/, params => viewDocumentReview(params[1])],
+    [/^#\/documents\/(\d+)\/moderation$/, params => viewModeration(params[1])],
+    [/^#\/admin\/users$/, () => viewUserAdmin()],
     [/^#\/documents\/(\d+)$/, params => viewDocument(params[1])],
     [/^#\/variants\/(\d+)$/, params => viewVariant(params[1])],
     [/^#\/activity$/, viewActivity],
@@ -194,6 +198,14 @@ async function router() {
         }
     }
     location.hash = '#/documents';
+}
+
+// Serialise navigations: a new route waits for the previous handler to finish,
+// so a still-running view cannot replace the DOM out from under the next one.
+let routerQueue = Promise.resolve();
+function runRoute() {
+    routerQueue = routerQueue.then(router);
+    return routerQueue;
 }
 
 /* ===== View: Document List ===== */
@@ -500,7 +512,7 @@ async function viewDocument(docId) {
             <p class="text-muted mb-1">${esc(doc.description) || '<em>No description</em>'}</p>
             <p class="text-muted">Owner: <span class="author-tip" title="${esc([doc.owner_name, doc.owner_organization].filter(Boolean).join(' · '))}">${esc(doc.owner_name)}</span></p>
             <p class="text-muted">${doc.total_lines} lines · ${doc.total_pages} pages</p>
-            ${['supervisor', 'editor', 'admin'].includes(doc.my_access_level) ? `<button class="btn btn-ghost btn-sm mt-2" id="access-btn">Manage access</button>` : ''}
+            ${['supervisor', 'editor', 'admin'].includes(doc.my_access_level) ? `<button class="btn btn-ghost btn-sm mt-2" id="access-btn">Manage access</button> <a href="#/documents/${esc(String(docId))}/moderation" class="btn btn-ghost btn-sm mt-2">Moderation</a>` : ''}
         </div>
     `;
 
@@ -1220,6 +1232,7 @@ async function viewVariant(variantId) {
     ]);
 
     const doc = docData && docData.document;
+    state.canModerate = !!(state.user && doc && ['supervisor', 'editor', 'admin'].includes(doc.my_access_level));
     if (!state.user && !doc) {
         setMain(`<div class="page-container"><div class="card"><h1>${esc(v.title||'Proposal')}</h1>${v.rationale?`<p style="border-left:3px solid var(--color-border);padding:.5rem .75rem;font-style:italic">${esc(v.rationale)}</p>`:''}<div class="diff-block">${renderDiff(v,null)}</div><p class="text-muted mt-2"><a href="#/login">Log in</a> to view the full document and other proposals.</p></div></div>`);
         return;
@@ -1291,8 +1304,9 @@ async function viewVariant(variantId) {
         <div class="card">
             <div class="flex justify-between items-center mb-1">
                 <h1 class="proposal-heading">Proposal ${proposalNum ? `#${esc(proposalNum)}` : ''}</h1>
-                <div class="flex gap-1 items-center">${statusBadge(v.status)}<button id="share-variant-btn" class="btn btn-ghost btn-sm">Share</button>${canFork ? '<button id="fork-variant-btn" class="btn btn-ghost btn-sm">Fork</button>' : ''}</div>
+                <div class="flex gap-1 items-center">${statusBadge(v.status)}<button id="share-variant-btn" class="btn btn-ghost btn-sm">Share</button>${canFork ? '<button id="fork-variant-btn" class="btn btn-ghost btn-sm">Fork</button>' : ''}${state.canModerate ? (v.is_hidden ? '<button id="mod-unhide-btn" class="btn btn-ghost btn-sm">Unhide</button>' : '<button id="mod-hide-btn" class="btn btn-ghost btn-sm">Hide</button>') : ''}</div>
             </div>
+            ${v.is_hidden ? '<div class="alert alert-error">Hidden by moderator — participants cannot see this proposal.</div>' : ''}
             ${v.title ? `<p style="font-size:1rem;font-weight:600;margin-bottom:0.5rem">${esc(v.title)}</p>` : ''}
             <p class="text-muted mb-2">
                 ${esc(v.operation)} · ${v.operation === 'insert' ? `char ${esc(v.char_start)}` : `chars ${esc(v.char_start)}–${esc(v.char_end)}`} ·
@@ -1355,6 +1369,17 @@ async function viewVariant(variantId) {
     `;
 
     setMain(wrap);
+
+    // Moderation hide/unhide (supervisor+)
+    const modHideBtn = document.getElementById('mod-hide-btn');
+    if (modHideBtn) modHideBtn.addEventListener('click', async () => {
+        if (!confirm('Hide this proposal from all participants?')) return;
+        try { await api('POST', `/variants/${variantId}/hide`); viewVariant(variantId); } catch (err) { alert(err.message); }
+    });
+    const modUnhideBtn = document.getElementById('mod-unhide-btn');
+    if (modUnhideBtn) modUnhideBtn.addEventListener('click', async () => {
+        try { await api('POST', `/variants/${variantId}/unhide`); viewVariant(variantId); } catch (err) { alert(err.message); }
+    });
 
     // Share button
     document.getElementById('share-variant-btn').addEventListener('click', () => {
@@ -1633,30 +1658,32 @@ function renderCommentThread(comments, variantId, sortMode = 'chrono', authorId 
         top.sort((a, b) => (b.replies || []).length - (a.replies || []).length);
     }
     if (!top.length) return '<p class="text-muted">No comments match this filter.</p>';
-    return `<div class="comment-thread">` + top.map(c => `
-        <div class="comment" id="comment-${esc(c.id)}">
+    function renderOne(c, isReply) {
+        const cls = isReply ? 'reply' : 'comment';
+        if (c.is_hidden) {
+            return `<div class="${cls}" id="comment-${esc(c.id)}">
+                <div class="comment-text text-muted"><em>Comment hidden by moderator</em>${state.canModerate && c.author_name ? ` — ${esc(c.author_name)}: ${esc(c.text)}` : ''}</div>
+                ${state.canModerate ? `<div class="comment-actions"><button class="btn btn-ghost btn-sm unhide-comment-btn" data-id="${esc(c.id)}">Unhide</button></div>` : ''}
+                ${!isReply && c.replies && c.replies.length ? `<div class="comment-replies">${c.replies.map(r => renderOne(r, true)).join('')}</div>` : ''}
+            </div>`;
+        }
+        const canDelete = state.user && c.user_id === state.user.id;
+        const canHide = state.canModerate && state.user && c.user_id !== state.user.id;
+        return `<div class="${cls}" id="comment-${esc(c.id)}">
             <div class="comment-header">
                 <span class="comment-author">${esc(c.author_name)}</span>
                 <span class="comment-time">${timeAgo(c.created_at)}</span>
             </div>
             <div class="comment-text">${esc(c.text)}</div>
-            ${state.user ? `<div class="comment-actions">
-                <button class="btn btn-ghost btn-sm reply-btn" data-parent="${esc(c.id)}">Reply</button>
-                ${c.user_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm delete-comment-btn" data-id="${esc(c.id)}">Delete</button>` : ''}
+            ${state.user && (!isReply || canDelete || canHide) ? `<div class="comment-actions">
+                ${!isReply ? `<button class="btn btn-ghost btn-sm reply-btn" data-parent="${esc(c.id)}">Reply</button>` : ''}
+                ${canDelete ? `<button class="btn btn-ghost btn-sm delete-comment-btn" data-id="${esc(c.id)}">Delete</button>` : ''}
+                ${canHide ? `<button class="btn btn-ghost btn-sm hide-comment-btn" data-id="${esc(c.id)}">Hide</button>` : ''}
             </div>` : ''}
-            ${c.replies && c.replies.length ? `
-                <div class="comment-replies">
-                    ${c.replies.map(r => `
-                        <div class="reply" id="comment-${esc(r.id)}">
-                            <div class="comment-header">
-                                <span class="comment-author">${esc(r.author_name)}</span>
-                                <span class="comment-time">${timeAgo(r.created_at)}</span>
-                            </div>
-                            <div class="comment-text">${esc(r.text)}</div>
-                            ${state.user && r.user_id === state.user.id ? `<div class="comment-actions"><button class="btn btn-ghost btn-sm delete-comment-btn" data-id="${esc(r.id)}">Delete</button></div>` : ''}
-                        </div>`).join('')}
-                </div>` : ''}
-        </div>`).join('') + `</div>`;
+            ${!isReply && c.replies && c.replies.length ? `<div class="comment-replies">${c.replies.map(r => renderOne(r, true)).join('')}</div>` : ''}
+        </div>`;
+    }
+    return `<div class="comment-thread">` + top.map(c => renderOne(c, false)).join('') + `</div>`;
 }
 
 function wireCommentActions(variantId) {
@@ -1717,6 +1744,25 @@ function wireCommentActions(variantId) {
             if (!confirm('Delete this comment?')) return;
             try {
                 await api('DELETE', `/comments/${deleteBtn.dataset.id}`);
+                const cd = await api('GET', `/variants/${variantId}/comments`);
+                applyRefresh(cd.comments || []);
+            } catch (err) { alert(err.message); }
+        }
+
+        const hideCBtn = e.target.closest('.hide-comment-btn');
+        if (hideCBtn) {
+            if (!confirm('Hide this comment for all participants?')) return;
+            try {
+                await api('POST', `/comments/${hideCBtn.dataset.id}/hide`);
+                const cd = await api('GET', `/variants/${variantId}/comments`);
+                applyRefresh(cd.comments || []);
+            } catch (err) { alert(err.message); }
+        }
+
+        const unhideCBtn = e.target.closest('.unhide-comment-btn');
+        if (unhideCBtn) {
+            try {
+                await api('POST', `/comments/${unhideCBtn.dataset.id}/unhide`);
                 const cd = await api('GET', `/variants/${variantId}/comments`);
                 applyRefresh(cd.comments || []);
             } catch (err) { alert(err.message); }
@@ -1805,15 +1851,15 @@ async function renderActivity(mineOnly) {
 document.getElementById('login-btn').addEventListener('click', () => { location.hash = '#/login'; });
 document.getElementById('logout-btn').addEventListener('click', async () => { await api('POST', '/auth/logout'); state.user = null; updateHeader(); location.hash = '#/login'; });
 
-(async function init() {
+async function init() {
     try {
         const data = await api('GET', '/auth/me');
         state.user = data.user;
         state.config = data.config || {};
     } catch {}
     updateHeader();
-    window.addEventListener('hashchange', () => router());
-    await router();
+    window.addEventListener('hashchange', () => runRoute());
+    await runRoute();
     if (state.user) {
         const seenKey = `act_seen_${state.user.id}`;
         state.activitySeenTime = localStorage.getItem(seenKey) || new Date().toISOString();
@@ -1825,4 +1871,9 @@ document.getElementById('logout-btn').addEventListener('click', async () => { aw
         } catch {}
         setInterval(pollActivity, 30000);
     }
-})();
+}
+
+// Defer boot until DOMContentLoaded so auth.js/review.js are guaranteed to have
+// executed before the first route runs — avoids a race on fast /auth/me.
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();

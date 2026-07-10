@@ -540,6 +540,29 @@ router.post('/:id/variants', requireAuth, requireDocumentAccess('proposer'), (re
     }
 });
 
+// GET /api/documents/:id/moderation  (supervisor+ — hidden variants and moderator-hidden comments)
+router.get('/:id/moderation', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
+    try {
+        const hiddenVariants = getAll(
+            'SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.document_id = ? AND v.is_hidden = 1 ORDER BY v.id',
+            [req.params.id]
+        );
+        const hiddenComments = getAll(
+            `SELECT c.*, u.display_name as author_name, m.display_name as hidden_by_name
+             FROM comments c
+             JOIN users u ON u.id = c.user_id
+             JOIN variants v ON v.id = c.variant_id
+             LEFT JOIN users m ON m.id = c.hidden_by
+             WHERE v.document_id = ? AND c.is_hidden = 1 AND c.hidden_by IS NOT NULL
+             ORDER BY c.id`,
+            [req.params.id]
+        );
+        res.json({ hidden_variants: hiddenVariants, hidden_comments: hiddenComments });
+    } catch (err) {
+        next(err);
+    }
+});
+
 // GET /api/documents/:id/activity
 router.get('/:id/activity', requireAuth, requireDocumentAccess('viewer'), (req, res, next) => {
     try {

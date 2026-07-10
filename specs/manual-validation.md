@@ -55,6 +55,19 @@ Invite a test user as `supervisor` on a doc you own, log in as them in a second 
 
 ---
 
+## UC-18 — Moderation
+
+Use the supervisor from UC-19 (or any editor/admin) plus a voter in a second browser.
+
+- [ ] Supervisor opens a proposal → **Hide** button → confirm → red "Hidden by moderator" banner appears
+- [ ] Voter's sidebar no longer lists the proposal; opening its direct URL shows an error (404)
+- [ ] Document sidebar shows a **Moderation** link for the supervisor (voter has none) → page lists the hidden proposal → **Unhide** restores it for the voter
+- [ ] Supervisor clicks **Hide** on the voter's comment → voter sees "*Comment hidden by moderator*" placeholder (no text/author); supervisor still sees the text inline + Unhide
+- [ ] Voter deletes their own comment → gone for everyone; it does NOT appear on the Moderation page and cannot be unhidden
+- [ ] Set your own `users.role = 'superadmin'` in the DB, re-login → **Users** link in the header menu → Protect a user → they vanish from the access-invite search; Unprotect brings them back
+
+---
+
 ## Sign-off
 
 | UC | Validated by | Date | Result |
@@ -63,4 +76,5 @@ Invite a test user as `supervisor` on a doc you own, log in as them in a second 
 | UC-15 | | | |
 | UC-16 | | | |
 | UC-17 | | | |
+| UC-18 | | | |
 | UC-19 | | | |

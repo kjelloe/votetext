@@ -50,6 +50,9 @@ router.get('/:id', (req, res, next) => {
 
         const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
         if (!doc || (!variant.allow_anonymous_share && !checkDocAccess(doc, req))) return res.status(403).json({ error: 'Access denied' });
+        if (variant.is_hidden && !(req.user && checkDocAccess(doc, req, 'supervisor'))) {
+            return res.status(404).json({ error: 'Variant not found' });
+        }
 
         res.json({ variant });
     } catch (err) {
@@ -65,6 +68,40 @@ router.patch('/:id/share', requireAuth, (req, res, next) => {
         if (variant.proposed_by !== req.user.id) return res.status(403).json({ error: 'Not your variant' });
         const val = req.body.allow_anonymous_share ? 1 : 0;
         run("UPDATE variants SET allow_anonymous_share = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [val, variant.id]);
+        res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
+    } catch (err) { next(err); }
+});
+
+// POST /api/variants/:id/hide  (supervisor+ moderation)
+router.post('/:id/hide', requireAuth, (req, res, next) => {
+    try {
+        const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
+        if (variant.is_hidden) return res.status(422).json({ error: 'Variant is already hidden' });
+        transaction(() => {
+            run("UPDATE variants SET is_hidden = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [variant.id]);
+            logActivity(req.user.id, doc.id, variant.id, 'variant_hidden', { title: variant.title });
+        });
+        res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
+    } catch (err) { next(err); }
+});
+
+// POST /api/variants/:id/unhide  (supervisor+ moderation)
+router.post('/:id/unhide', requireAuth, (req, res, next) => {
+    try {
+        const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
+        if (!variant) return res.status(404).json({ error: 'Variant not found' });
+        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
+        if (!variant.is_hidden) return res.status(422).json({ error: 'Variant is not hidden' });
+        transaction(() => {
+            run("UPDATE variants SET is_hidden = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [variant.id]);
+            logActivity(req.user.id, doc.id, variant.id, 'variant_unhidden', { title: variant.title });
+        });
         res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
     } catch (err) { next(err); }
 });
@@ -381,10 +418,12 @@ router.get('/:id/comments', (req, res, next) => {
         const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
         if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
 
-        const all = getAll(
-            'SELECT c.*, u.display_name as author_name FROM comments c JOIN users u ON u.id = c.user_id WHERE c.variant_id = ? AND c.is_hidden = 0 ORDER BY c.created_at',
+        const canModerate = !!(req.user && checkDocAccess(doc, req, 'supervisor'));
+        const rows = getAll(
+            'SELECT c.*, u.display_name as author_name FROM comments c JOIN users u ON u.id = c.user_id WHERE c.variant_id = ? AND (c.is_hidden = 0 OR c.hidden_by IS NOT NULL) ORDER BY c.created_at',
             [variant.id]
         );
+        const all = rows.map(c => c.is_hidden && !canModerate ? { ...c, text: '', author_name: '' } : c);
         const top = all.filter(c => !c.parent_comment_id);
         const replies = all.filter(c => c.parent_comment_id);
         const threaded = top.map(c => ({ ...c, replies: replies.filter(r => r.parent_comment_id === c.id) }));

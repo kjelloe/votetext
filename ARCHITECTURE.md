@@ -62,13 +62,14 @@ votetext/
 │       ├── auth.js         — OTP request/verify, logout, profile
 │       ├── documents.js    — document CRUD, text import, variant/access sub-routes
 │       ├── variants.js     — variant CRUD, relations, voting, comments
-│       ├── comments.js     — comment edit/delete (standalone path /api/comments/:id)
-│       └── activity.js     — user activity feed
+│       ├── comments.js     — comment edit/delete + moderation hide/unhide (standalone path /api/comments/:id)
+│       ├── activity.js     — user activity feed
+│       └── users.js        — superadmin user list + is_protected management
 ├── public/
 │   ├── index.html          — SPA shell
 │   ├── app.js              — client router + all-role views (< 2000 lines)
 │   ├── auth.js             — login, profile completion modal, profile page
-│   ├── review.js           — supervisor/editor/admin views: review, conflict resolution, final voting, resolved text
+│   ├── review.js           — supervisor/editor/admin views: review, conflict resolution, final voting, resolved text, moderation, user admin
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
@@ -170,7 +171,7 @@ Each level includes all permissions of lower levels:
 - **commenter** — viewer + post comments
 - **proposer** — commenter + propose variants
 - **voter** — proposer + cast/change votes
-- **supervisor** — voter + manage the voting process: review-status, conflict-order, per-proposal thresholds, final-vote tallies + audit log, doc-vote, resolved-text, fork during voting phases, voting-cycle status transitions (open→voting incl. scheduling, voting↔final_voting, final_voting→resolved), and inviting **new** users up to own level. Cannot edit the document, see drafts, modify existing access records, or perform draft/archive transitions.
+- **supervisor** — voter + manage the voting process: review-status, conflict-order, per-proposal thresholds, final-vote tallies + audit log, doc-vote, resolved-text, fork during voting phases, voting-cycle status transitions (open→voting incl. scheduling, voting↔final_voting, final_voting→resolved), inviting **new** users up to own level, and moderation (hide/unhide variants and comments, per-document moderation page — UC-18). Cannot edit the document, see drafts, modify existing access records, or perform draft/archive transitions.
 - **editor** — supervisor + edit document metadata and settings
 - **admin** — full control (co-owner), manage access list
 
@@ -196,7 +197,7 @@ Each level includes all permissions of lower levels:
 
 ### User searchability
 
-`users.is_non_searchable` (user-controlled via `PATCH /api/auth/profile`) and `users.is_protected` (admin-controlled, no UI yet) exclude users from `GET /api/auth/search`. Both columns default to 0. Excluded users can still be invited by exact email.
+`users.is_non_searchable` (user-controlled via `PATCH /api/auth/profile`) and `users.is_protected` (superadmin-controlled via `PATCH /api/users/:id/protection`, UI at `#/admin/users`) exclude users from `GET /api/auth/search`. Both columns default to 0. Excluded users can still be invited by exact email.
 
 ### Invite email
 
@@ -204,7 +205,7 @@ When an invited email has no existing account, `POST /api/documents/:id/access` 
 
 ### Global roles
 
-`users.role` controls platform-wide permissions: `user`, `admin`, `superadmin`. Currently only `superadmin` can delete other users' documents or withdraw others' variants.
+`users.role` controls platform-wide permissions: `user`, `admin`, `superadmin`. `superadmin` can delete other users' documents, withdraw others' variants, moderate any document, and manage user protection via `/api/users` (first real use of `requireRole`). Granting the role itself is a manual DB operation — there is deliberately no promotion UI.
 
 ---
 
@@ -221,6 +222,7 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes GET /:id/text — full reconstructed text for copy/export)
                        (includes GET /:id/resolved-text — resolved text with approved variants applied; on-the-fly for final_voting, stored for resolved/archived; supervisor+)
                        (includes PATCH /:id/doc-vote — overall document vote tallies, supervisor+, final_voting only)
+                       (includes GET /:id/moderation — hidden variants + moderator-hidden comments, supervisor+)
                        (includes /variants, /access, /activity sub-routes)
 /api/variants/*    → src/routes/variants.js
                        (includes /vote, /votes, /comments, /relations)
@@ -231,11 +233,13 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes PATCH /:id/conflict-order — vote_order / parent_variant_id for conflict resolution, supervisor+)
                        (includes PATCH /:id/final-vote — final_yes/no/abstain tallies, supervisor+, final_voting only)
                        (includes GET /:id/final-vote-log — audit trail, supervisor+ only)
-/api/comments/*    → src/routes/comments.js   (edit/delete only)
+                       (includes POST /:id/hide and /:id/unhide — moderation, supervisor+)
+/api/comments/*    → src/routes/comments.js   (edit/delete + POST /:id/hide, /:id/unhide — moderation, supervisor+)
 /api/activity      → src/routes/activity.js
+/api/users/*       → src/routes/users.js      (superadmin only: GET / list, PATCH /:id/protection)
 ```
 
-All write endpoints (except logout) require a valid session cookie. Read endpoints on documents with `allow_anonymous_view = true` (and status ≠ `draft`) permit unauthenticated access. `GET /api/variants/:id` additionally allows anonymous access when `allow_anonymous_share = 1` on the variant.
+All write endpoints (except logout) require a valid session cookie. Read endpoints on documents with `allow_anonymous_view = true` (and status ≠ `draft`) permit unauthenticated access. `GET /api/variants/:id` additionally allows anonymous access when `allow_anonymous_share = 1` on the variant — unless the variant is hidden by a moderator, in which case non-supervisors get 404.
 
 ### HTTP status codes used
 
@@ -322,10 +326,14 @@ Single HTML page (`public/index.html`) with hash-based routing:
 #/documents/:id/conflicts   → viewConflictResolution(id)    — drag-and-drop conflict ordering (public/review.js)
 #/documents/:id/final-vote    → viewFinalVoting(id)          — final voting walkthrough + export (public/review.js)
 #/documents/:id/resolved-text → viewResolvedText(id)        — resolved text preview/export, Mark as Resolved, Fork (public/review.js)
+#/documents/:id/moderation → viewModeration(id)             — hidden variants/comments + unhide, supervisor+ (public/review.js)
+#/admin/users            → viewUserAdmin()                  — user list + is_protected toggles, superadmin (public/review.js)
 #/variants/:id           → viewVariant(id)
 #/activity               → viewActivity()
 #/profile                → viewProfile()
 ```
+
+Boot is deferred to `DOMContentLoaded` so `auth.js`/`review.js` are guaranteed to have executed before the first route resolves, and navigations are serialized through a promise queue (`runRoute()`) — a new route waits for the previous async view handler to finish, so a stale handler can never replace the DOM out from under the next view.
 
 ### Key patterns
 
@@ -583,15 +591,29 @@ Documents in `draft` status are restricted to the owner and users with `editor`/
 
 Frontend: each proposal card in the final voting walkthrough has a collapsed `<div class="fv-audit">` below the majority percentage. Clicking **View audit trail** fetches the log and renders one row per entry; clicking again collapses it.
 
+### Moderation (UC-18)
+
+Supervisor+ (per-document; owner and superadmin always qualify) can hide/unhide variants and comments.
+
+**Variants** — `POST /api/variants/:id/hide` / `/unhide` toggle `variants.is_hidden` (already filtered by every listing and the resolved-text merge). `GET /api/variants/:id` returns 404 for non-supervisors when the variant is hidden, overriding `allow_anonymous_share`. Supervisors see the variant with a *Hidden by moderator* banner and an inline Unhide button (`viewVariant` sets `state.canModerate` from `doc.my_access_level`).
+
+**Comments** — `comments.hidden_by` distinguishes two states behind the shared `is_hidden` flag: author delete (`hidden_by NULL`, permanent, invisible to everyone) vs moderator hide (`hidden_by` = moderator id, reversible). `POST /api/comments/:id/hide` sets both; `/unhide` requires `hidden_by` to be non-NULL (422 for author deletes). A `DELETE` of someone else's comment by a doc admin records `hidden_by` too, so it is reversible and auditable. The comments listing returns moderator-hidden rows with text/author redacted server-side for non-supervisors — the thread renders a *Comment hidden by moderator* placeholder; supervisors get the full text plus Unhide. `canModerate()` in `comments.js` duplicates the supervisor check because these routes derive the document from the comment's variant (same reason `variants.js` has `checkDocAccess`).
+
+**Moderation page** — `#/documents/:id/moderation` (`viewModeration` in `review.js`, linked from the document sidebar for supervisor+) renders `GET /api/documents/:id/moderation`: hidden variants and moderator-hidden comments with Unhide actions.
+
+**User protection** — `#/admin/users` (`viewUserAdmin` in `review.js`; nav link only for `role = 'superadmin'`) lists users via `GET /api/users` and toggles `users.is_protected` via `PATCH /api/users/:id/protection`.
+
+All six mutations log to `activity_log` (`variant_hidden`/`variant_unhidden`, `comment_hidden`/`comment_unhidden`, `user_protected`/`user_unprotected` — CHECK constraint extended in `schema.sql` + third table-recreate block in `migrate.js`).
+
 ### `app.js` split strategy
 
-`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,764 lines as of the Phase 1 split):
+`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,879 lines after UC-18):
 
 | File | Contents | Audience |
 |---|---|---|
 | `app.js` | Router, helpers, document/variant/comment/activity/access views | all roles, every session |
 | `auth.js` | `viewLogin`, `showProfileModal`, `viewProfile` | once per session / infrequent |
-| `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText` | supervisors, editors, admins |
+| `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText`, `viewModeration`, `viewUserAdmin` | supervisors, editors, admins |
 
 ⚠ Route handlers defined in `auth.js`/`review.js` and referenced from the `routes` array in `app.js` **must be wrapped in arrow functions** (`() => viewLogin()`), never referenced bare — `app.js` executes before the other files load, so a bare reference throws a `ReferenceError` that kills the entire script. This broke the app in real browsers after the initial split; the e2e smoke suite now guards it.
 

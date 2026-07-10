@@ -257,7 +257,8 @@ CREATE TABLE IF NOT EXISTS comments (
     user_id             INTEGER NOT NULL REFERENCES users (id)    ON DELETE CASCADE,
     parent_comment_id   INTEGER          REFERENCES comments (id) ON DELETE CASCADE,
     text                TEXT    NOT NULL DEFAULT '',
-    is_hidden           INTEGER NOT NULL DEFAULT 0,   -- moderator can hide
+    is_hidden           INTEGER NOT NULL DEFAULT 0,   -- 1 = not shown (author delete or moderator hide)
+    hidden_by           INTEGER          REFERENCES users (id) ON DELETE SET NULL,  -- moderator who hid it; NULL = author delete
     created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -314,7 +315,10 @@ CREATE TABLE IF NOT EXISTS activity_log (
                             'comment_added', 'comment_updated',
                             'user_invited', 'user_blocked', 'user_unblocked',
                             'voting_scheduled', 'voting_schedule_cancelled',
-                            'variant_threshold_changed'
+                            'variant_threshold_changed',
+                            'variant_hidden', 'variant_unhidden',
+                            'comment_hidden', 'comment_unhidden',
+                            'user_protected', 'user_unprotected'
                         )),
     metadata    TEXT    NOT NULL DEFAULT '{}',   -- JSON with action-specific data
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

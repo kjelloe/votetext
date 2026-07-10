@@ -2009,6 +2009,190 @@ test('V4: GET /auth/me — signature over a different session id → 401', async
     assert.equal(r.status, 401);
 });
 
+// ── GROUP X: MODERATION (UC-18) ──────────────────────────────────────────────
+
+let modSupCookie = '';    // supervisor on modDocId
+let modVoterCookie = '';  // voter on modDocId
+let modVoterId;
+let modDocId;
+let modVarId;
+let modCommentId;
+
+test('X1: setup — open doc, supervisor + voter invited, variant + comment created', async () => {
+    const docR = await req('POST', '/documents', {
+        body: { title: 'Moderation test doc', text: 'Line one here.\nLine two here.\nLine three here.' },
+        cookie: sessionCookie,
+    });
+    assert.equal(docR.status, 201);
+    modDocId = docR.data.document.id;
+    await req('POST', `/documents/${modDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+
+    for (const [email, level] of [['modsup@test.com', 'supervisor'], ['modvoter@test.com', 'voter']]) {
+        const invR = await req('POST', `/documents/${modDocId}/access`, {
+            body: { email, access_level: level }, cookie: sessionCookie,
+        });
+        assert.equal(invR.status, 201);
+        await req('POST', '/auth/request-otp', { body: { email } });
+        const otp = latestOtp(email);
+        const loginR = await req('POST', '/auth/verify-otp', { body: { email, code: otp.code } });
+        assert.ok(loginR.sessionId);
+        if (level === 'supervisor') modSupCookie = `session_id=${loginR.sessionId}`;
+        else modVoterCookie = `session_id=${loginR.sessionId}`;
+    }
+    modVoterId = db.prepare('SELECT id FROM users WHERE email = ?').get('modvoter@test.com').id;
+
+    const varR = await req('POST', `/documents/${modDocId}/variants`, {
+        body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'Row', title: 'Mod var', rationale: 'r' },
+        cookie: sessionCookie,
+    });
+    assert.equal(varR.status, 201);
+    modVarId = varR.data.variant.id;
+
+    const comR = await req('POST', `/variants/${modVarId}/comments`, {
+        body: { text: 'A comment to moderate' }, cookie: modVoterCookie,
+    });
+    assert.equal(comR.status, 201);
+    modCommentId = comR.data.comment.id;
+});
+
+test('X2: POST /variants/:id/hide — voter → 403', async () => {
+    const r = await req('POST', `/variants/${modVarId}/hide`, { cookie: modVoterCookie });
+    assert.equal(r.status, 403);
+});
+
+test('X3: POST /variants/:id/hide — supervisor → 200, activity logged', async () => {
+    const r = await req('POST', `/variants/${modVarId}/hide`, { cookie: modSupCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.is_hidden, 1);
+    const logRow = db.prepare("SELECT id FROM activity_log WHERE action = 'variant_hidden' AND variant_id = ?").get(modVarId);
+    assert.ok(logRow, 'variant_hidden activity should be logged');
+});
+
+test('X4: GET /variants/:id — hidden variant: voter 404, supervisor 200', async () => {
+    const vr = await req('GET', `/variants/${modVarId}`, { cookie: modVoterCookie });
+    assert.equal(vr.status, 404);
+    const sr = await req('GET', `/variants/${modVarId}`, { cookie: modSupCookie });
+    assert.equal(sr.status, 200);
+    assert.equal(sr.data.variant.is_hidden, 1);
+});
+
+test('X5: GET /documents/:id/variants — hidden variant excluded from listing', async () => {
+    const r = await req('GET', `/documents/${modDocId}/variants`, { cookie: modVoterCookie });
+    assert.equal(r.status, 200);
+    assert.ok(!r.data.variants.some(v => v.id === modVarId));
+});
+
+test('X6: GET /documents/:id/moderation — voter 403, supervisor sees hidden variant', async () => {
+    const vr = await req('GET', `/documents/${modDocId}/moderation`, { cookie: modVoterCookie });
+    assert.equal(vr.status, 403);
+    const sr = await req('GET', `/documents/${modDocId}/moderation`, { cookie: modSupCookie });
+    assert.equal(sr.status, 200);
+    assert.ok(sr.data.hidden_variants.some(v => v.id === modVarId));
+});
+
+test('X7: POST /variants/:id/unhide — supervisor → 200, voter can see it again', async () => {
+    const r = await req('POST', `/variants/${modVarId}/unhide`, { cookie: modSupCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.is_hidden, 0);
+    const vr = await req('GET', `/variants/${modVarId}`, { cookie: modVoterCookie });
+    assert.equal(vr.status, 200);
+    const again = await req('POST', `/variants/${modVarId}/unhide`, { cookie: modSupCookie });
+    assert.equal(again.status, 422);
+});
+
+test('X8: POST /comments/:id/hide — supervisor 204; voter sees placeholder, supervisor sees text', async () => {
+    const vetoed = await req('POST', `/comments/${modCommentId}/hide`, { cookie: modVoterCookie });
+    assert.equal(vetoed.status, 403);
+    const r = await req('POST', `/comments/${modCommentId}/hide`, { cookie: modSupCookie });
+    assert.equal(r.status, 204);
+
+    const voterList = await req('GET', `/variants/${modVarId}/comments`, { cookie: modVoterCookie });
+    const voterC = voterList.data.comments.find(c => c.id === modCommentId);
+    assert.ok(voterC, 'placeholder row should be present');
+    assert.equal(voterC.is_hidden, 1);
+    assert.equal(voterC.text, '');
+    assert.equal(voterC.author_name, '');
+
+    const supList = await req('GET', `/variants/${modVarId}/comments`, { cookie: modSupCookie });
+    const supC = supList.data.comments.find(c => c.id === modCommentId);
+    assert.equal(supC.text, 'A comment to moderate');
+});
+
+test('X9: POST /comments/:id/unhide — voter 403, supervisor 204, text restored', async () => {
+    const vetoed = await req('POST', `/comments/${modCommentId}/unhide`, { cookie: modVoterCookie });
+    assert.equal(vetoed.status, 403);
+    const r = await req('POST', `/comments/${modCommentId}/unhide`, { cookie: modSupCookie });
+    assert.equal(r.status, 204);
+    const list = await req('GET', `/variants/${modVarId}/comments`, { cookie: modVoterCookie });
+    const c = list.data.comments.find(cc => cc.id === modCommentId);
+    assert.equal(c.is_hidden, 0);
+    assert.equal(c.text, 'A comment to moderate');
+});
+
+test('X10: author delete — hidden_by NULL, gone from list, cannot be unhidden', async () => {
+    const dr = await req('DELETE', `/comments/${modCommentId}`, { cookie: modVoterCookie });
+    assert.equal(dr.status, 204);
+    const row = db.prepare('SELECT is_hidden, hidden_by FROM comments WHERE id = ?').get(modCommentId);
+    assert.equal(row.is_hidden, 1);
+    assert.equal(row.hidden_by, null);
+
+    const list = await req('GET', `/variants/${modVarId}/comments`, { cookie: modSupCookie });
+    assert.ok(!list.data.comments.some(c => c.id === modCommentId), 'author-deleted comment stays gone');
+
+    const ur = await req('POST', `/comments/${modCommentId}/unhide`, { cookie: modSupCookie });
+    assert.equal(ur.status, 422);
+
+    const modList = await req('GET', `/documents/${modDocId}/moderation`, { cookie: modSupCookie });
+    assert.ok(!modList.data.hidden_comments.some(c => c.id === modCommentId));
+});
+
+test('X11: admin delete of another user\'s comment — recorded as moderation hide', async () => {
+    const comR = await req('POST', `/variants/${modVarId}/comments`, {
+        body: { text: 'Second comment' }, cookie: modVoterCookie,
+    });
+    assert.equal(comR.status, 201);
+    const cid = comR.data.comment.id;
+
+    const dr = await req('DELETE', `/comments/${cid}`, { cookie: sessionCookie });
+    assert.equal(dr.status, 204);
+    const row = db.prepare('SELECT is_hidden, hidden_by FROM comments WHERE id = ?').get(cid);
+    assert.equal(row.is_hidden, 1);
+    assert.ok(row.hidden_by, 'admin delete should record hidden_by');
+
+    const modList = await req('GET', `/documents/${modDocId}/moderation`, { cookie: modSupCookie });
+    assert.ok(modList.data.hidden_comments.some(c => c.id === cid));
+
+    const ur = await req('POST', `/comments/${cid}/unhide`, { cookie: modSupCookie });
+    assert.equal(ur.status, 204);
+});
+
+test('X12: GET /api/users — non-superadmin → 403', async () => {
+    const r = await req('GET', '/users', { cookie: modSupCookie });
+    assert.equal(r.status, 403);
+});
+
+test('X13: superadmin lists users and toggles is_protected; search respects it', async () => {
+    db.prepare("UPDATE users SET role = 'superadmin' WHERE email = 'modsup@test.com'").run();
+
+    const listR = await req('GET', '/users', { cookie: modSupCookie });
+    assert.equal(listR.status, 200);
+    assert.ok(listR.data.users.some(u => u.id === modVoterId));
+
+    const pr = await req('PATCH', `/users/${modVoterId}/protection`, { body: { is_protected: 1 }, cookie: modSupCookie });
+    assert.equal(pr.status, 200);
+    assert.equal(pr.data.user.is_protected, 1);
+    const logRow = db.prepare("SELECT id FROM activity_log WHERE action = 'user_protected'").get();
+    assert.ok(logRow, 'user_protected activity should be logged');
+
+    const s1 = await req('GET', '/auth/search?q=modvoter', { cookie: sessionCookie });
+    assert.ok(!s1.data.users.some(u => u.id === modVoterId), 'protected user hidden from search');
+
+    const ur = await req('PATCH', `/users/${modVoterId}/protection`, { body: { is_protected: 0 }, cookie: modSupCookie });
+    assert.equal(ur.status, 200);
+    const s2 = await req('GET', '/auth/search?q=modvoter', { cookie: sessionCookie });
+    assert.ok(s2.data.users.some(u => u.id === modVoterId), 'unprotected user searchable again');
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

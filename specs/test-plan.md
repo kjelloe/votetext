@@ -339,6 +339,30 @@
 
 ---
 
+## Group X — Moderation (UC-18)
+
+> Supervisor+ can hide/unhide variants and comments; `comments.hidden_by`
+> distinguishes reversible moderator hides from permanent author deletes.
+> Superadmin manages `users.is_protected`. See `specs/use-cases.md` § UC-18.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| X1 | Setup: open doc, supervisor + voter invited, variant + voter comment created | 201s; sessions established |
+| X2 | POST `/variants/:id/hide` as voter | 403 |
+| X3 | POST `/variants/:id/hide` as supervisor | 200, `is_hidden = 1`, `variant_hidden` in activity_log |
+| X4 | GET `/variants/:id` on hidden variant | voter → 404; supervisor → 200 with `is_hidden = 1` |
+| X5 | GET `/documents/:id/variants` after hide | hidden variant absent from listing |
+| X6 | GET `/documents/:id/moderation` | voter → 403; supervisor → 200, lists hidden variant |
+| X7 | POST `/variants/:id/unhide` as supervisor | 200, `is_hidden = 0`; voter GET → 200 again; second unhide → 422 |
+| X8 | POST `/comments/:id/hide` — voter then supervisor; both re-fetch thread | voter → 403; supervisor → 204; voter sees placeholder (`is_hidden = 1`, empty text/author), supervisor sees full text |
+| X9 | POST `/comments/:id/unhide` — voter then supervisor | voter → 403; supervisor → 204; text restored for voter |
+| X10 | Author DELETE own comment, then supervisor unhide | 204; `hidden_by` NULL; gone from thread and moderation list; unhide → 422 |
+| X11 | Doc admin DELETE another user's comment | 204; `hidden_by` set; appears in moderation list; unhide → 204 |
+| X12 | GET `/api/users` as non-superadmin | 403 |
+| X13 | Superadmin lists users, toggles `is_protected` on/off | 200s; `user_protected` logged; protected user absent from `/auth/search`, searchable again after unprotect |
+
+---
+
 ## Group V — HMAC Session Signing
 
 > Session cookies carry `sessionId.hmac` where the HMAC-SHA256 signature (keyed by
@@ -385,6 +409,11 @@
 - `viewLogin`/`viewProfile` lazy route references (app boot was broken in real browsers)
 - "Mark as Resolved" on the resolved-text view now re-renders (identical-hash assignment fired no hashchange)
 - Vote retract: clicking your active vote button now retracts via `DELETE /vote` (previously the UI only re-cast; retraction was API-only)
+- App boot deferred to `DOMContentLoaded` — a fast `/auth/me` response could route before `auth.js`/`review.js` had executed (`viewResolvedText is not defined`)
+- Router navigations serialized through a promise queue — two fast successive hash changes ran view handlers concurrently and the stale one clobbered the new view's DOM mid-render
+
+> UC-18 moderation is covered at the API level (Group X); it maps to no user story, so it has no
+> Playwright spec — the UI flows are on the manual checklist below.
 
 ---
 
@@ -437,3 +466,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Resolved text on document page:** resolved/archived doc → "Resolved text" button appears in document viewer toolbar for owner
 - [ ] **Supervisor access modal:** invite a user as `supervisor` → they see Manage access button; modal is read-only (no Remove, no Default access selector); their invite dropdown caps at supervisor
 - [ ] **Supervisor voting cycle:** as supervisor: open → voting → review buttons work → resolve conflicts → final voting → record tallies → Mark as Resolved; archiving the resolved doc is refused (admin only)
+- [ ] **Hide proposal (UC-18):** as supervisor, open a proposal → Hide button in header → confirm → red "Hidden by moderator" banner; second browser (voter) no longer sees it in the sidebar and the direct link 404s; Unhide restores it
+- [ ] **Hide comment (UC-18):** as supervisor, Hide on another user's comment → voter sees "Comment hidden by moderator" placeholder (no text/author); supervisor sees original text + Unhide inline
+- [ ] **Moderation page (UC-18):** document sidebar → Moderation link (supervisor+ only) → hidden proposals and moderator-hidden comments listed with working Unhide buttons; author-deleted comments do NOT appear
+- [ ] **User protection (UC-18):** set a user's `role` to `superadmin` in the DB → log in → "Users" link appears in header menu → Protect a user → that user no longer appears in access-invite search; Unprotect restores them

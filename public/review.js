@@ -789,3 +789,99 @@ async function viewDocumentReview(docId) {
     await loadPage(1);
     renderReviewList();
 }
+
+/* ===== View: Moderation (supervisor+) ===== */
+async function viewModeration(docId) {
+    if (!state.user) { location.hash = '#/login'; return; }
+    const [docData, modData] = await Promise.all([
+        api('GET', `/documents/${docId}`),
+        api('GET', `/documents/${docId}/moderation`),
+    ]);
+    const doc = docData.document;
+    const hv = modData.hidden_variants || [];
+    const hc = modData.hidden_comments || [];
+
+    const rowStyle = 'display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.5rem 0;border-bottom:1px solid var(--color-border)';
+    const wrap = el('div', { class: 'page-container' });
+    wrap.innerHTML = `
+        <div class="flex justify-between items-center mb-2">
+            <h1>Moderation — ${esc(doc.title)}</h1>
+            <a href="#/documents/${esc(String(docId))}" class="btn btn-ghost btn-sm">← Document</a>
+        </div>
+        <div class="card mb-2">
+            <h2 class="mb-1">Hidden proposals</h2>
+            <div id="mod-variant-list">
+            ${hv.length ? hv.map(v => `
+                <div class="mod-row" style="${rowStyle}">
+                    <div><a href="#/variants/${esc(String(v.id))}">${esc(v.title || v.operation)}</a>
+                        <span class="text-muted"> — proposed by ${esc(v.proposer_name)}</span></div>
+                    <button class="btn btn-ghost btn-sm mod-unhide-variant" data-id="${esc(v.id)}">Unhide</button>
+                </div>`).join('') : '<p class="text-muted">No hidden proposals.</p>'}
+            </div>
+        </div>
+        <div class="card">
+            <h2 class="mb-1">Hidden comments</h2>
+            <div id="mod-comment-list">
+            ${hc.length ? hc.map(c => `
+                <div class="mod-row" style="${rowStyle}">
+                    <div>${esc(c.text)}
+                        <span class="text-muted"> — by ${esc(c.author_name)}, hidden by ${esc(c.hidden_by_name || '?')} ·
+                        <a href="#/variants/${esc(String(c.variant_id))}">proposal</a></span></div>
+                    <button class="btn btn-ghost btn-sm mod-unhide-comment" data-id="${esc(c.id)}">Unhide</button>
+                </div>`).join('') : '<p class="text-muted">No moderator-hidden comments.</p>'}
+            </div>
+        </div>
+    `;
+    setMain(wrap);
+
+    wrap.addEventListener('click', async e => {
+        const vBtn = e.target.closest('.mod-unhide-variant');
+        if (vBtn) {
+            try { await api('POST', `/variants/${vBtn.dataset.id}/unhide`); viewModeration(docId); } catch (err) { alert(err.message); }
+        }
+        const cBtn = e.target.closest('.mod-unhide-comment');
+        if (cBtn) {
+            try { await api('POST', `/comments/${cBtn.dataset.id}/unhide`); viewModeration(docId); } catch (err) { alert(err.message); }
+        }
+    });
+}
+
+/* ===== View: User administration (superadmin) ===== */
+async function viewUserAdmin() {
+    if (!state.user) { location.hash = '#/login'; return; }
+    if (state.user.role !== 'superadmin') {
+        setMain(`<div class="page-container"><div class="alert alert-error">Superadmin access required.</div></div>`);
+        return;
+    }
+    const data = await api('GET', '/users');
+    const users = data.users || [];
+
+    const rowStyle = 'display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.5rem 0;border-bottom:1px solid var(--color-border)';
+    const wrap = el('div', { class: 'page-container' });
+    wrap.innerHTML = `
+        <h1 class="mb-2">Users</h1>
+        <div class="card">
+            <p class="text-muted mb-2">Protected users are hidden from all user searches (e.g. access invites).</p>
+            ${users.map(u => `
+                <div class="user-admin-row" style="${rowStyle}">
+                    <div>
+                        <strong>${esc(u.display_name || u.email)}</strong>
+                        <span class="text-muted"> — ${esc(u.email)} · ${esc(u.role)}${u.is_protected ? ' · <em>protected</em>' : ''}${u.is_active ? '' : ' · <em>inactive</em>'}</span>
+                    </div>
+                    <button class="btn btn-ghost btn-sm protect-toggle-btn" data-id="${esc(u.id)}" data-val="${u.is_protected ? 0 : 1}">
+                        ${u.is_protected ? 'Unprotect' : 'Protect'}
+                    </button>
+                </div>`).join('')}
+        </div>
+    `;
+    setMain(wrap);
+
+    wrap.addEventListener('click', async e => {
+        const btn = e.target.closest('.protect-toggle-btn');
+        if (!btn) return;
+        try {
+            await api('PATCH', `/users/${btn.dataset.id}/protection`, { is_protected: parseInt(btn.dataset.val) });
+            viewUserAdmin();
+        } catch (err) { alert(err.message); }
+    });
+}

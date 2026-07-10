@@ -750,6 +750,58 @@ Supervisor may `POST /documents/:id/access` for users **without an existing acce
 
 ---
 
+## UC-18: Moderation dashboard
+
+**Status: implemented 2026-07-10. Pending manual validation.**
+
+**Actor:** A supervisor, editor, or document admin moderating content on a document; a superadmin managing user protection site-wide.
+
+**Entry point:** *Moderation* link in the document sidebar (next to *Manage access*, supervisor+ only); *Hide*/*Unhide* buttons inline on proposal pages and comment threads; *Users* link in the header user menu (superadmin only).
+
+**Preconditions:** Moderator has `supervisor` access or higher on the document (owner and superadmin always qualify). User protection management requires the site-level `superadmin` role.
+
+### Main flow — hide a proposal
+
+1. Moderator opens a proposal and clicks **Hide** in the header row, confirming the prompt.
+2. `POST /api/variants/:id/hide` sets `variants.is_hidden = 1` and logs `variant_hidden`.
+3. The proposal disappears from all listings and the resolved-text merge for regular participants; a direct link returns 404 for them (including anonymous share links).
+4. Supervisors still see the proposal, with a red *Hidden by moderator* banner and an **Unhide** button.
+5. The document's **Moderation** page lists it under *Hidden proposals* with an Unhide action (`POST /api/variants/:id/unhide`, logs `variant_unhidden`).
+
+### Main flow — hide a comment
+
+1. Moderator clicks **Hide** on another user's comment (button not shown on own comments — use Delete).
+2. `POST /api/comments/:id/hide` sets `is_hidden = 1` **and `hidden_by = <moderator id>`**, logs `comment_hidden`.
+3. Participants see a placeholder — *Comment hidden by moderator* — with text and author redacted server-side; replies stay attached. Supervisors see the original text inline plus an **Unhide** button.
+4. `POST /api/comments/:id/unhide` clears both flags and logs `comment_unhidden`.
+
+### Moderator hide vs author delete
+
+`comments.hidden_by` distinguishes the two states sharing `is_hidden`:
+
+| | `is_hidden` | `hidden_by` | Visible as | Reversible |
+|---|---|---|---|---|
+| Author delete (`DELETE /comments/:id` by author) | 1 | NULL | gone for everyone | no (422 on unhide) |
+| Moderator hide (`POST /hide`, or `DELETE` by doc admin/superadmin) | 1 | moderator's user id | placeholder; full text for supervisor+ | yes |
+
+A `DELETE` of someone else's comment by a doc admin is recorded as a moderation hide (`hidden_by` set, `comment_hidden` logged) so it appears on the Moderation page and can be reversed.
+
+### Moderation page
+
+`#/documents/:id/moderation` (view lives in `review.js`) renders `GET /api/documents/:id/moderation` (supervisor+): all hidden proposals and all moderator-hidden comments for the document, each with an Unhide button. Author-deleted comments are excluded — they are not moderation state.
+
+### User protection (superadmin)
+
+`#/admin/users` (nav link rendered only for `users.role = 'superadmin'`) lists all users via `GET /api/users`. **Protect**/**Unprotect** toggles `users.is_protected` via `PATCH /api/users/:id/protection`, logging `user_protected`/`user_unprotected`. Protected users are excluded from `GET /api/auth/search` (access invites), same as before — UC-18 only adds the setter. Granting the `superadmin` role itself remains a manual DB operation by design.
+
+### Schema and logging
+
+- `comments.hidden_by INTEGER REFERENCES users(id)` — added to `schema.sql` and `scripts/migrate.js` (idempotent `addColumnIfMissing`).
+- `activity_log.action` CHECK extended with `variant_hidden`, `variant_unhidden`, `comment_hidden`, `comment_unhidden`, `user_protected`, `user_unprotected` (third table-recreate block in `migrate.js`).
+- Every moderation mutation is logged via `logActivity`.
+
+---
+
 ## Planned / future use cases
 
-- **UC-18:** Moderation dashboard — hide/unhide variants (`variants.is_hidden` is filtered everywhere but has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected`.
+*(none currently — all specced use cases are implemented)*

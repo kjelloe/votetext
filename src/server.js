@@ -14,6 +14,7 @@ const documentsRoutes = require('./routes/documents');
 const variantsRoutes = require('./routes/variants');
 const commentsRoutes = require('./routes/comments');
 const activityRoutes = require('./routes/activity');
+const usersRoutes = require('./routes/users');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000');
@@ -36,6 +37,7 @@ app.use('/api/documents', documentsRoutes);
 app.use('/api/variants', variantsRoutes);
 app.use('/api/comments', commentsRoutes);
 app.use('/api/activity', activityRoutes);
+app.use('/api/users', usersRoutes);
 
 // SPA fallback
 app.get('*', (req, res) => {
