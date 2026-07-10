@@ -656,7 +656,7 @@ The **overall document vote** (`doc-vote`, PASSED/FAILED banner) intentionally s
 
 **Status: implemented (shipped 2026-06-22). Pending manual validation — see `specs/manual-validation.md`.**
 
-**Actor:** Proposer (open documents); editor/admin (voting/final_voting documents — supervisor once UC-19 lands)
+**Actor:** Proposer (open documents); supervisor/editor/admin (voting/final_voting documents)
 
 **Goal:** Create a new variant based on an existing one, e.g. an alternative wording of someone else's proposal.
 
@@ -667,13 +667,83 @@ The **overall document vote** (`doc-vote`, PASSED/FAILED banner) intentionally s
 3. Submitting calls `POST /api/variants/:id/fork` — creates the new variant, a `based_on` relation to the original, and logs `variant_proposed` with `forked_from`.
 4. The user is navigated to the new proposal's detail page.
 
-**Access:** proposer+ on `open` documents; editor/admin on `voting`/`final_voting` (the button is shown to any authenticated user in an eligible status — the backend enforces the level, 403 otherwise). Draft/resolved/archived documents → 422.
+**Access:** proposer+ on `open` documents; supervisor+ on `voting`/`final_voting` (the button is shown to any authenticated user in an eligible status — the backend enforces the level, 403 otherwise). Draft/resolved/archived documents → 422.
 
 **Tests:** Group U in `tests/api.test.js` (9 tests) — see `specs/test-plan.md`.
 
 ---
 
+## UC-19: Supervisor access role
+
+**Status: implemented (designed and shipped 2026-07-10). Pending manual validation.**
+
+**Actor:** A meeting chair or secretary who runs the voting process on a document they do not own.
+
+**Goal:** Delegate vote management (review, conflict resolution, tallies, phase transitions) without granting document-editing or full access-management rights.
+
+### Role placement
+
+`supervisor` sits between `voter` and `editor`:
+
+```
+viewer < commenter < proposer < voter < supervisor < editor < admin
+```
+
+A supervisor therefore inherits everything up to voter (view, comment, propose, vote).
+
+### Permission matrix
+
+| Capability | Today | With UC-19 |
+|------------|-------|------------|
+| View, comment, propose, vote | voter | inherited |
+| Fork variant on `voting`/`final_voting` doc (UC-16) | editor | **supervisor** |
+| `PATCH /variants/:id/review-status` | editor | **supervisor** |
+| `PATCH /variants/:id/conflict-order` | editor | **supervisor** |
+| `PATCH /variants/:id/final-vote` (tallies) | editor | **supervisor** |
+| `GET /variants/:id/final-vote-log` (audit trail) | editor | **supervisor** |
+| `PATCH /variants/:id/threshold` (per-proposal) | editor | **supervisor** |
+| `PATCH /documents/:id/doc-vote` (overall tally) | editor | **supervisor** |
+| `GET /documents/:id/resolved-text` | editor | **supervisor** |
+| Voting-cycle status transitions (see below) | admin | **supervisor** |
+| Invite new users up to own level (see below) | admin | **supervisor** |
+| `GET /documents/:id/access` (read-only list) | admin | **supervisor** |
+| `PATCH /documents/:id` (title/text/settings incl. doc default threshold) | editor | editor (unchanged) |
+| Change/block/remove existing access; grant supervisor+ | admin | admin (unchanged) |
+| Draft document visibility | editor | editor (unchanged) |
+| Delete, copy-data, draft→open, resolved→archived | admin/owner | admin/owner (unchanged) |
+
+### Status transitions — voting cycle only
+
+Supervisor may perform: `open → voting` (including scheduling a countdown and cancelling it), `voting → final_voting`, `final_voting → voting` (rollback), and `final_voting → resolved` (which stores the resolved text). All other transitions (`draft → open`, `open → draft`, `resolved → archived`) remain admin-only.
+
+Implementation: `POST /documents/:id/status` drops from `requireDocumentAccess('admin')` to `requireDocumentAccess('supervisor')` with an inline per-transition check — the supervisor-allowed set is `{open→voting, voting→final_voting, final_voting→voting, final_voting→resolved}` plus `cancel_schedule`; anything else requires `admin`.
+
+### Invites — new participants up to own level
+
+*(Revised 2026-07-10: owner decided supervisors may invite other supervisors.)*
+
+Supervisor may `POST /documents/:id/access` for users **without an existing access record**, at any level allowed by the existing invite-cap rule (inviter cannot grant above their own level — so up to `supervisor`). Because `POST /access` is an upsert, non-admins are blocked from POSTing for a user who already has an access record — upgrading, downgrading, blocking, or removing existing access remains admin-only (`PATCH`/`DELETE /access/:userId` unchanged). Supervisor gets read access to `GET /documents/:id/access` so the manage-access modal can render (with edit controls hidden).
+
+### Guard rails
+
+- `settings.default_access` must NOT accept `supervisor` (stays viewer–voter only) — validate in `PATCH /documents/:id`.
+- Draft filter in `GET /documents` (`access_level IN ('editor','admin')`) is unchanged — supervisors do not see drafts.
+- Index-based comparisons (`ACCESS_LEVELS.indexOf`) keep working since supervisor is inserted, not appended.
+
+### Implementation checklist
+
+1. **`schema.sql`** — add `'supervisor'` to the `user_document_access.access_level` CHECK constraint. ⚠ Requires table-recreate migration in `scripts/migrate.js` (PRAGMA foreign_keys OFF pattern), same as previous CHECK extensions.
+2. **`src/middleware/access.js`** — insert `'supervisor'` into `ACCESS_LEVELS` between `'voter'` and `'editor'`.
+3. **`src/routes/variants.js`** — change `'editor'` → `'supervisor'` in: fork voting-phase minLevel, `/threshold`, `/review-status`, `/conflict-order`, `/final-vote`, `/final-vote-log`.
+4. **`src/routes/documents.js`** — `/doc-vote` and `/resolved-text` → `'supervisor'`; `/status` → `'supervisor'` + inline transition check; `/access` GET → `'supervisor'`; `/access` POST → supervisor path with ≤ voter + new-users-only restriction; `default_access` validation excludes supervisor.
+5. **`public/app.js`** — invite modal role dropdown: add Supervisor (admin only can grant it); manage-access modal read-only mode for supervisors; Review button visibility already status-based.
+6. **`public/review.js`** — no guard changes expected (views rely on backend 403s), verify button visibility for supervisor.
+7. **Tests** — new Group W in `tests/api.test.js` + `specs/test-plan.md`: supervisor can do each granted action; cannot edit doc, cannot grant supervisor, cannot block/remove, cannot transition draft→open or resolved→archived, cannot see drafts; default_access rejects supervisor.
+8. **Docs** — ARCHITECTURE.md access hierarchy + CLAUDE.md hierarchy line + user-stories.md supervisor note.
+
+---
+
 ## Planned / future use cases
 
-- **UC-19:** Supervisor access role — a new per-document role between `voter` and `editor`. Grants proposer rights plus the ability to fork variants and manage the voting process during `voting`/`final_voting`, without full document-editing rights. Intended for a meeting chair or secretary who is not the document owner. Requires: adding `supervisor` to `ACCESS_LEVELS` in `access.js`, updating `checkDocAccess()`, updating conflict-resolution and final-voting view guards, and adding the role to the invite UI. **Design this before widening any voting-phase permissions beyond editor/admin.**
+- **UC-19:** Supervisor access role — designed, see full spec below. Moved out of this list 2026-07-10.
 - **UC-18:** Moderation dashboard — hide/unhide variants (`variants.is_hidden` is filtered everywhere but has no setter endpoint), hide comments as a moderation action distinct from author delete, and manage `users.is_protected`.

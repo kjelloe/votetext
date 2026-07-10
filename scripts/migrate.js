@@ -205,5 +205,35 @@ db.prepare('CREATE INDEX IF NOT EXISTS idx_fvl_variant ON final_vote_log (varian
 db.prepare('CREATE INDEX IF NOT EXISTS idx_fvl_user ON final_vote_log (user_id)').run();
 console.log('[done] Ensured final_vote_log table exists');
 
+// Recreate user_document_access to extend access_level CHECK constraint with 'supervisor'
+const udaSchemaRow = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_document_access'").get();
+if (udaSchemaRow && !udaSchemaRow.sql.includes('supervisor')) {
+    console.log('[migrating] Recreating user_document_access to extend access_level CHECK constraint…');
+    db.pragma('foreign_keys = OFF');
+    db.exec(`
+        CREATE TABLE user_document_access_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER NOT NULL REFERENCES users (id)     ON DELETE CASCADE,
+            document_id     INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
+            access_level    TEXT    NOT NULL DEFAULT 'viewer'
+                                    CHECK (access_level IN ('viewer', 'commenter', 'proposer', 'voter', 'supervisor', 'editor', 'admin')),
+            blocked         INTEGER NOT NULL DEFAULT 0,
+            invited_by      INTEGER          REFERENCES users (id) ON DELETE SET NULL,
+            created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            UNIQUE (user_id, document_id)
+        );
+        INSERT INTO user_document_access_new SELECT * FROM user_document_access;
+        DROP TABLE user_document_access;
+        ALTER TABLE user_document_access_new RENAME TO user_document_access;
+        CREATE INDEX idx_uda_user     ON user_document_access (user_id);
+        CREATE INDEX idx_uda_document ON user_document_access (document_id);
+    `);
+    db.pragma('foreign_keys = ON');
+    console.log('[done] Recreated user_document_access with supervisor access level');
+} else {
+    console.log('[skip] user_document_access supervisor already present');
+}
+
 db.close();
 console.log('Migration complete.');

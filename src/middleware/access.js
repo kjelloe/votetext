@@ -2,7 +2,7 @@
 
 const { getOne } = require('../db');
 
-const ACCESS_LEVELS = ['viewer', 'commenter', 'proposer', 'voter', 'editor', 'admin'];
+const ACCESS_LEVELS = ['viewer', 'commenter', 'proposer', 'voter', 'supervisor', 'editor', 'admin'];
 
 function requireDocumentAccess(minLevel) {
     return (req, res, next) => {

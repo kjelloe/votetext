@@ -274,6 +274,9 @@ CREATE INDEX idx_comments_parent  ON comments (parent_comment_id);
 --   • 'commenter'   – viewer + can comment
 --   • 'proposer'    – commenter + can propose variants
 --   • 'voter'       – proposer + can vote
+--   • 'supervisor'  – voter + manages the voting process (review, conflicts,
+--                     tallies, voting-cycle status transitions, invites up to
+--                     own level) without document-editing rights
 --   • 'editor'      – voter + can edit document text
 --   • 'admin'       – full control (co-owner)
 CREATE TABLE IF NOT EXISTS user_document_access (
@@ -282,7 +285,7 @@ CREATE TABLE IF NOT EXISTS user_document_access (
     document_id     INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
 
     access_level    TEXT    NOT NULL DEFAULT 'viewer'
-                            CHECK (access_level IN ('viewer', 'commenter', 'proposer', 'voter', 'editor', 'admin')),
+                            CHECK (access_level IN ('viewer', 'commenter', 'proposer', 'voter', 'supervisor', 'editor', 'admin')),
     blocked         INTEGER NOT NULL DEFAULT 0,   -- 1 = explicitly blocked from this document
 
     invited_by      INTEGER          REFERENCES users (id) ON DELETE SET NULL,

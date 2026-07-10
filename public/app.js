@@ -500,7 +500,7 @@ async function viewDocument(docId) {
             <p class="text-muted mb-1">${esc(doc.description) || '<em>No description</em>'}</p>
             <p class="text-muted">Owner: <span class="author-tip" title="${esc([doc.owner_name, doc.owner_organization].filter(Boolean).join(' · '))}">${esc(doc.owner_name)}</span></p>
             <p class="text-muted">${doc.total_lines} lines · ${doc.total_pages} pages</p>
-            ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm mt-2" id="access-btn">Manage access</button>` : ''}
+            ${['supervisor', 'editor', 'admin'].includes(doc.my_access_level) ? `<button class="btn btn-ghost btn-sm mt-2" id="access-btn">Manage access</button>` : ''}
         </div>
     `;
 
@@ -973,14 +973,18 @@ function openAccessModal(docId) {
 
     api('GET', `/documents/${docId}/access`).then(data => {
         const rows = data.access || [];
-        const allLevels = ['viewer', 'commenter', 'proposer', 'voter', 'editor', 'admin'];
+        const allLevels = ['viewer', 'commenter', 'proposer', 'voter', 'supervisor', 'editor', 'admin'];
         const defaultAccessLevels = ['viewer', 'commenter', 'proposer', 'voter'];
-        const myIdx = allLevels.indexOf(data.my_access_level || 'admin');
+        const myLevel = data.my_access_level || 'admin';
+        const myIdx = allLevels.indexOf(myLevel);
+        const isAdmin = myLevel === 'admin';
+        const canEditSettings = ['editor', 'admin'].includes(myLevel);
         const allowedLevels = allLevels.filter((_, i) => i <= myIdx);
         const defaultLevel = allowedLevels.includes('proposer') ? 'proposer' : allowedLevels[allowedLevels.length - 1];
         const currentDefault = data.default_access || '';
         document.getElementById('modal-content').innerHTML = `
             <div class="modal-title">Manage access</div>
+            ${canEditSettings ? `
             <p class="mb-1" style="font-weight:600">Default access</p>
             <div class="flex items-center gap-1 mb-1">
                 <select id="default-access-select" class="invite-role-select">
@@ -990,12 +994,12 @@ function openAccessModal(docId) {
                 <span class="text-muted" style="font-size:0.8rem">Role granted to any signed-in user not explicitly invited</span>
             </div>
             <p id="default-access-status" style="font-size:0.75rem;min-height:1rem;margin-bottom:0.5rem"></p>
-            <hr style="margin:0.75rem 0;border:none;border-top:1px solid var(--color-border)">
+            <hr style="margin:0.75rem 0;border:none;border-top:1px solid var(--color-border)">` : ''}
             <div class="mb-2">${rows.map(r => `
                 <div class="flex items-center justify-between gap-1 mb-1">
                     <span>${esc(r.email)}</span>
                     <span class="text-muted">${esc(r.access_level)}</span>
-                    <span class="row-actions"><button class="btn btn-ghost btn-sm" data-remove="${esc(r.user_id)}">Remove</button></span>
+                    ${isAdmin ? `<span class="row-actions"><button class="btn btn-ghost btn-sm" data-remove="${esc(r.user_id)}">Remove</button></span>` : ''}
                 </div>`).join('') || '<p class="text-muted">No explicit access records.</p>'}
             </div>
             <hr style="margin:1rem 0;border:none;border-top:1px solid var(--color-border)">
@@ -1014,7 +1018,8 @@ function openAccessModal(docId) {
             <button id="invite-submit" class="btn btn-primary btn-sm">Invite</button>
         `;
 
-        document.getElementById('default-access-select').addEventListener('change', async e => {
+        const defaultAccessSelect = document.getElementById('default-access-select');
+        if (defaultAccessSelect) defaultAccessSelect.addEventListener('change', async e => {
             const statusEl = document.getElementById('default-access-status');
             const val = e.target.value;
             statusEl.textContent = 'Saving…'; statusEl.style.color = '';

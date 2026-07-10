@@ -103,10 +103,10 @@ location.hash = '#/documents/5';
 ## Access control hierarchy
 
 ```
-viewer < commenter < proposer < voter < editor < admin
+viewer < commenter < proposer < voter < supervisor < editor < admin
 ```
 
-Owner of a document always has `admin`. Check `requireDocumentAccess('proposer')` etc. as route middleware.
+Owner of a document always has `admin`. Check `requireDocumentAccess('proposer')` etc. as route middleware. `supervisor` manages the voting process (review, conflicts, tallies, voting-cycle status transitions, new invites up to own level) but cannot edit the document, see drafts, or modify existing access records — see ARCHITECTURE.md § Access Control.
 
 Variant sub-routes (`/vote`, `/comments`, `/relations`) cannot use the middleware directly because the document ID is derived from the variant, not the URL. They use `checkDocAccess(doc, req, minLevel)` in `variants.js` instead — pass `'commenter'` for POST /comments, `'voter'` for POST /vote, omit `minLevel` for reads. `ACCESS_LEVELS` is imported from `middleware/access.js`.
 

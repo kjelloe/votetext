@@ -312,6 +312,33 @@
 
 ---
 
+## Group W — Supervisor Role (UC-19)
+
+> `supervisor` sits between `voter` and `editor`. Manages the voting process
+> (review, conflicts, tallies, voting-cycle transitions, invites up to own level)
+> without document-editing rights. See `specs/use-cases.md` § UC-19.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| W1 | Setup: draft doc, invite supervisor, supervisor GET draft doc | 403 (draft stays editor+) |
+| W2 | GET `/documents/:id` as supervisor | 200, `my_access_level = 'supervisor'` |
+| W3 | PATCH `/documents/:id` (edit title) as supervisor | 403 |
+| W4 | POST `/access` — supervisor invites new user at `supervisor` | 201 (cap allows own level) |
+| W5 | POST `/access` — supervisor grants `editor` | 403 (above own level) |
+| W6 | POST `/access` — supervisor re-invites user with existing record | 403 (upsert = modification, admin only) |
+| W7 | PATCH/DELETE `/access/:userId` as supervisor | 403 both; GET `/access` → 200 |
+| W8 | POST `/status` open→voting as supervisor | 200 |
+| W9 | review-status + conflict-order as supervisor | 200 both |
+| W10 | Fork during voting as supervisor | 201 |
+| W11 | PATCH `/variants/:id/threshold` as supervisor | 200 |
+| W12 | POST `/status` voting→final_voting as supervisor | 200 |
+| W13 | final-vote, final-vote-log, doc-vote, resolved-text as supervisor | 200 all |
+| W14 | POST `/status` final_voting→resolved as supervisor | 200 |
+| W15 | POST `/status` resolved→archived as supervisor | 403 (admin only) |
+| W16 | PATCH `/documents/:id` `settings.default_access = 'supervisor'` | 400 (default_access capped at voter) |
+
+---
+
 ## Group V — HMAC Session Signing
 
 > Session cookies carry `sessionId.hmac` where the HMAC-SHA256 signature (keyed by

@@ -5,7 +5,7 @@ These stories describe the main user flows as experienced from the browser. They
 1. **Playwright test spec** — each numbered step maps directly to a UI interaction or assertion.
 2. **Tutorial script** — read these in sequence as the narration for a walkthrough video.
 
-The stories assume a document has already been created and is in **Open** status, with at least one invited participant. Supervisor actions use editor/admin access (a dedicated supervisor role is planned for a future release).
+The stories assume a document has already been created and is in **Open** status, with at least one invited participant. Supervisor actions use the `supervisor` access role (UC-19) — editor/admin also qualify.
 
 ---
 

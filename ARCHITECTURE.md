@@ -161,7 +161,7 @@ OTP codes are rate-limited at 5 per email per 15 minutes using an in-memory Map 
 ### Document access levels (ordered, lowest to highest)
 
 ```
-viewer < commenter < proposer < voter < editor < admin
+viewer < commenter < proposer < voter < supervisor < editor < admin
 ```
 
 Each level includes all permissions of lower levels:
@@ -169,8 +169,11 @@ Each level includes all permissions of lower levels:
 - **commenter** — viewer + post comments
 - **proposer** — commenter + propose variants
 - **voter** — proposer + cast/change votes
-- **editor** — voter + edit document metadata
+- **supervisor** — voter + manage the voting process: review-status, conflict-order, per-proposal thresholds, final-vote tallies + audit log, doc-vote, resolved-text, fork during voting phases, voting-cycle status transitions (open→voting incl. scheduling, voting↔final_voting, final_voting→resolved), and inviting **new** users up to own level. Cannot edit the document, see drafts, modify existing access records, or perform draft/archive transitions.
+- **editor** — supervisor + edit document metadata and settings
 - **admin** — full control (co-owner), manage access list
+
+`POST /documents/:id/status` is gated at `supervisor` with an inline per-transition check (`SUPERVISOR_TRANSITIONS` in `documents.js`): non-admins get only the voting-cycle set; everything else returns 403. `POST /access` is an upsert — non-admins are rejected when the target user already has an access record, so supervisors can only create new invites (level capped at their own by the invite-cap rule).
 
 ### Decision rules (in `src/middleware/access.js`)
 

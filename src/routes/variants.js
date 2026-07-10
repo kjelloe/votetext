@@ -79,9 +79,9 @@ router.post('/:id/fork', requireAuth, (req, res, next) => {
         if (!['open', 'voting', 'final_voting'].includes(doc.status)) {
             return res.status(422).json({ error: 'Forking is only allowed on open, voting, or final_voting documents' });
         }
-        const minLevel = ['voting', 'final_voting'].includes(doc.status) ? 'editor' : 'proposer';
+        const minLevel = ['voting', 'final_voting'].includes(doc.status) ? 'supervisor' : 'proposer';
         if (!checkDocAccess(doc, req, minLevel)) {
-            return res.status(403).json({ error: ['voting', 'final_voting'].includes(doc.status) ? 'Editor or admin access required during voting' : 'Proposer access required' });
+            return res.status(403).json({ error: ['voting', 'final_voting'].includes(doc.status) ? 'Supervisor access required during voting' : 'Proposer access required' });
         }
         const { title, new_text, rationale } = req.body;
         const newTitle = (title && title.trim()) || `Your variant of ${original.title || original.operation}`;
@@ -105,14 +105,14 @@ router.post('/:id/fork', requireAuth, (req, res, next) => {
     } catch (err) { next(err); }
 });
 
-// PATCH /api/variants/:id/threshold  (editor/admin; doc must be voting or final_voting)
+// PATCH /api/variants/:id/threshold  (supervisor+; doc must be voting or final_voting)
 router.patch('/:id/threshold', requireAuth, (req, res, next) => {
     try {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
         const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
-        if (!checkDocAccess(doc, req, 'editor')) return res.status(403).json({ error: 'Editor or admin access required' });
+        if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
         if (!['voting', 'final_voting'].includes(doc.status)) {
             return res.status(422).json({ error: 'Document must be in voting or final_voting status' });
         }
@@ -192,7 +192,7 @@ router.patch('/:id/review-status', requireAuth, (req, res, next) => {
             const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
             if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
             const userIdx = ACCESS_LEVELS.indexOf(access.access_level);
-            if (userIdx < ACCESS_LEVELS.indexOf('editor')) return res.status(403).json({ error: 'Editor or admin access required' });
+            if (userIdx < ACCESS_LEVELS.indexOf('supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
         }
 
         // Clear conflict ordering when removing a proposal from the vote
@@ -223,8 +223,8 @@ router.patch('/:id/conflict-order', requireAuth, (req, res, next) => {
         if (!isOwner) {
             const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
             if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
-            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('editor')) {
-                return res.status(403).json({ error: 'Editor or admin access required' });
+            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('supervisor')) {
+                return res.status(403).json({ error: 'Supervisor access required' });
             }
         }
 
@@ -271,8 +271,8 @@ router.patch('/:id/final-vote', requireAuth, (req, res, next) => {
         if (!isOwner) {
             const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
             if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
-            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('editor')) {
-                return res.status(403).json({ error: 'Editor or admin access required' });
+            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('supervisor')) {
+                return res.status(403).json({ error: 'Supervisor access required' });
             }
         }
 
@@ -306,7 +306,7 @@ router.get('/:id/final-vote-log', requireAuth, (req, res, next) => {
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
         const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
-        if (!checkDocAccess(doc, req, 'editor')) return res.status(403).json({ error: 'Editor or admin access required' });
+        if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
         const logs = getAll(
             'SELECT l.*, u.display_name as user_name FROM final_vote_log l JOIN users u ON u.id = l.user_id WHERE l.variant_id = ? ORDER BY l.recorded_at',
             [variant.id]

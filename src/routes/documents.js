@@ -187,9 +187,11 @@ router.get('/:id', (req, res, next) => {
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
 
         const userId = req.user ? req.user.id : null;
+        let myAccessLevel = null;
 
         if (!userId) {
             if (!settings.allow_anonymous_view || doc.status === 'draft') return res.status(403).json({ error: 'Access denied' });
+            myAccessLevel = 'viewer';
         } else if (doc.owner_id !== userId) {
             const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [userId, doc.id]);
             if (access && access.blocked) return res.status(403).json({ error: 'Access denied' });
@@ -197,9 +199,12 @@ router.get('/:id', (req, res, next) => {
             if (doc.status === 'draft' && (!access || ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('editor'))) {
                 return res.status(403).json({ error: 'Access denied' });
             }
+            myAccessLevel = access ? access.access_level : settings.default_access;
+        } else {
+            myAccessLevel = 'admin';
         }
 
-        res.json({ document: { ...doc, settings } });
+        res.json({ document: { ...doc, settings, my_access_level: myAccessLevel } });
     } catch (err) {
         next(err);
     }
@@ -220,6 +225,10 @@ router.patch('/:id', requireAuth, requireDocumentAccess('editor'), (req, res, ne
             return res.status(400).json({ error: 'Invalid majority_threshold. Use simple, absolute, two_thirds, or three_quarters.' });
         }
 
+        if (newSettings.default_access != null && !['viewer', 'commenter', 'proposer', 'voter'].includes(newSettings.default_access)) {
+            return res.status(400).json({ error: 'default_access must be viewer, commenter, proposer, or voter' });
+        }
+
         run(
             "UPDATE documents SET title = ?, description = ?, settings = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
             [
@@ -238,10 +247,21 @@ router.patch('/:id', requireAuth, requireDocumentAccess('editor'), (req, res, ne
 });
 
 // POST /api/documents/:id/status
-router.post('/:id/status', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
+// Supervisor may perform the voting-cycle transitions (and schedule/cancel); everything else needs admin
+const SUPERVISOR_TRANSITIONS = { open: ['voting'], voting: ['final_voting'], final_voting: ['voting', 'resolved'] };
+router.post('/:id/status', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
     try {
         const { status, countdown_minutes, cancel_schedule } = req.body;
         const doc = req.document;
+
+        if (req.userAccessLevel !== 'admin') {
+            const supervisorAllowed = cancel_schedule
+                ? doc.status === 'open'
+                : (SUPERVISOR_TRANSITIONS[doc.status] || []).includes(status);
+            if (!supervisorAllowed) {
+                return res.status(403).json({ error: 'Admin access required for this transition' });
+            }
+        }
 
         const fullDoc = () => getOne(
             'SELECT d.*, u.display_name as owner_name, u.organization as owner_organization FROM documents d JOIN users u ON u.id = d.owner_id WHERE d.id = ?',
@@ -330,7 +350,7 @@ router.get('/:id/text', (req, res, next) => {
 });
 
 // GET /api/documents/:id/resolved-text
-router.get('/:id/resolved-text', requireAuth, requireDocumentAccess('editor'), (req, res, next) => {
+router.get('/:id/resolved-text', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
     try {
         const doc = req.document;
         if (!['final_voting', 'resolved', 'archived'].includes(doc.status)) {
@@ -536,7 +556,7 @@ router.get('/:id/activity', requireAuth, requireDocumentAccess('viewer'), (req, 
 });
 
 // GET /api/documents/:id/access
-router.get('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
+router.get('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
     try {
         const entries = getAll(
             'SELECT uda.*, u.email, u.display_name, u.organization FROM user_document_access uda JOIN users u ON u.id = uda.user_id WHERE uda.document_id = ? ORDER BY uda.created_at',
@@ -549,7 +569,8 @@ router.get('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, res
 });
 
 // POST /api/documents/:id/access
-router.post('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
+// Supervisor+ can invite; only admin may modify an existing access record (POST is an upsert)
+router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
     try {
         const { email, access_level } = req.body;
         if (!email) return res.status(400).json({ error: 'Email required' });
@@ -561,6 +582,10 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, re
         const normalizedEmail = email.trim().toLowerCase();
         let user = getOne('SELECT * FROM users WHERE email = ?', [normalizedEmail]);
         const isNewUser = !user;
+        if (user && req.userAccessLevel !== 'admin') {
+            const existing = getOne('SELECT id FROM user_document_access WHERE user_id = ? AND document_id = ?', [user.id, req.params.id]);
+            if (existing) return res.status(403).json({ error: 'Admin access required to change existing access' });
+        }
         if (!user) {
             const r = run('INSERT INTO users (email, display_name) VALUES (?, ?)', [normalizedEmail, normalizedEmail.split('@')[0]]);
             user = getOne('SELECT * FROM users WHERE id = ?', [r.lastInsertRowid]);
@@ -618,7 +643,7 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('admin'), (req, re
 router.patch('/:id/access/:userId', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
     try {
         const { access_level, blocked } = req.body;
-        const validLevels = ['viewer', 'commenter', 'proposer', 'voter', 'editor', 'admin'];
+        const validLevels = ACCESS_LEVELS;
         if (access_level && !validLevels.includes(access_level)) return res.status(400).json({ error: 'Invalid access level' });
 
         const existing = getOne('SELECT * FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.params.userId, req.params.id]);
@@ -639,7 +664,7 @@ router.patch('/:id/access/:userId', requireAuth, requireDocumentAccess('admin'),
 });
 
 // PATCH /api/documents/:id/doc-vote  (editor/admin only; doc must be in 'final_voting')
-router.patch('/:id/doc-vote', requireAuth, requireDocumentAccess('editor'), (req, res, next) => {
+router.patch('/:id/doc-vote', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
     try {
         const doc = req.document;
         if (doc.status !== 'final_voting') return res.status(422).json({ error: 'Document must be in final_voting status' });

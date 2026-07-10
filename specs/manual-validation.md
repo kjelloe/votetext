@@ -42,6 +42,17 @@ The app was unbootable in real browsers between the app.js split and 2026-07-09
 - [ ] Export CSV has a Threshold column; Print HTML shows "Threshold: X" per proposal
 - [ ] Resolve a doc where a ⅔ proposal has yes ≤ ⅔ of total → proposal ends `rejected`
 
+## UC-19 — Supervisor role
+
+Invite a test user as `supervisor` on a doc you own, log in as them in a second browser.
+
+- [ ] Supervisor sees **Manage access** button; modal shows the access list read-only (no Remove buttons, no Default access selector) with an invite form capped at supervisor
+- [ ] Supervisor invites a new user at `supervisor` → appears in list; re-inviting an existing user → error toast (admin required)
+- [ ] Supervisor moves doc open → voting; runs Review (status buttons work), Resolve conflicts, transitions to final voting
+- [ ] Supervisor records tallies, changes a per-proposal threshold, fills overall doc vote, views resolved text, clicks Mark as Resolved → doc resolves
+- [ ] Supervisor can NOT: edit document settings (settings modal hidden/403), see a draft doc, archive a resolved doc
+- [ ] Voter-level user still gets 403 on all of the above
+
 ---
 
 ## Sign-off
@@ -52,3 +63,4 @@ The app was unbootable in real browsers between the app.js split and 2026-07-09
 | UC-15 | | | |
 | UC-16 | | | |
 | UC-17 | | | |
+| UC-19 | | | |

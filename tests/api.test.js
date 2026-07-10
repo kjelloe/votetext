@@ -1831,6 +1831,155 @@ test('U9: POST /variants/:id/fork — doc in voting → editor (owner) can fork 
     assert.equal(r.data.variant.title, 'Voting-phase fork');
 });
 
+// ── GROUP W: SUPERVISOR ROLE (UC-19) ─────────────────────────────────────────
+
+let supCookie = '';   // supervisor user session
+let supDocId;
+let supVarId;
+
+test('W1: setup — draft doc + supervisor invite; supervisor cannot see draft', async () => {
+    const docR = await req('POST', '/documents', {
+        body: { title: 'Supervisor test doc', text: 'First line of text.\nSecond line here.\nThird line ends.' },
+        cookie: sessionCookie,
+    });
+    assert.equal(docR.status, 201);
+    supDocId = docR.data.document.id;
+
+    const invR = await req('POST', `/documents/${supDocId}/access`, {
+        body: { email: 'sup@test.com', access_level: 'supervisor' },
+        cookie: sessionCookie,
+    });
+    assert.equal(invR.status, 201);
+
+    await req('POST', '/auth/request-otp', { body: { email: 'sup@test.com' } });
+    const otp = latestOtp('sup@test.com');
+    const loginR = await req('POST', '/auth/verify-otp', { body: { email: 'sup@test.com', code: otp.code } });
+    assert.ok(loginR.sessionId);
+    supCookie = `session_id=${loginR.sessionId}`;
+
+    // Draft visibility stays editor+ — supervisor blocked
+    const draftR = await req('GET', `/documents/${supDocId}`, { cookie: supCookie });
+    assert.equal(draftR.status, 403);
+
+    await req('POST', `/documents/${supDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const varR = await req('POST', `/documents/${supDocId}/variants`, {
+        body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'Best', title: 'Sup var', rationale: 'r' },
+        cookie: sessionCookie,
+    });
+    assert.equal(varR.status, 201);
+    supVarId = varR.data.variant.id;
+});
+
+test('W2: GET /documents/:id — supervisor sees my_access_level', async () => {
+    const r = await req('GET', `/documents/${supDocId}`, { cookie: supCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.my_access_level, 'supervisor');
+});
+
+test('W3: PATCH /documents/:id — supervisor cannot edit document → 403', async () => {
+    const r = await req('PATCH', `/documents/${supDocId}`, { body: { title: 'Hijacked' }, cookie: supCookie });
+    assert.equal(r.status, 403);
+});
+
+test('W4: POST /access — supervisor invites new user at supervisor level → 201', async () => {
+    const r = await req('POST', `/documents/${supDocId}/access`, {
+        body: { email: 'sup-invitee@test.com', access_level: 'supervisor' },
+        cookie: supCookie,
+    });
+    assert.equal(r.status, 201);
+});
+
+test('W5: POST /access — supervisor cannot grant editor (above own level) → 403', async () => {
+    const r = await req('POST', `/documents/${supDocId}/access`, {
+        body: { email: 'sup-editor@test.com', access_level: 'editor' },
+        cookie: supCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
+test('W6: POST /access — supervisor cannot change existing access record → 403', async () => {
+    const r = await req('POST', `/documents/${supDocId}/access`, {
+        body: { email: 'sup-invitee@test.com', access_level: 'viewer' },
+        cookie: supCookie,
+    });
+    assert.equal(r.status, 403);
+});
+
+test('W7: PATCH/DELETE /access/:userId — supervisor blocked → 403', async () => {
+    const list = await req('GET', `/documents/${supDocId}/access`, { cookie: supCookie });
+    assert.equal(list.status, 200);
+    assert.equal(list.data.my_access_level, 'supervisor');
+    const target = list.data.access.find(a => a.email === 'sup-invitee@test.com');
+    assert.ok(target);
+    const pR = await req('PATCH', `/documents/${supDocId}/access/${target.user_id}`, { body: { blocked: true }, cookie: supCookie });
+    assert.equal(pR.status, 403);
+    const dR = await req('DELETE', `/documents/${supDocId}/access/${target.user_id}`, { cookie: supCookie });
+    assert.equal(dR.status, 403);
+});
+
+test('W8: POST /status — supervisor open → voting → 200', async () => {
+    const r = await req('POST', `/documents/${supDocId}/status`, { body: { status: 'voting' }, cookie: supCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'voting');
+});
+
+test('W9: supervisor review-status + conflict-order → 200', async () => {
+    const rs = await req('PATCH', `/variants/${supVarId}/review-status`, { body: { status: 'pending' }, cookie: supCookie });
+    assert.equal(rs.status, 200);
+    const co = await req('PATCH', `/variants/${supVarId}/conflict-order`, { body: { vote_order: 1 }, cookie: supCookie });
+    assert.equal(co.status, 200);
+});
+
+test('W10: supervisor fork during voting → 201', async () => {
+    const r = await req('POST', `/variants/${supVarId}/fork`, {
+        body: { title: 'Sup fork', rationale: 'clarify' },
+        cookie: supCookie,
+    });
+    assert.equal(r.status, 201);
+});
+
+test('W11: supervisor sets per-proposal threshold → 200', async () => {
+    const r = await req('PATCH', `/variants/${supVarId}/threshold`, { body: { majority_threshold: 'two_thirds' }, cookie: supCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.variant.majority_threshold, 'two_thirds');
+});
+
+test('W12: supervisor voting → final_voting → 200', async () => {
+    const r = await req('POST', `/documents/${supDocId}/status`, { body: { status: 'final_voting' }, cookie: supCookie });
+    assert.equal(r.status, 200);
+});
+
+test('W13: supervisor tallies, audit log, doc-vote, resolved-text → 200', async () => {
+    const fv = await req('PATCH', `/variants/${supVarId}/final-vote`, { body: { yes: 8, no: 1, abstain: 0 }, cookie: supCookie });
+    assert.equal(fv.status, 200);
+    const log = await req('GET', `/variants/${supVarId}/final-vote-log`, { cookie: supCookie });
+    assert.equal(log.status, 200);
+    assert.ok(log.data.logs.length >= 1);
+    const dv = await req('PATCH', `/documents/${supDocId}/doc-vote`, { body: { yes: 10, no: 2, abstain: 1 }, cookie: supCookie });
+    assert.equal(dv.status, 200);
+    const rt = await req('GET', `/documents/${supDocId}/resolved-text`, { cookie: supCookie });
+    assert.equal(rt.status, 200);
+});
+
+test('W14: supervisor final_voting → resolved → 200', async () => {
+    const r = await req('POST', `/documents/${supDocId}/status`, { body: { status: 'resolved' }, cookie: supCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.document.status, 'resolved');
+});
+
+test('W15: supervisor resolved → archived → 403 (admin only)', async () => {
+    const r = await req('POST', `/documents/${supDocId}/status`, { body: { status: 'archived' }, cookie: supCookie });
+    assert.equal(r.status, 403);
+});
+
+test('W16: PATCH /documents/:id — default_access rejects supervisor → 400', async () => {
+    const r = await req('PATCH', `/documents/${supDocId}`, {
+        body: { settings: { default_access: 'supervisor' } },
+        cookie: sessionCookie,
+    });
+    assert.equal(r.status, 400);
+});
+
 // ── GROUP V: HMAC SESSION SIGNING ────────────────────────────────────────────
 
 test('V1: GET /auth/me — signed session cookie → 200', async () => {
