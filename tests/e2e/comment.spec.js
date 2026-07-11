@@ -1,9 +1,8 @@
 'use strict';
 
 // US-3 — Read and comment on a proposal.
-// Note: the story's step 7 (edit a comment within the edit window) has no UI —
-// the API supports PATCH /comments/:id but no edit button is rendered.
-// Covered here: post, reply (indented), delete own comment.
+// Covered here: post, reply (indented), edit own comment within the window
+// (UC-20 — edited marker asserted), delete own comment.
 
 const { test, expect } = require('@playwright/test');
 const path = require('path');
@@ -35,6 +34,18 @@ test('reply to a comment — appears indented beneath it', async ({ page }) => {
     await comment.locator('textarea').fill('An indented reply');
     await comment.locator('.post-reply-btn').click();
     await expect(comment.locator('.comment-replies .reply', { hasText: 'An indented reply' })).toBeVisible();
+});
+
+test('edit own comment — text updates and the edited marker appears (UC-20)', async ({ page }) => {
+    await page.goto(`/#/variants/${varId}`);
+    const comment = page.locator('.comment', { hasText: 'First e2e comment' });
+    await comment.locator('.comment-actions').first().locator('.edit-comment-btn').click();
+    const form = comment.locator('[id^="edit-form-"]').first();
+    await form.locator('textarea').fill('First e2e comment, now edited');
+    await form.locator('.save-edit-comment-btn').click();
+    const edited = page.locator('.comment', { hasText: 'First e2e comment, now edited' });
+    await expect(edited).toBeVisible();
+    await expect(edited.locator('.comment-time').first()).toContainText('edited');
 });
 
 test('delete own reply — removed from the thread', async ({ page }) => {

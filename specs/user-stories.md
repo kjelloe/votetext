@@ -62,7 +62,7 @@ The stories assume a document has already been created and is in **Open** status
 4. User scrolls to the **Comments** section and types a comment in the text field.
 5. User clicks **Post comment**. The comment appears immediately, showing their display name and "just now".
 6. Another user sees the comment and clicks **Reply**. Their reply appears indented beneath the original comment.
-7. *(Not yet in the UI)* Within the edit window (default 30 minutes), the original commenter can update their comment. The API supports this (`PATCH /api/comments/:id`) but no edit button is rendered yet — commenters currently delete and repost instead. Candidate UI addition.
+7. Within the edit window (default 30 minutes), the original commenter clicks **Edit**, adjusts the wording inline, and saves. The comment now shows an "edited" marker with the time. If the edit changes the meaning, replies to that comment get a fresh window to be adjusted or deleted, and show a "parent comment was edited" hint (UC-20).
 
 ---
 

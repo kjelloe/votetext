@@ -404,6 +404,26 @@
 
 ---
 
+## Group Z — Comment Editing (UC-20)
+
+> Authors edit within the 30-min window; editing a comment reopens the window for
+> its direct replies (grace). `edited_at` is set only by author edits, never by
+> moderation. Previous text is snapshotted into the activity log, not the payload.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| Z1 | Setup: open doc, voter comment, owner reply | 201s |
+| Z2 | PATCH own comment within window | 200; `edited_at` set; `comment_updated` logged with `previous_text` = old text |
+| Z3 | PATCH another user's comment (as doc owner) | 403 |
+| Z4 | PATCH top-level comment after window (`created_at` backdated) | 422 |
+| Z5 | Reply grace: reply past its own window, parent `edited_at` fresh | 200; reply `edited_at` set |
+| Z6 | Reply grace expired: parent `edited_at` also backdated | 422 |
+| Z7 | PATCH a hidden (author-deleted) comment | 422 |
+| Z8 | Hide then unhide a comment | 204 each; `edited_at` stays NULL (marker not forgeable) |
+| Z9 | GET `/variants/:id/comments` after an edit | listing exposes `edited_at`; payload never contains `previous_text` |
+
+---
+
 ## Unit tests (`tests/unit.test.js`)
 
 > 20 tests for the pure helpers in `src/lib/text.js` — no DB, no server. Run as
@@ -419,7 +439,7 @@
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (44 tests). Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (45 tests). Run with `npm run test:e2e`.
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -430,7 +450,7 @@
 |------|-------|---------------|
 | `crossfile.spec.js` | US-1 + smoke | Login page, full OTP login flow, profile page, unauth redirect, review/conflicts/final-vote/resolved-text render |
 | `navigation.spec.js` | US-2 | Doc list → open doc → line highlights → sidebar All/On-page filter → card click → detail → back button |
-| `comment.spec.js` | US-3 | Post comment (author + "just now") → indented reply → delete own reply. *Edit-in-window (story step 7) has no UI — API only* |
+| `comment.spec.js` | US-3 | Post comment (author + "just now") → indented reply → edit own comment (edited marker asserted, UC-20) → delete own reply |
 | `proposal.spec.js` | US-4, US-5 | Programmatic text selection → propose modal → submit → card + highlight; submit disabled without selection; edit title/rationale; withdraw with confirm |
 | `vote.spec.js` | US-6 | Cast For → change to Against → click again retracts → Abstain; sidebar tally reflects votes |
 | `share.spec.js` | US-7 | Enable anonymous share via checkbox (persists) → anonymous visitor sees read-only proposal + login button → blocked after disable |
@@ -442,7 +462,7 @@
 ### Known limitations
 
 - **Conflict drag-and-drop** (US-8 steps 6–7) — HTML5 DnD events are not reliably automatable; ordering is set via `PATCH /conflict-order` and the UI badges are asserted after reload. Drag itself remains a manual-checklist item.
-- **Comment edit window** (US-3 step 7) — the UI renders no edit button; only the API supports comment editing (covered by Group F). Story and UI disagree — candidate UI addition.
+- *(resolved 2026-07-11)* Comment editing (US-3 step 7) now has full UI — inline Edit form, "edited" marker, reply-grace. Covered by Group Z and `comment.spec.js`.
 
 ### App fixes driven by this suite
 
@@ -470,6 +490,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] Changing vote: count adjusts correctly
 - [ ] Retract vote: clicking the currently active vote button retracts the vote; counts and highlight reset
 - [ ] Comment thread: post comment → post reply → reply is indented; trying a 3rd level is blocked
+- [ ] **Comment editing (UC-20):** within 30 min, Edit your own comment → inline textarea → Save → text updates and "· edited <time>" appears; edit a reply's parent → the reply shows "parent comment was edited" and its Edit button is available again even if its own window lapsed; the Edit button is absent on others' comments and on comments older than the window
 - [ ] Activity feed: shows recent actions with correct labels; `voting_scheduled` events have amber highlight
 - [ ] Profile: update display name → header reflects new name
 - [ ] Logout: session cleared, redirected to login

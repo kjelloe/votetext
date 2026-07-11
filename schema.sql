@@ -259,6 +259,7 @@ CREATE TABLE IF NOT EXISTS comments (
     text                TEXT    NOT NULL DEFAULT '',
     is_hidden           INTEGER NOT NULL DEFAULT 0,   -- 1 = not shown (author delete or moderator hide)
     hidden_by           INTEGER          REFERENCES users (id) ON DELETE SET NULL,  -- moderator who hid it; NULL = author delete
+    edited_at           TEXT,                         -- set only by author edits, never by moderation
     created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

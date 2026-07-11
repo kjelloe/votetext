@@ -135,6 +135,7 @@ router.get('/me', requireAuth, (req, res) => {
     const config = {
         toast_dismiss_seconds: parseInt(process.env.TOAST_DISMISS_SECONDS || '30'),
         voting_countdown_default_minutes: parseInt(process.env.VOTING_COUNTDOWN_DEFAULT_MINUTES || '5'),
+        comment_edit_window_minutes: parseInt(process.env.COMMENT_EDIT_WINDOW_MINUTES || '30'),
     };
     res.json({ user: req.user, config });
 });

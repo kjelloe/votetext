@@ -806,6 +806,55 @@ A `DELETE` of someone else's comment by a doc admin is recorded as a moderation 
 
 ---
 
+## UC-20: Comment editing with edit transparency
+
+**Status: implemented 2026-07-11.**
+
+**Actor:** Comment author (commenter+ access); indirectly, users who replied to the edited comment.
+
+**Goal:** Let authors fix and refine their comments in the UI (the API has allowed this since UC-7), while keeping the discussion honest: every edit is visibly marked, and repliers get a chance to adjust or remove replies that no longer fit.
+
+**Entry point:** **Edit** button on your own comments in the proposal discussion thread.
+
+### Approved design decisions
+
+| Decision | Choice |
+|---|---|
+| Edit marker storage | New `comments.edited_at TEXT` column — set **only** by the author's PATCH. `updated_at` cannot be used: moderation hide/unhide touches it, which would show false "edited" markers. |
+| Edit window | Unchanged: 30 minutes from posting (`COMMENT_EDIT_WINDOW_MINUTES`). Later fixes remain delete-and-repost. |
+| Reply grace period | Editing a comment re-opens the edit window for its **direct replies**, measured from the parent's `edited_at`. Deleting a reply is already possible at any time. |
+| Edit history | The previous text is snapshotted into the `comment_updated` activity-log metadata (`previous_text`) — audit trail without UI or schema cost. |
+
+### Main flow — author edits
+
+1. Within 30 minutes of posting, the author sees an **Edit** button next to Reply/Delete on their comment.
+2. Clicking it swaps the comment text for an inline textarea (pre-filled) with **Save** / **Cancel** — same pattern as the reply form.
+3. Save calls `PATCH /api/comments/:id`; the server re-checks the window, stores the new text, sets `edited_at`, and logs `comment_updated` with `previous_text` in the metadata.
+4. The thread re-renders; the comment now shows **"edited \<time ago\>"** next to its timestamp (exact time in the tooltip).
+
+### Main flow — replier reacts to an edit
+
+1. A reply whose parent was edited *after* the reply was posted shows a hint: *"parent comment was edited"*.
+2. For 30 minutes after the parent's `edited_at`, the replier's **Edit** button is available again on that reply (even if the reply's own window has passed).
+3. The replier updates the reply — or deletes it (always possible) if it no longer makes sense.
+
+### Guard rails
+
+- Author-only, unchanged (`403` otherwise); window expiry → `422` (existing behaviour).
+- Hidden comments (author-deleted or moderator-hidden) are **not editable** — PATCH must reject them (currently unguarded).
+- `edited_at` is never touched by hide/unhide/delete, so the marker cannot be forged by moderation actions.
+- Server enforces both windows (own `created_at` + grace via parent `edited_at`); the client only decides button visibility, using `comment_edit_window_minutes` newly exposed in `GET /auth/me` config.
+
+### As built
+
+1. **`schema.sql` / `scripts/migrate.js`** — `comments.edited_at TEXT` (idempotent `addColumnIfMissing`).
+2. **`src/routes/comments.js`** — PATCH sets `edited_at`, extends the window check with the parent-grace rule, rejects hidden comments (422), and records `previous_text` in the `comment_updated` activity metadata.
+3. **`src/routes/auth.js`** — `comment_edit_window_minutes` added to the `/me` config payload.
+4. **`public/app.js`** — `renderCommentThread` renders the "edited \<time\>" marker, the author Edit button (within own window or reply grace), and the "parent comment was edited" hint; `wireCommentActions` handles the inline edit form. (1928 lines, under the 2000 cap.)
+5. **Tests** — Group Z (Z1–Z9) in `tests/api.test.js`; `tests/e2e/comment.spec.js` gained the edit flow.
+
+---
+
 ## Planned / future use cases
 
 *(none currently — all specced use cases are implemented)*

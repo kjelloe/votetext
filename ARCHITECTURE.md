@@ -243,7 +243,7 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes PATCH /:id/final-vote — final_yes/no/abstain tallies, supervisor+, final_voting only)
                        (includes GET /:id/final-vote-log — audit trail, supervisor+ only)
                        (includes POST /:id/hide and /:id/unhide — moderation, supervisor+)
-/api/comments/*    → src/routes/comments.js   (edit/delete + POST /:id/hide, /:id/unhide — moderation, supervisor+)
+/api/comments/*    → src/routes/comments.js   (PATCH edit — author, window + reply-grace, sets edited_at; DELETE; POST /:id/hide, /:id/unhide — moderation, supervisor+)
 /api/activity      → src/routes/activity.js
 /api/users/*       → src/routes/users.js      (superadmin only: GET / list, PATCH /:id/protection)
 ```
@@ -550,10 +550,11 @@ Documents transition from `open` to `voting` either immediately or after a count
 ```json
 {
   "toast_dismiss_seconds": 30,
-  "voting_countdown_default_minutes": 5
+  "voting_countdown_default_minutes": 5,
+  "comment_edit_window_minutes": 30
 }
 ```
-Stored in `state.config` during `init()`. Used by `openStatusModal` (default countdown value) and `pollActivity` (dismiss duration).
+Stored in `state.config` during `init()`. Used by `openStatusModal` (default countdown value), `pollActivity` (dismiss duration), and `renderCommentThread` (edit-button visibility).
 
 ### Spam cooldowns
 
@@ -607,6 +608,15 @@ Supervisor+ (per-document; owner and superadmin always qualify) can hide/unhide 
 **Variants** — `POST /api/variants/:id/hide` / `/unhide` toggle `variants.is_hidden` (already filtered by every listing and the resolved-text merge). `GET /api/variants/:id` returns 404 for non-supervisors when the variant is hidden, overriding `allow_anonymous_share`. Supervisors see the variant with a *Hidden by moderator* banner and an inline Unhide button (`viewVariant` sets `state.canModerate` from `doc.my_access_level`).
 
 **Comments** — `comments.hidden_by` distinguishes two states behind the shared `is_hidden` flag: author delete (`hidden_by NULL`, permanent, invisible to everyone) vs moderator hide (`hidden_by` = moderator id, reversible). `POST /api/comments/:id/hide` sets both; `/unhide` requires `hidden_by` to be non-NULL (422 for author deletes). A `DELETE` of someone else's comment by a doc admin records `hidden_by` too, so it is reversible and auditable. The comments listing returns moderator-hidden rows with text/author redacted server-side for non-supervisors — the thread renders a *Comment hidden by moderator* placeholder; supervisors get the full text plus Unhide. `canModerate()` in `comments.js` duplicates the supervisor check because these routes derive the document from the comment's variant (same reason `variants.js` has `checkDocAccess`).
+
+### Comment editing (UC-20)
+
+`PATCH /api/comments/:id` (author only) lets a commenter revise their own comment. `comments.edited_at` records the last author edit — set **only** here, never by hide/unhide/delete, so the "edited" marker cannot be forged by moderation. Two windows are enforced server-side (the client only decides button visibility, using `comment_edit_window_minutes` from the `/me` config):
+
+- **Own window** — editable for `COMMENT_EDIT_WINDOW_MINUTES` (default 30) after `created_at`.
+- **Reply grace** — a reply past its own window is editable again while its parent's `edited_at` is within the window, so replies can be adjusted when an edit changes the parent's meaning. Deleting a reply is always possible.
+
+Hidden comments (author-deleted or moderator-hidden) are rejected (422). Each edit logs `comment_updated` with the **previous text** in the activity metadata (audit trail; never returned in the comment payload). Frontend: `renderCommentThread` shows `· edited <time>` (exact time in tooltip), renders the author **Edit** button when in-window, and adds a *parent comment was edited* hint on replies whose parent's `edited_at` is newer than the reply. `wireCommentActions` drives the inline edit textarea (same delegation pattern as the reply form).
 
 **Moderation page** — `#/documents/:id/moderation` (`viewModeration` in `review.js`, linked from the document sidebar for supervisor+) renders `GET /api/documents/:id/moderation`: hidden variants and moderator-hidden comments with Unhide actions.
 

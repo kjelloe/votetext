@@ -73,6 +73,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Two-level threaded comments under each variant
 - Comment sorting on the proposal page: Oldest / Newest / Most replied / Author's
 - Deleted comments are hidden, not removed (`is_hidden` flag); author deletes are permanent, moderator hides are reversible (`hidden_by`)
+- **Comment editing** — authors edit their own comments within a 30-minute window (`COMMENT_EDIT_WINDOW_MINUTES`); an "edited" marker with the time is shown. Editing a comment reopens the window for its direct replies (and flags them "parent comment was edited") so replies can be adjusted or removed if the edit changes the meaning. Previous text is kept in the activity log.
 
 #### Moderation (UC-18)
 - Supervisor+ can hide/unhide proposals — hidden proposals vanish from listings and 404 by direct link for participants, stay visible (with banner) to supervisors
@@ -124,7 +125,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `variants` | Proposed text changes (operation, char range, new text, vote tallies) |
 | `variant_relations` | Relationships between variants (based_on, overlaps, conflicts, supersedes) |
 | `votes` | One vote per user per variant (+1 / −1 / 0) |
-| `comments` | Two-level threaded discussion under each variant |
+| `comments` | Two-level threaded discussion under each variant (`edited_at` author-edit marker, `hidden_by` moderation) |
 | `user_document_access` | Per-user, per-document access level + block flag |
 | `activity_log` | Event log for activity feeds and audit trails |
 | `final_vote_log` | Append-only tally audit trail (one row per final-vote save, Unix ms timestamp) |
@@ -202,7 +203,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 |--------|------|-------------|
 | `GET`    | `/api/variants/:id/comments` | List comments for a variant (moderator-hidden comments returned redacted for non-supervisors) |
 | `POST`   | `/api/variants/:id/comments` | Add a comment |
-| `PATCH`  | `/api/comments/:id` | Edit a comment (author only) |
+| `PATCH`  | `/api/comments/:id` | Edit a comment (author only; within edit window or reply-grace; sets `edited_at`, rejects hidden comments) |
 | `DELETE` | `/api/comments/:id` | Delete a comment (author = permanent; doc admin deleting another's = reversible moderation hide) |
 | `POST`   | `/api/comments/:id/hide` | Hide a comment as moderation action (supervisor+) |
 | `POST`   | `/api/comments/:id/unhide` | Restore a moderator-hidden comment (supervisor+; author deletes → 422) |
@@ -449,6 +450,7 @@ sqlite3 /opt/votetext/data/votetext.db ".backup ~/backups/votetext-$(date +%F).d
 - [x] Playwright e2e suite (`npm run test:e2e`) — 44 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
+- [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
 - [x] Tutorial video script (EN + NO) + reproducible demo data — `specs/tutorial-video-script.md`, `specs/tutorial-video-script.no.md`, `npm run seed-demo` (four personas, four documents frozen at each lifecycle stage)
 - [x] Moderation dashboard (UC-18) — supervisor+ hide/unhide for proposals and comments (moderator hides reversible via `hidden_by`, author deletes permanent), per-document moderation page, superadmin user-protection management
 - [ ] Export resolved document (further polish)

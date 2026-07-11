@@ -236,6 +236,7 @@ if (udaSchemaRow && !udaSchemaRow.sql.includes('supervisor')) {
 }
 
 addColumnIfMissing('comments', 'hidden_by', 'INTEGER REFERENCES users (id) ON DELETE SET NULL');
+addColumnIfMissing('comments', 'edited_at', 'TEXT');
 
 // Extend activity_log CHECK constraint with moderation actions (UC-18)
 const actSchemaRow3 = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='activity_log'").get();

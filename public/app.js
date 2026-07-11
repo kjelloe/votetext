@@ -1658,29 +1658,37 @@ function renderCommentThread(comments, variantId, sortMode = 'chrono', authorId 
         top.sort((a, b) => (b.replies || []).length - (a.replies || []).length);
     }
     if (!top.length) return '<p class="text-muted">No comments match this filter.</p>';
-    function renderOne(c, isReply) {
+    const editWindowMs = ((state.config && state.config.comment_edit_window_minutes) || 30) * 60000;
+    const inWindow = t => !!t && (Date.now() - new Date(t).getTime()) < editWindowMs;
+
+    function renderOne(c, isReply, parentEditedAt) {
         const cls = isReply ? 'reply' : 'comment';
         if (c.is_hidden) {
             return `<div class="${cls}" id="comment-${esc(c.id)}">
                 <div class="comment-text text-muted"><em>Comment hidden by moderator</em>${state.canModerate && c.author_name ? ` — ${esc(c.author_name)}: ${esc(c.text)}` : ''}</div>
                 ${state.canModerate ? `<div class="comment-actions"><button class="btn btn-ghost btn-sm unhide-comment-btn" data-id="${esc(c.id)}">Unhide</button></div>` : ''}
-                ${!isReply && c.replies && c.replies.length ? `<div class="comment-replies">${c.replies.map(r => renderOne(r, true)).join('')}</div>` : ''}
+                ${!isReply && c.replies && c.replies.length ? `<div class="comment-replies">${c.replies.map(r => renderOne(r, true, c.edited_at)).join('')}</div>` : ''}
             </div>`;
         }
-        const canDelete = state.user && c.user_id === state.user.id;
+        const isMine = state.user && c.user_id === state.user.id;
+        const canDelete = isMine;
+        const canEdit = isMine && (inWindow(c.created_at) || (isReply && inWindow(parentEditedAt)));
         const canHide = state.canModerate && state.user && c.user_id !== state.user.id;
+        const parentEditedLater = isReply && parentEditedAt && parentEditedAt > c.created_at;
         return `<div class="${cls}" id="comment-${esc(c.id)}">
             <div class="comment-header">
                 <span class="comment-author">${esc(c.author_name)}</span>
-                <span class="comment-time">${timeAgo(c.created_at)}</span>
+                <span class="comment-time">${timeAgo(c.created_at)}${c.edited_at ? ` <span title="${esc(c.edited_at)}">· edited ${timeAgo(c.edited_at)}</span>` : ''}</span>
             </div>
             <div class="comment-text">${esc(c.text)}</div>
-            ${state.user && (!isReply || canDelete || canHide) ? `<div class="comment-actions">
+            ${parentEditedLater ? `<div class="comment-time" style="font-style:italic">parent comment was edited</div>` : ''}
+            ${state.user && (!isReply || canDelete || canEdit || canHide) ? `<div class="comment-actions">
                 ${!isReply ? `<button class="btn btn-ghost btn-sm reply-btn" data-parent="${esc(c.id)}">Reply</button>` : ''}
+                ${canEdit ? `<button class="btn btn-ghost btn-sm edit-comment-btn" data-id="${esc(c.id)}">Edit</button>` : ''}
                 ${canDelete ? `<button class="btn btn-ghost btn-sm delete-comment-btn" data-id="${esc(c.id)}">Delete</button>` : ''}
                 ${canHide ? `<button class="btn btn-ghost btn-sm hide-comment-btn" data-id="${esc(c.id)}">Hide</button>` : ''}
             </div>` : ''}
-            ${!isReply && c.replies && c.replies.length ? `<div class="comment-replies">${c.replies.map(r => renderOne(r, true)).join('')}</div>` : ''}
+            ${!isReply && c.replies && c.replies.length ? `<div class="comment-replies">${c.replies.map(r => renderOne(r, true, c.edited_at)).join('')}</div>` : ''}
         </div>`;
     }
     return `<div class="comment-thread">` + top.map(c => renderOne(c, false)).join('') + `</div>`;
@@ -1747,6 +1755,47 @@ function wireCommentActions(variantId) {
                 const cd = await api('GET', `/variants/${variantId}/comments`);
                 applyRefresh(cd.comments || []);
             } catch (err) { alert(err.message); }
+        }
+
+        const editBtn = e.target.closest('.edit-comment-btn');
+        if (editBtn) {
+            const id = editBtn.dataset.id;
+            const existing = document.getElementById(`edit-form-${id}`);
+            if (existing) { existing.remove(); return; }
+            const commentEl = document.getElementById(`comment-${id}`);
+            const textEl = commentEl.querySelector('.comment-text');
+            const form = el('div', { id: `edit-form-${id}`, style: 'margin-top:.5rem' });
+            form.innerHTML = `
+                <textarea style="width:100%;min-height:60px;border:1px solid var(--color-border);border-radius:var(--radius);padding:.5rem;font-family:var(--font-sans);font-size:.875rem"></textarea>
+                <div class="flex gap-1 mt-1">
+                    <button class="btn btn-primary btn-sm save-edit-comment-btn" data-id="${esc(id)}">Save</button>
+                    <button class="btn btn-ghost btn-sm cancel-edit-comment-btn" data-id="${esc(id)}">Cancel</button>
+                </div>
+                <p class="edit-comment-err error-msg" style="display:none"></p>
+            `;
+            form.querySelector('textarea').value = textEl.textContent;
+            textEl.after(form);
+            form.querySelector('textarea').focus();
+        }
+
+        const cancelEdit = e.target.closest('.cancel-edit-comment-btn');
+        if (cancelEdit) {
+            document.getElementById(`edit-form-${cancelEdit.dataset.id}`).remove();
+        }
+
+        const saveEdit = e.target.closest('.save-edit-comment-btn');
+        if (saveEdit) {
+            const id = saveEdit.dataset.id;
+            const form = document.getElementById(`edit-form-${id}`);
+            const text = form.querySelector('textarea').value.trim();
+            const errEl = form.querySelector('.edit-comment-err');
+            if (!text) { errEl.textContent = 'Text required'; errEl.style.display = ''; return; }
+            saveEdit.disabled = true;
+            try {
+                await api('PATCH', `/comments/${id}`, { text });
+                const cd = await api('GET', `/variants/${variantId}/comments`);
+                applyRefresh(cd.comments || []);
+            } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; saveEdit.disabled = false; }
         }
 
         const hideCBtn = e.target.closest('.hide-comment-btn');

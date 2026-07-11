@@ -2364,6 +2364,99 @@ test('Y11: expired session → 401 on /auth/me', async () => {
     assert.equal(r.status, 401);
 });
 
+// ── GROUP Z: COMMENT EDITING (UC-20) ─────────────────────────────────────────
+
+let zDocId, zCommentId, zReplyId;
+
+test('Z1: setup — open doc, voter comment, owner reply', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'Comment edit doc', text: 'Editable line one.\nLine two.' }, cookie: sessionCookie });
+    zDocId = d.data.document.id;
+    await req('POST', `/documents/${zDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const inv = await req('POST', `/documents/${zDocId}/access`, { body: { email: 'modvoter@test.com', access_level: 'voter' }, cookie: sessionCookie });
+    assert.equal(inv.status, 201);
+    const v = await req('POST', `/documents/${zDocId}/variants`, {
+        body: { char_start: 0, char_end: 8, operation: 'replace', new_text: 'Edited', title: 'Z var', rationale: 'r' },
+        cookie: sessionCookie,
+    });
+    const c = await req('POST', `/variants/${v.data.variant.id}/comments`, { body: { text: 'Original comment text' }, cookie: modVoterCookie });
+    assert.equal(c.status, 201);
+    zCommentId = c.data.comment.id;
+    const r = await req('POST', `/variants/${v.data.variant.id}/comments`, {
+        body: { text: 'A reply to the original', parent_comment_id: zCommentId }, cookie: sessionCookie,
+    });
+    assert.equal(r.status, 201);
+    zReplyId = r.data.comment.id;
+});
+
+test('Z2: PATCH own comment within window → 200, edited_at set, previous_text logged', async () => {
+    const r = await req('PATCH', `/comments/${zCommentId}`, { body: { text: 'Fundamentally changed comment text' }, cookie: modVoterCookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.comment.text, 'Fundamentally changed comment text');
+    assert.ok(r.data.comment.edited_at, 'edited_at set by author edit');
+    const log = db.prepare("SELECT metadata FROM activity_log WHERE action = 'comment_updated' ORDER BY id DESC LIMIT 1").get();
+    const meta = JSON.parse(log.metadata);
+    assert.equal(meta.comment_id, zCommentId);
+    assert.equal(meta.previous_text, 'Original comment text', 'previous text snapshotted');
+});
+
+test('Z3: PATCH someone else\'s comment → 403 (even for the doc owner)', async () => {
+    const r = await req('PATCH', `/comments/${zCommentId}`, { body: { text: 'hijack' }, cookie: sessionCookie });
+    assert.equal(r.status, 403);
+});
+
+test('Z4: PATCH top-level comment after window → 422', async () => {
+    const past = new Date(Date.now() - 2 * 3600000).toISOString();
+    db.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run(past, zCommentId);
+    const r = await req('PATCH', `/comments/${zCommentId}`, { body: { text: 'too late' }, cookie: modVoterCookie });
+    assert.equal(r.status, 422);
+});
+
+test('Z5: reply grace — expired reply editable while parent edited_at is fresh → 200', async () => {
+    const past = new Date(Date.now() - 2 * 3600000).toISOString();
+    db.prepare('UPDATE comments SET created_at = ? WHERE id = ?').run(past, zReplyId);
+    const r = await req('PATCH', `/comments/${zReplyId}`, { body: { text: 'Adjusted reply after the parent edit' }, cookie: sessionCookie });
+    assert.equal(r.status, 200, 'grace window via parent edited_at');
+    assert.ok(r.data.comment.edited_at);
+});
+
+test('Z6: reply grace expired — parent edited_at also old → 422', async () => {
+    const past = new Date(Date.now() - 2 * 3600000).toISOString();
+    db.prepare('UPDATE comments SET edited_at = ? WHERE id = ?').run(past, zCommentId);
+    const r = await req('PATCH', `/comments/${zReplyId}`, { body: { text: 'no window left' }, cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+test('Z7: PATCH a hidden (author-deleted) comment → 422', async () => {
+    const c = await req('POST', `/variants/${db.prepare('SELECT variant_id FROM comments WHERE id = ?').get(zCommentId).variant_id}/comments`,
+        { body: { text: 'delete me' }, cookie: modVoterCookie });
+    const id = c.data.comment.id;
+    await req('DELETE', `/comments/${id}`, { cookie: modVoterCookie });
+    const r = await req('PATCH', `/comments/${id}`, { body: { text: 'zombie edit' }, cookie: modVoterCookie });
+    assert.equal(r.status, 422);
+});
+
+test('Z8: moderation hide/unhide never sets edited_at', async () => {
+    const varId = db.prepare('SELECT variant_id FROM comments WHERE id = ?').get(zCommentId).variant_id;
+    const c = await req('POST', `/variants/${varId}/comments`, { body: { text: 'moderate me' }, cookie: modVoterCookie });
+    const id = c.data.comment.id;
+    const h = await req('POST', `/comments/${id}/hide`, { cookie: sessionCookie });
+    assert.equal(h.status, 204);
+    const u = await req('POST', `/comments/${id}/unhide`, { cookie: sessionCookie });
+    assert.equal(u.status, 204);
+    const row = db.prepare('SELECT edited_at FROM comments WHERE id = ?').get(id);
+    assert.equal(row.edited_at, null, 'moderation must not forge the edited marker');
+});
+
+test('Z9: GET comments listing surfaces edited_at (the marker contract) and never leaks previous_text', async () => {
+    const varId = db.prepare('SELECT variant_id FROM comments WHERE id = ?').get(zCommentId).variant_id;
+    const r = await req('GET', `/variants/${varId}/comments`, { cookie: modVoterCookie });
+    assert.equal(r.status, 200);
+    const all = r.data.comments.flatMap(c => [c, ...(c.replies || [])]);
+    const edited = all.find(c => c.id === zCommentId);
+    assert.ok(edited && edited.edited_at, 'listing must expose edited_at so the UI can render the marker');
+    assert.ok(!('previous_text' in edited), 'previous text stays in the activity log, never in the comment payload');
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {
