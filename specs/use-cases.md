@@ -219,6 +219,9 @@ When a user with no explicit access record requests any document endpoint:
 - If `default_access` is set to a valid level, that level is used as the effective access for this request.
 - If not set (invite-only), the request is denied with 403.
 - Explicitly blocked users are always denied regardless of the default.
+- `default_access` never applies to `draft` documents (see UC-14).
+
+*(Hardened 2026-07-11)* All access decisions — document reads, variant sub-routes, comment moderation, middleware — now run through a single `resolveAccessLevel()` in `middleware/access.js`. This closed a hole where `GET /:id/lines`, `/:id/text`, and `/:id/variants` accepted any authenticated user, and made `default_access` apply consistently to variant sub-routes (previously a default-access commenter could open a document but got 403 posting a comment). Site-level `superadmin` now acts as document admin everywhere. Guard-rail coverage: test-plan Group Y.
 
 ### Invite user — search flow
 
@@ -531,12 +534,13 @@ When `allow_anonymous_share = 0` (default): anonymous access to a non-public doc
 
 | User type | Can see draft document? |
 |-----------|------------------------|
-| Owner | Yes |
+| Owner / superadmin | Yes |
 | User with `editor` or `admin` access | Yes |
-| User with `viewer`, `commenter`, `proposer`, `voter` access | No (403) |
+| User with `viewer`–`supervisor` access | No (403) |
+| User relying on `settings.default_access` | No (403 — defaults never apply to drafts) |
 | Anonymous (even with `allow_anonymous_view = true`) | No (403) |
 
-This restriction applies to both `GET /documents/:id` and the document list (`GET /documents` — draft docs only appear in the list if the requesting user has editor+ access or is the owner). Once a document transitions to `open`, normal access rules apply.
+This restriction applies to **every** document read: `GET /documents/:id`, `/lines`, `/text`, `/variants`, `/activity`, the document list, and all variant sub-routes — enforced centrally by `resolveAccessLevel()` since the 2026-07-11 hardening (previously `/lines`, `/text`, and `/variants` were not covered). Once a document transitions to `open`, normal access rules apply.
 
 ---
 
@@ -544,13 +548,13 @@ This restriction applies to both `GET /documents/:id` and the document list (`GE
 
 ## UC-15: View and export resolved text
 
-**Actor:** Document owner or editor/admin  
-**Entry point:** Final voting walkthrough toolbar → "Resolved text", or document viewer → "Resolved text" button (owner only, for `final_voting` / `resolved` / `archived` documents)
+**Actor:** Supervisor+ during final voting; **any participant** once the document is resolved  
+**Entry point:** Final voting walkthrough toolbar → "Resolved text", or document viewer → "Resolved text" button (any logged-in participant for `resolved` / `archived` documents; supervisor+ during `final_voting`)
 
 ### Preconditions
 
 - Document is in `final_voting`, `resolved`, or `archived` status.
-- User has at least `editor` access (or is the owner).
+- Access *(aligned with US-10, 2026-07-11)*: `resolved`/`archived` → any participant with document access (viewer+); `final_voting` preview → supervisor+ (the result is not final yet).
 
 ### Main flow — during final_voting
 
@@ -566,7 +570,7 @@ This restriction applies to both `GET /documents/:id` and the document list (`GE
 
 ### Main flow — after resolution
 
-1. Owner navigates to a `resolved` or `archived` document and clicks **Resolved text**.
+1. Any participant navigates to a `resolved` or `archived` document and clicks **Resolved text**.
 2. The view shows the stored resolved text with a **PASSED** or **FAILED** banner (derived from `doc_vote_yes` / `doc_vote_no`).
    - The banner includes the timestamp: "PASSED at <date/time>" or "FAILED at <date/time>".
 3. Export Markdown and Print HTML include the PASSED/FAILED line with the timestamp.
@@ -710,7 +714,7 @@ A supervisor therefore inherits everything up to voter (view, comment, propose, 
 | `GET /variants/:id/final-vote-log` (audit trail) | editor | **supervisor** |
 | `PATCH /variants/:id/threshold` (per-proposal) | editor | **supervisor** |
 | `PATCH /documents/:id/doc-vote` (overall tally) | editor | **supervisor** |
-| `GET /documents/:id/resolved-text` | editor | **supervisor** |
+| `GET /documents/:id/resolved-text` | editor | **supervisor** (final_voting preview); viewer+ once resolved (2026-07-11) |
 | Voting-cycle status transitions (see below) | admin | **supervisor** |
 | Invite new users up to own level (see below) | admin | **supervisor** |
 | `GET /documents/:id/access` (read-only list) | admin | **supervisor** |

@@ -16,7 +16,7 @@ npm run migrate   # add new columns to an existing database (idempotent)
 npm run seed      # seed sample users + document (prints browser session cookie)
 npm run dev       # start with nodemon auto-reload → http://localhost:3000
 npm start         # production start
-npm test          # integration tests (isolated DB, no email needed)
+npm test          # integration + unit + frontend-contract tests (isolated DB, no email needed)
 npm run clean-db  # drop and reinitialise the database
 ```
 
@@ -37,9 +37,10 @@ npm run clean-db  # drop and reinitialise the database
 ```
 src/server.js       — Express entry point (does NOT call listen() when imported)
 src/db.js           — single better-sqlite3 instance; getOne/getAll/run/transaction/logActivity
+src/lib/text.js     — pure helpers (applyVariantsToText, passesThreshold, importText); unit-tested; passesThreshold is mirrored in public/review.js and a contract test enforces sync
 src/middleware/
     auth.js         — optionalAuth (attaches req.user), requireAuth, requireRole
-    access.js       — requireDocumentAccess(minLevel) checks user_document_access table
+    access.js       — resolveAccessLevel/meetsLevel (the ONLY access decision — all checks delegate here) + requireDocumentAccess(minLevel)
     errors.js       — catch-all JSON error handler
 src/routes/
     auth.js         — OTP flow: request → verify → session cookie; profile update
@@ -109,7 +110,7 @@ viewer < commenter < proposer < voter < supervisor < editor < admin
 
 Owner of a document always has `admin`. Check `requireDocumentAccess('proposer')` etc. as route middleware. `supervisor` manages the voting process (review, conflicts, tallies, voting-cycle status transitions, new invites up to own level) and moderation (hide/unhide variants and comments — UC-18) but cannot edit the document, see drafts, or modify existing access records — see ARCHITECTURE.md § Access Control.
 
-Variant sub-routes (`/vote`, `/comments`, `/relations`) cannot use the middleware directly because the document ID is derived from the variant, not the URL. They use `checkDocAccess(doc, req, minLevel)` in `variants.js` instead — pass `'commenter'` for POST /comments, `'voter'` for POST /vote, omit `minLevel` for reads. `ACCESS_LEVELS` is imported from `middleware/access.js`.
+Variant sub-routes (`/vote`, `/comments`, `/relations`) cannot use the middleware directly because the document ID is derived from the variant, not the URL. They use `checkDocAccess(doc, req, minLevel)` in `variants.js` instead — pass `'commenter'` for POST /comments, `'voter'` for POST /vote, omit `minLevel` for reads. It is a thin wrapper over `resolveAccessLevel`/`meetsLevel` from `middleware/access.js` — never write a new inline access check; delegate to those. Site `superadmin` resolves to document admin everywhere; drafts require an explicit editor+ record (`default_access` never applies).
 
 ---
 

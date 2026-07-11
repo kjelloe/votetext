@@ -1514,9 +1514,13 @@ test('GET /documents/:id/resolved-text — no auth → 401', async () => {
     assert.equal(r.status, 401);
 });
 
-test('GET /documents/:id/resolved-text — viewer → 403', async () => {
+test('GET /documents/:id/resolved-text — viewer during final_voting → 403', async () => {
+    const invR = await req('POST', `/documents/${resolveDocId}/access`, {
+        body: { email: 'bob@test.com', access_level: 'viewer' }, cookie: sessionCookie,
+    });
+    assert.equal(invR.status, 201);
     const r = await req('GET', `/documents/${resolveDocId}/resolved-text`, { cookie: viewerCookie });
-    assert.equal(r.status, 403);
+    assert.equal(r.status, 403, 'preview stays supervisor+ until resolved');
 });
 
 test('GET /documents/:id/resolved-text — on-the-fly for final_voting → 200', async () => {
@@ -1548,6 +1552,12 @@ test('GET /documents/:id/resolved-text — returns stored text with doc_vote_pas
     assert.ok(r.data.resolved_at, 'resolved_at present');
     assert.equal(r.data.doc_vote_passed, null, 'null when no doc vote recorded');
     assert.ok(r.data.text.includes('Hi'), 'approved variant (replace Hello→Hi) applied to resolved text');
+});
+
+test('GET /documents/:id/resolved-text — invited viewer on resolved doc → 200 (US-10)', async () => {
+    const r = await req('GET', `/documents/${resolveDocId}/resolved-text`, { cookie: viewerCookie });
+    assert.equal(r.status, 200, 'any participant may read the outcome once resolved');
+    assert.ok(r.data.text.includes('Hi'));
 });
 
 // ── GROUP S — Copy Document Data ─────────────────────────────────────────────

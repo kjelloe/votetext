@@ -488,7 +488,7 @@ async function viewDocument(docId) {
                 <span>${statusBadge(doc.status)}</span>
             </div>
             <div class="flex gap-1 items-center">
-                ${(doc.status === 'voting' || doc.status === 'final_voting') && state.user ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}${['final_voting', 'resolved', 'archived'].includes(doc.status) && doc.owner_id === (state.user && state.user.id) ? `<a href="#/documents/${esc(String(docId))}/resolved-text" class="btn btn-ghost btn-sm">Resolved text</a>` : ''}
+                ${(doc.status === 'voting' || doc.status === 'final_voting') && state.user ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}${(['resolved', 'archived'].includes(doc.status) && state.user) || (doc.status === 'final_voting' && ['supervisor', 'editor', 'admin'].includes(doc.my_access_level)) ? `<a href="#/documents/${esc(String(docId))}/resolved-text" class="btn btn-ghost btn-sm">Resolved text</a>` : ''}
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
                 ${(doc.owner_id === (state.user && state.user.id)) ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}

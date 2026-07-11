@@ -44,7 +44,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Automatic page/line structuring (configurable lines per page, default 30)
 - Documents support 1–200 pages, 27–60 lines per page
 - Document status lifecycle: `draft → open → voting → final_voting → resolved → archived`
-- **Resolved text** — on transition to `resolved`, approved variants are applied to the original text and stored; preview view shows the resolved text with line numbers, PASSED/FAILED banner (with timestamp), Export Markdown and Print HTML buttons, and a "Fork as new document" option for the owner
+- **Resolved text** — on transition to `resolved`, approved variants are applied to the original text and stored; readable by every participant once resolved (supervisor+ preview during final voting), with line numbers, PASSED/FAILED banner (with timestamp), Export Markdown and Print HTML buttons, and a "Fork as new document" option for the owner
 - **Draft visibility** — draft documents are only shown to the owner and users with `editor`/`admin` access; all other roles and anonymous users see 403 until the document is opened
 - **Copy document** — owner can duplicate a document (same title + " (copy)", same text) from the viewer toolbar, with optional checkboxes to also copy proposals, votes, and comments from the source
 
@@ -188,7 +188,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Resolved Text
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/documents/:id/resolved-text` | Resolved text with approved variants applied; on-the-fly for `final_voting`, stored for `resolved`/`archived` (supervisor+ only) |
+| `GET` | `/api/documents/:id/resolved-text` | Resolved text with approved variants applied; stored for `resolved`/`archived` (any participant), on-the-fly preview for `final_voting` (supervisor+) |
 
 #### Votes
 | Method | Path | Description |
@@ -305,13 +305,16 @@ votetext/
 ├── scripts/
 │   ├── init-db.js          # Create database from schema.sql
 │   ├── migrate.js          # Add columns to existing databases (idempotent)
-│   └── seed.js             # Optional: seed with sample data
+│   ├── seed.js             # Optional: seed with sample data
+│   └── seed-demo.js        # Tutorial-video demo data (four personas, four lifecycle stages)
 ├── src/
 │   ├── server.js           # Express app entry point
 │   ├── db.js               # Database connection + helpers
+│   ├── lib/
+│   │   └── text.js         # Pure helpers: text import, variant merge, thresholds (unit-tested)
 │   ├── middleware/
 │   │   ├── auth.js         # Session validation middleware
-│   │   ├── access.js       # Document access control
+│   │   ├── access.js       # Document access control (resolveAccessLevel — the single access decision)
 │   │   └── errors.js       # Error handling middleware
 │   └── routes/
 │       ├── auth.js         # OTP login/logout + profile
@@ -322,9 +325,12 @@ votetext/
 │       └── users.js        # Superadmin user list + protection management
 ├── specs/
 │   ├── test-plan.md        # Test scenarios (automated + manual checklist)
-│   └── use-cases.md        # Detailed user flows (UC-1 …)
+│   ├── use-cases.md        # Detailed user flows (UC-1 …)
+│   └── tutorial-video-script.md  # Video walkthrough script (EN; .no.md for Norwegian)
 ├── tests/
 │   ├── api.test.js         # Integration tests (node:test, isolated DB)
+│   ├── unit.test.js        # Unit tests for src/lib/text.js
+│   ├── frontend.test.js    # Cross-file JS contracts + threshold sync check
 │   └── e2e/                # Playwright browser tests (own server + isolated DB)
 └── public/
     ├── index.html          # Single-page application shell
@@ -342,7 +348,7 @@ votetext/
 npm run dev
 
 # Run tests
-npm test              # API integration tests (isolated DB, no email needed)
+npm test              # API integration + unit + frontend-contract tests (isolated DB, no email needed)
 npm run test:e2e      # Playwright browser tests (first time: sudo npx playwright install-deps)
 
 # Reset database
@@ -440,7 +446,10 @@ sqlite3 /opt/votetext/data/votetext.db ".backup ~/backups/votetext-$(date +%F).d
 - [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
-- [x] Playwright e2e suite (`npm run test:e2e`) — 41 tests covering all 10 user stories: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Playwright e2e suite (`npm run test:e2e`) — 44 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
+- [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
+- [x] Tutorial video script (EN + NO) + reproducible demo data — `specs/tutorial-video-script.md`, `specs/tutorial-video-script.no.md`, `npm run seed-demo` (four personas, four documents frozen at each lifecycle stage)
 - [x] Moderation dashboard (UC-18) — supervisor+ hide/unhide for proposals and comments (moderator hides reversible via `hidden_by`, author deletes permanent), per-document moderation page, superadmin user-protection management
 - [ ] Export resolved document (further polish)
 - [ ] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log), giving them version history and offsite backup instead of manual zip copies

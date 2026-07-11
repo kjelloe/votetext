@@ -50,13 +50,16 @@ votetext/
 ├── scripts/
 │   ├── init-db.js          — creates DB from schema.sql
 │   ├── migrate.js          — ALTER TABLE migrations for existing databases
-│   └── seed.js             — seeds sample data for development
+│   ├── seed.js             — seeds sample data for development
+│   └── seed-demo.js        — tutorial-video demo data (four personas, docs at all four lifecycle stages)
 ├── src/
 │   ├── server.js           — Express app; only calls listen() when run directly
 │   ├── db.js               — single better-sqlite3 connection + query helpers
+│   ├── lib/
+│   │   └── text.js         — pure helpers: applyVariantsToText, passesThreshold, importText (unit-tested)
 │   ├── middleware/
 │   │   ├── auth.js         — optionalAuth / requireAuth / requireRole
-│   │   ├── access.js       — requireDocumentAccess(minLevel)
+│   │   ├── access.js       — resolveAccessLevel + meetsLevel (THE access decision) + requireDocumentAccess(minLevel)
 │   │   └── errors.js       — centralized JSON error handler
 │   └── routes/
 │       ├── auth.js         — OTP request/verify, logout, profile
@@ -73,9 +76,12 @@ votetext/
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
-│   └── use-cases.md        — detailed user flows (UC-1 …)
+│   ├── use-cases.md        — detailed user flows (UC-1 …)
+│   └── tutorial-video-script.md — video walkthrough script (EN + .no.md Norwegian)
 └── tests/
     ├── api.test.js         — integration tests (node:test, no extra deps)
+    ├── unit.test.js        — pure-helper unit tests for src/lib/text.js
+    ├── frontend.test.js    — cross-file JS contracts + passesThreshold sync check
     └── e2e/                — Playwright browser tests (Firefox; own server + isolated DB)
 ```
 
@@ -120,7 +126,7 @@ activity_log ── references users, documents, variants
 
 **Draft visibility** — documents in `draft` status are only visible to the owner and users with `editor` or `admin` access. This is enforced in `GET /documents` (SQL filter), `GET /documents/:id` (inline check), and `checkDocAccess()` in variants.js (all variant sub-routes).
 
-**Resolved text storage** — on `final_voting → resolved` transition, `resolveVariants()` applies all approved variants to the concatenated `document_lines` text via `applyVariantsToText()` (char-offset order, overlapping approved variants skipped) and stores the result in `documents.resolved_text TEXT`. `documents.resolved_at TEXT` is set to the current ISO-8601 timestamp. `GET /api/documents/:id/resolved-text` returns the stored text for resolved/archived docs, or computes it on-the-fly for `final_voting` docs (supervisor+ access required).
+**Resolved text storage** — on `final_voting → resolved` transition, `resolveVariants()` applies all approved variants to the concatenated `document_lines` text via `applyVariantsToText()` (char-offset order, overlapping approved variants skipped) and stores the result in `documents.resolved_text TEXT`. `documents.resolved_at TEXT` is set to the current ISO-8601 timestamp. `GET /api/documents/:id/resolved-text` returns the stored text for resolved/archived docs to any participant with access (viewer+, per US-10), or computes it on-the-fly for `final_voting` docs — that preview stays supervisor+ since the result is not final.
 
 **WAL mode** — All reads happen concurrently; writes are serialised by SQLite. Busy timeout is 5 s.
 
@@ -171,21 +177,24 @@ Each level includes all permissions of lower levels:
 - **commenter** — viewer + post comments
 - **proposer** — commenter + propose variants
 - **voter** — proposer + cast/change votes
-- **supervisor** — voter + manage the voting process: review-status, conflict-order, per-proposal thresholds, final-vote tallies + audit log, doc-vote, resolved-text, fork during voting phases, voting-cycle status transitions (open→voting incl. scheduling, voting↔final_voting, final_voting→resolved), inviting **new** users up to own level, and moderation (hide/unhide variants and comments, per-document moderation page — UC-18). Cannot edit the document, see drafts, modify existing access records, or perform draft/archive transitions.
+- **supervisor** — voter + manage the voting process: review-status, conflict-order, per-proposal thresholds, final-vote tallies + audit log, doc-vote, resolved-text preview during final_voting, fork during voting phases, voting-cycle status transitions (open→voting incl. scheduling, voting↔final_voting, final_voting→resolved), inviting **new** users up to own level, and moderation (hide/unhide variants and comments, per-document moderation page — UC-18). Cannot edit the document, see drafts, modify existing access records, or perform draft/archive transitions.
 - **editor** — supervisor + edit document metadata and settings
 - **admin** — full control (co-owner), manage access list
 
 `POST /documents/:id/status` is gated at `supervisor` with an inline per-transition check (`SUPERVISOR_TRANSITIONS` in `documents.js`): non-admins get only the voting-cycle set; everything else returns 403. `POST /access` is an upsert — non-admins are rejected when the target user already has an access record, so supervisors can only create new invites (level capped at their own by the invite-cap rule).
 
-### Decision rules (in `src/middleware/access.js`)
+### Decision rules — `resolveAccessLevel()` in `src/middleware/access.js`
 
-1. Document owner always resolves to `admin`
-2. Anonymous users can access at `viewer` level if `settings.allow_anonymous_view = true` **and** the document is not in `draft` status
-3. Blocked users (explicit record with `blocked = 1`) receive 403 regardless of default access
-4. Users with an explicit access record use that level; level must meet the route's `minLevel`
-5. Users with **no** explicit record fall back to `settings.default_access` (if set and a valid level); if not set or insufficient, 403
+Since the 2026-07-11 hardening there is exactly **one** access decision in the codebase: `resolveAccessLevel(doc, settings, req)` returns the effective level string or `null` (denied). `meetsLevel(level, minLevel, req)` compares against a route's minimum. Everything delegates to the pair: `requireDocumentAccess` middleware, `checkDocAccess` in variants.js, the document read endpoints (`GET /:id`, `/lines`, `/text`, `/variants`), and `canModerate` in comments.js.
 
-`GET /api/documents/:id` has an equivalent inline check (it does not use `requireDocumentAccess`).
+1. Document owner **and site `superadmin`** always resolve to `admin`
+2. Anonymous users get `viewer` if `settings.allow_anonymous_view = true` **and** the document is not in `draft` status; anonymous never satisfies an elevated `minLevel`
+3. Blocked users (explicit record with `blocked = 1`) are denied regardless of default access
+4. Drafts require an explicit `editor`+ record — `default_access` and anonymous view never apply
+5. Users with an explicit access record use that level; level must meet the route's `minLevel`
+6. Users with **no** explicit record fall back to `settings.default_access` (if set and a valid level) — this applies uniformly, including variant sub-routes (vote/comment/etc.)
+
+History: before 2026-07-11 this logic existed in five divergent copies; `/lines`, `/text`, and `/variants` accepted **any** authenticated user (no record/blocked/draft checks), and `default_access` was ignored by variant sub-routes. Test-plan Group Y pins the matrix so refactors cannot reopen these holes.
 
 ### Default access
 
@@ -220,7 +229,7 @@ Routes are grouped by resource and mounted in `server.js`:
                        (includes GET /search — user lookup, excludes non-searchable/protected)
 /api/documents/*   → src/routes/documents.js
                        (includes GET /:id/text — full reconstructed text for copy/export)
-                       (includes GET /:id/resolved-text — resolved text with approved variants applied; on-the-fly for final_voting, stored for resolved/archived; supervisor+)
+                       (includes GET /:id/resolved-text — resolved text with approved variants applied; stored for resolved/archived (viewer+), on-the-fly preview for final_voting (supervisor+))
                        (includes PATCH /:id/doc-vote — overall document vote tallies, supervisor+, final_voting only)
                        (includes GET /:id/moderation — hidden variants + moderator-hidden comments, supervisor+)
                        (includes /variants, /access, /activity sub-routes)
@@ -512,7 +521,7 @@ After all conflicts are resolved and the document is in `final_voting`, the edit
 
 Both PATCH endpoints require `final_voting` document status (422 otherwise) and supervisor+ access (403 otherwise). Partial updates supported.
 
-**`passesThreshold(yes, no, abstain, threshold)`** — pure helper implementing the four threshold rules with integer math. Lives in `src/routes/documents.js` and is mirrored verbatim in `public/review.js`. Used by `resolveVariants()` (server-side) and the walkthrough's `updateChildrenState()` + `updateMajority()` (client-side). Both copies must stay in sync.
+**`passesThreshold(yes, no, abstain, threshold)`** — pure helper implementing the four threshold rules with integer math. Lives in `src/lib/text.js` and is mirrored verbatim in `public/review.js` (no build step, so no shared import). Used by `resolveVariants()` (server-side) and the walkthrough's `updateChildrenState()` + `updateMajority()` (client-side). A contract test in `tests/frontend.test.js` fails if the two copies drift; boundary behaviour (exact ⅔ passes, exact half on absolute fails) is pinned by `tests/unit.test.js`.
 
 **New schema fields:**
 - `variants.final_yes`, `variants.final_no`, `variants.final_abstain` — INTEGER, null until recorded
@@ -626,12 +635,12 @@ All files share globals: `app.js` loads first and defines the helpers (`esc`, `e
 ## Testing
 
 ```bash
-npm test          # integration tests (node:test, isolated test DB on port 3099)
+npm test          # api + unit + frontend-contract tests (node:test)
 npm run test:e2e  # Playwright browser tests (Firefox, own server on port 3001)
 npm run init-db   # (re)create database from schema
 npm run seed      # seed dev data + print session cookie for browser login
 ```
 
-API tests use Node's built-in `node:test` runner — no additional test framework. They spin up the Express server programmatically on port 3099 against an ephemeral `data/test_votetext.db` that is deleted after each run. OTPs are read directly from the test database to avoid SMTP dependency.
+`npm test` runs three files under Node's built-in `node:test` runner (each in its own process, no extra framework): `tests/api.test.js` (integration — spins up Express on port 3099 against an ephemeral `data/test_votetext.db`, deleted after each run; OTPs read directly from the test DB to avoid SMTP), `tests/unit.test.js` (pure helpers in `src/lib/text.js` — resolve-merge and threshold boundary maths), and `tests/frontend.test.js` (cross-file JS contracts: script load order, duplicate/missing function declarations, router dispatch targets, `passesThreshold` backend↔frontend sync). Note the frontend contract scanner is regex-based: it only recognises `function` declarations (not const arrows) and flags `word(`-shaped text even inside comments.
 
 E2E tests (`tests/e2e/*.spec.js`) run under `@playwright/test` (the only extra dev dependency) against Firefox. `global-setup.js` owns the server lifecycle: it creates `data/e2e_votetext.db` from `schema.sql` **before** spawning `src/server.js` on port 3001 (db.js opens the SQLite file at module load, so Playwright's built-in `webServer` cannot be used), logs in the fixture users via the OTP flow, and stores their session cookies as Playwright `storageState` files under `tests/e2e/.auth/`. `global-teardown.js` kills the server via its PID file and deletes the DB. Specs create their own documents through the API (`tests/e2e/helpers.js`), so files stay order-independent. A test-only endpoint `GET /api/auth/test-otp` (registered only when `NODE_ENV === 'test'`) exposes the latest OTP for browser-driven login flows. Coverage maps to the user stories in `specs/user-stories.md` — see the Playwright section of `specs/test-plan.md`.

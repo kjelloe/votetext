@@ -1,6 +1,8 @@
 # VoteText — Test Plan
 
-> Automated: `npm test` runs `tests/api.test.js` against an isolated SQLite database on port 3099.
+> Automated: `npm test` runs three files — `tests/api.test.js` (integration, isolated SQLite DB on port 3099),
+> `tests/unit.test.js` (pure helpers in `src/lib/text.js`), and `tests/frontend.test.js` (cross-file JS contracts).
+> Browser: `npm run test:e2e` runs the Playwright suite (own server on port 3001).
 > Manual UI: open `http://localhost:3000` after `npm run dev` and follow the flows below.
 
 ---
@@ -258,11 +260,12 @@
 | ID | Scenario | Expected |
 |----|----------|----------|
 | R1 | GET `/documents/:id/resolved-text` — no auth | 401 |
-| R2 | GET `/documents/:id/resolved-text` — viewer | 403 |
+| R2 | GET `/documents/:id/resolved-text` — invited viewer during `final_voting` | 403 (preview stays supervisor+ until resolved) |
 | R3 | GET `/documents/:id/resolved-text` — `final_voting` doc, editor | 200, `text` string, `resolved_at: null`, `doc_vote_passed: null` |
 | R4 | GET `/documents/:id/resolved-text` — doc in `open` status | 422 |
 | R5 | POST `/documents/:id/status` `{ status: 'resolved' }` | 200, response doc has `resolved_text` and `resolved_at` set |
-| R6 | GET `/documents/:id/resolved-text` — resolved doc | 200, `resolved_at` present, `doc_vote_passed: null` (no doc vote recorded), approved variant text present in `text` |
+| R6 | GET `/documents/:id/resolved-text` — resolved doc, owner | 200, `resolved_at` present, `doc_vote_passed: null` (no doc vote recorded), approved variant text present in `text` |
+| R7 | GET `/documents/:id/resolved-text` — resolved doc, invited viewer | 200 with stored text (US-10: any participant reads the outcome) |
 
 ---
 
@@ -378,9 +381,45 @@
 
 ---
 
+## Group Y — Read-Access Matrix + Expiry (2026-07-11 hardening)
+
+> Pins the consolidated access decision (`resolveAccessLevel` in `middleware/access.js`)
+> across every document read endpoint, so refactors cannot silently reopen the
+> `/lines` / `/text` / `/variants` hole. "All reads" = GET `/:id`, `/:id/lines`,
+> `/:id/text`, `/:id/variants`.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| Y1 | Setup: open + draft docs, invited viewer, blocked viewer, superadmin (role via SQL) | 201s; sessions established |
+| Y2 | Authenticated user with NO access record — all reads | 403 on all four |
+| Y3 | Blocked user — all reads | 403 on all four |
+| Y4 | Anonymous, no `allow_anonymous_view` — all reads | 403 on all four |
+| Y5 | Invited viewer — all reads | 200 on all four |
+| Y6 | Draft doc: viewer record → all reads + `/activity`; owner → all reads | viewer 403 everywhere; owner 200 |
+| Y7 | `default_access = viewer` set | no-record user 200 on all reads of open doc; blocked user still 403; draft ignores default (403 incl. `/activity`) |
+| Y8 | `allow_anonymous_view` on: anonymous reads + elevated ops | reads 200; POST `/hide` and POST `/vote` → 401 |
+| Y9 | Superadmin without any access record | GET doc 200 with `my_access_level = 'admin'`; draft reads 200; hide/unhide 200; `/moderation` 200; PATCH doc 200 |
+| Y10 | Verify OTP whose `expires_at` is in the past | 401 |
+| Y11 | GET `/auth/me` after session `expires_at` set to past | 200 before, 401 after |
+
+---
+
+## Unit tests (`tests/unit.test.js`)
+
+> 20 tests for the pure helpers in `src/lib/text.js` — no DB, no server. Run as
+> part of `npm test` (which executes `tests/api.test.js`, `tests/unit.test.js`,
+> and `tests/frontend.test.js`).
+
+- `applyVariantsToText` — replace/insert/delete, offset-order application, overlap-skip (first by `char_start` wins), adjacent ranges, end-of-text spans, empty list, multi-line
+- `passesThreshold` — boundary cases: exact ⅔ **passes**, exactly half on `absolute` **fails**, abstain in the denominator for non-simple thresholds only, zero/null/undefined votes fail, unknown threshold falls back to simple
+- `importText` — contiguous char offsets across newlines, page rollover, join round-trip, import→apply offset round-trip
+- `tests/frontend.test.js` additionally asserts the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical (whitespace-normalised)
+
+---
+
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (41 tests). Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (44 tests). Run with `npm run test:e2e`.
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -398,6 +437,7 @@
 | `review-flow.spec.js` | US-8 | Review cards + overlap badge; CONFLICT/NOT VOTING buttons; unresolved group gates Ready (alert); ordering (via API — HTML5 DnD not automatable) turns Ready green → transitions to final_voting |
 | `final-voting.spec.js` | US-9 | Progress bar 0→1 of 3; tally save + ✓ Saved + majority label + persistence; threshold dropdown recalculates (70% simple → 64% needs ⅔); child greys when parent passes; audit trail; overall doc vote |
 | `resolved.spec.js` | US-10 | Mark as Resolved (confirm) → PASSED banner + applied text; Export Markdown download; Print HTML popup; Resolved text toolbar button |
+| `xss.spec.js` | guard rail | Hostile `<img onerror>` / `<script>` payloads in document title, variant title/rationale/text, and comments render as inert text (`esc()` regression net for template changes) |
 
 ### Known limitations
 
@@ -463,7 +503,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Resolved text preview (final_voting):** in voting walkthrough, click "Resolved text" button → resolved-text view shows document with approved variants applied; Export Markdown downloads `.md`; Print HTML opens clean browser tab; "Mark as Resolved" button visible to owner
 - [ ] **Mark as Resolved:** click Mark as Resolved → confirm → document transitions to `resolved`; resolved-text view reloads showing PASSED/FAILED banner with timestamp
 - [ ] **Fork as new document:** on resolved doc resolved-text view, click "Fork as new document" → new draft document created; if PASSED it contains the resolved text, if FAILED it contains the original text
-- [ ] **Resolved text on document page:** resolved/archived doc → "Resolved text" button appears in document viewer toolbar for owner
+- [ ] **Resolved text on document page:** resolved/archived doc → "Resolved text" button appears in document viewer toolbar for every logged-in participant (viewer included); during final_voting only supervisor+ see it
 - [ ] **Supervisor access modal:** invite a user as `supervisor` → they see Manage access button; modal is read-only (no Remove, no Default access selector); their invite dropdown caps at supervisor
 - [ ] **Supervisor voting cycle:** as supervisor: open → voting → review buttons work → resolve conflicts → final voting → record tallies → Mark as Resolved; archiving the resolved doc is refused (admin only)
 - [ ] **Hide proposal (UC-18):** as supervisor, open a proposal → Hide button in header → confirm → red "Hidden by moderator" banner; second browser (voter) no longer sees it in the sidebar and the direct link 404s; Unhide restores it

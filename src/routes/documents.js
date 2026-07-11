@@ -292,13 +292,18 @@ router.get('/:id/text', (req, res, next) => {
 });
 
 // GET /api/documents/:id/resolved-text
-router.get('/:id/resolved-text', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
+// Resolved/archived: any participant may read the outcome (US-10). The
+// final_voting preview stays supervisor+ — it shows a result that is not final.
+router.get('/:id/resolved-text', requireAuth, requireDocumentAccess('viewer'), (req, res, next) => {
     try {
         const doc = req.document;
         if (!['final_voting', 'resolved', 'archived'].includes(doc.status)) {
             return res.status(422).json({ error: 'Resolved text not available for this document status' });
         }
         if (doc.status === 'final_voting') {
+            if (ACCESS_LEVELS.indexOf(req.userAccessLevel) < ACCESS_LEVELS.indexOf('supervisor')) {
+                return res.status(403).json({ error: 'Supervisor access required until the document is resolved' });
+            }
             const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
             const originalText = lines.map(l => l.original_text).join('\n');
             const approved = getAll("SELECT * FROM variants WHERE document_id = ? AND status = 'approved' AND is_hidden = 0", [doc.id]);

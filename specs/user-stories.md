@@ -177,7 +177,7 @@ The stories assume a document has already been created and is in **Open** status
 
 ## Coverage map
 
-> All 10 stories have Playwright coverage as of 2026-07-10 (41 tests in `tests/e2e/`) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
+> All 10 stories have Playwright coverage as of 2026-07-10 (44 tests in `tests/e2e/`, incl. an XSS guard-rail spec) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
 
 | Story | Playwright priority | Video segment |
 |-------|--------------------|-|
