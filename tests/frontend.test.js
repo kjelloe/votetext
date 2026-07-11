@@ -219,3 +219,15 @@ test('auth.js only uses globals that app.js exports (no missing cross-file deps)
             `auth.js depends on "${name}" but it is not declared as a function in app.js`);
     }
 });
+
+test('passesThreshold: backend (src/lib/text.js) and frontend (review.js) copies are identical', () => {
+    const extract = (src, file) => {
+        const m = src.match(/function passesThreshold\([\s\S]*?\n\}/);
+        assert.ok(m, `passesThreshold not found in ${file}`);
+        return m[0].replace(/\s+/g, ' ').trim();
+    };
+    const backend = extract(fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'text.js'), 'utf8'), 'src/lib/text.js');
+    const frontend = extract(fs.readFileSync(path.join(PUBLIC, 'review.js'), 'utf8'), 'public/review.js');
+    assert.equal(frontend, backend,
+        'passesThreshold has drifted between src/lib/text.js and public/review.js — no build step, so the copies must be edited together');
+});

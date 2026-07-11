@@ -2193,6 +2193,167 @@ test('X13: superadmin lists users and toggles is_protected; search respects it',
     assert.ok(s2.data.users.some(u => u.id === modVoterId), 'unprotected user searchable again');
 });
 
+// ── GROUP Y: READ-ACCESS MATRIX + EXPIRY ─────────────────────────────────────
+// Pins the access decision for every document read endpoint so the
+// consolidation refactor cannot silently change behaviour.
+
+let yMemberCookie = '';   // viewer record on yDocId and yDraftId
+let yBlockedCookie = '';  // blocked record on yDocId
+let ySadminCookie = '';   // role = superadmin, no access records
+let yDocId, yDraftId, yVarId;
+
+const Y_READS = id => [`/documents/${id}`, `/documents/${id}/lines`, `/documents/${id}/text`, `/documents/${id}/variants`];
+
+test('Y1: setup — open + draft docs, member, blocked user, superadmin', async () => {
+    const d1 = await req('POST', '/documents', { body: { title: 'Access matrix doc', text: 'Alpha line.\nBeta line.' }, cookie: sessionCookie });
+    yDocId = d1.data.document.id;
+    await req('POST', `/documents/${yDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const d2 = await req('POST', '/documents', { body: { title: 'Access matrix draft', text: 'Draft secret line.' }, cookie: sessionCookie });
+    yDraftId = d2.data.document.id;
+
+    const v = await req('POST', `/documents/${yDocId}/variants`, {
+        body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'Omega', title: 'Y var', rationale: 'r' },
+        cookie: sessionCookie,
+    });
+    yVarId = v.data.variant.id;
+
+    for (const [email, docs] of [['ymember@test.com', [yDocId, yDraftId]], ['yblocked@test.com', [yDocId]]]) {
+        for (const id of docs) {
+            const r = await req('POST', `/documents/${id}/access`, { body: { email, access_level: 'viewer' }, cookie: sessionCookie });
+            assert.equal(r.status, 201);
+        }
+        await req('POST', '/auth/request-otp', { body: { email } });
+        const otp = latestOtp(email);
+        const loginR = await req('POST', '/auth/verify-otp', { body: { email, code: otp.code } });
+        if (email === 'ymember@test.com') yMemberCookie = `session_id=${loginR.sessionId}`;
+        else yBlockedCookie = `session_id=${loginR.sessionId}`;
+    }
+
+    const list = await req('GET', `/documents/${yDocId}/access`, { cookie: sessionCookie });
+    const blockedEntry = list.data.access.find(a => a.email === 'yblocked@test.com');
+    const bR = await req('PATCH', `/documents/${yDocId}/access/${blockedEntry.user_id}`, { body: { blocked: true }, cookie: sessionCookie });
+    assert.equal(bR.status, 200);
+
+    await req('POST', '/auth/request-otp', { body: { email: 'ysadmin@test.com' } });
+    const otp = latestOtp('ysadmin@test.com');
+    const loginR = await req('POST', '/auth/verify-otp', { body: { email: 'ysadmin@test.com', code: otp.code } });
+    ySadminCookie = `session_id=${loginR.sessionId}`;
+    db.prepare("UPDATE users SET role = 'superadmin' WHERE email = 'ysadmin@test.com'").run();
+});
+
+test('Y2: authenticated user with NO access record → 403 on all read endpoints', async () => {
+    for (const p of Y_READS(yDocId)) {
+        const r = await req('GET', p, { cookie: viewerCookie });
+        assert.equal(r.status, 403, `${p} should be 403 for a user without a record`);
+    }
+});
+
+test('Y3: blocked user → 403 on all read endpoints', async () => {
+    for (const p of Y_READS(yDocId)) {
+        const r = await req('GET', p, { cookie: yBlockedCookie });
+        assert.equal(r.status, 403, `${p} should be 403 for a blocked user`);
+    }
+});
+
+test('Y4: anonymous without allow_anonymous_view → 403 on all read endpoints', async () => {
+    for (const p of Y_READS(yDocId)) {
+        const r = await req('GET', p);
+        assert.equal(r.status, 403, `${p} should be 403 for anonymous`);
+    }
+});
+
+test('Y5: invited viewer → 200 on all read endpoints', async () => {
+    for (const p of Y_READS(yDocId)) {
+        const r = await req('GET', p, { cookie: yMemberCookie });
+        assert.equal(r.status, 200, `${p} should be 200 for an invited viewer`);
+    }
+});
+
+test('Y6: draft doc — viewer record → 403 on all reads + /activity; owner → 200', async () => {
+    for (const p of [...Y_READS(yDraftId), `/documents/${yDraftId}/activity`]) {
+        const r = await req('GET', p, { cookie: yMemberCookie });
+        assert.equal(r.status, 403, `${p} should be 403 for a viewer on a draft`);
+    }
+    for (const p of Y_READS(yDraftId)) {
+        const r = await req('GET', p, { cookie: sessionCookie });
+        assert.equal(r.status, 200, `${p} should be 200 for the owner on a draft`);
+    }
+});
+
+test('Y7: default_access grants reads on open docs but never on drafts', async () => {
+    await req('PATCH', `/documents/${yDocId}`, { body: { settings: { default_access: 'viewer' } }, cookie: sessionCookie });
+    for (const p of Y_READS(yDocId)) {
+        const r = await req('GET', p, { cookie: viewerCookie });
+        assert.equal(r.status, 200, `${p} should be 200 via default_access`);
+    }
+    // Blocked users stay blocked even with default_access set
+    const bR = await req('GET', `/documents/${yDocId}`, { cookie: yBlockedCookie });
+    assert.equal(bR.status, 403);
+
+    await req('PATCH', `/documents/${yDraftId}`, { body: { settings: { default_access: 'viewer' } }, cookie: sessionCookie });
+    for (const p of [...Y_READS(yDraftId), `/documents/${yDraftId}/activity`]) {
+        const r = await req('GET', p, { cookie: viewerCookie });
+        assert.equal(r.status, 403, `${p} draft must ignore default_access`);
+    }
+});
+
+test('Y8: anonymous with allow_anonymous_view → viewer reads only, never elevated ops', async () => {
+    await req('PATCH', `/documents/${yDocId}`, { body: { settings: { allow_anonymous_view: true } }, cookie: sessionCookie });
+    for (const p of Y_READS(yDocId)) {
+        const r = await req('GET', p);
+        assert.equal(r.status, 200, `${p} should be 200 for anonymous with allow_anonymous_view`);
+    }
+    const hideR = await req('POST', `/variants/${yVarId}/hide`);
+    assert.equal(hideR.status, 401, 'anonymous supervisor op must be rejected');
+    const voteR = await req('POST', `/variants/${yVarId}/vote`, { body: { vote_value: 1 } });
+    assert.equal(voteR.status, 401, 'anonymous vote must be rejected');
+});
+
+test('Y9: superadmin acts as document admin everywhere', async () => {
+    const dR = await req('GET', `/documents/${yDocId}`, { cookie: ySadminCookie });
+    assert.equal(dR.status, 200);
+    assert.equal(dR.data.document.my_access_level, 'admin');
+
+    for (const p of Y_READS(yDraftId)) {
+        const r = await req('GET', p, { cookie: ySadminCookie });
+        assert.equal(r.status, 200, `${p} draft should be 200 for superadmin`);
+    }
+
+    const hideR = await req('POST', `/variants/${yVarId}/hide`, { cookie: ySadminCookie });
+    assert.equal(hideR.status, 200, 'superadmin can moderate without an access record');
+    await req('POST', `/variants/${yVarId}/unhide`, { cookie: ySadminCookie });
+
+    const modR = await req('GET', `/documents/${yDocId}/moderation`, { cookie: ySadminCookie });
+    assert.equal(modR.status, 200);
+
+    const pR = await req('PATCH', `/documents/${yDocId}`, { body: { description: 'superadmin was here' }, cookie: ySadminCookie });
+    assert.equal(pR.status, 200, 'superadmin passes requireDocumentAccess(editor)');
+});
+
+test('Y10: expired OTP → 401', async () => {
+    await req('POST', '/auth/request-otp', { body: { email: 'yexpired@test.com' } });
+    const otp = latestOtp('yexpired@test.com');
+    db.prepare("UPDATE otp_codes SET expires_at = ? WHERE email = 'yexpired@test.com'")
+        .run(new Date(Date.now() - 60000).toISOString());
+    const r = await req('POST', '/auth/verify-otp', { body: { email: 'yexpired@test.com', code: otp.code } });
+    assert.equal(r.status, 401);
+});
+
+test('Y11: expired session → 401 on /auth/me', async () => {
+    await req('POST', '/auth/request-otp', { body: { email: 'ysession@test.com' } });
+    const otp = latestOtp('ysession@test.com');
+    const loginR = await req('POST', '/auth/verify-otp', { body: { email: 'ysession@test.com', code: otp.code } });
+    const cookie = `session_id=${loginR.sessionId}`;
+    const okR = await req('GET', '/auth/me', { cookie });
+    assert.equal(okR.status, 200);
+
+    const rawSid = loginR.sessionId.slice(0, loginR.sessionId.lastIndexOf('.'));
+    db.prepare('UPDATE sessions SET expires_at = ? WHERE session_id = ?')
+        .run(new Date(Date.now() - 60000).toISOString(), rawSid);
+    const r = await req('GET', '/auth/me', { cookie });
+    assert.equal(r.status, 401);
+});
+
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
 test('POST /auth/logout — clears session → 200', async () => {

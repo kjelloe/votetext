@@ -3,22 +3,19 @@
 const { Router } = require('express');
 const { getOne, run, logActivity } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { ACCESS_LEVELS } = require('../middleware/access');
+const { resolveAccessLevel, meetsLevel } = require('../middleware/access');
 
 const router = Router();
 const editWindowMins = parseInt(process.env.COMMENT_EDIT_WINDOW_MINUTES || '30');
 const EDIT_WINDOW_MS = editWindowMins * 60 * 1000;
 
 function canModerate(req, documentId) {
-    const doc = getOne('SELECT owner_id FROM documents WHERE id = ? AND deleted_at IS NULL', [documentId]);
+    const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [documentId]);
     if (!doc) return false;
-    if (doc.owner_id === req.user.id || req.user.role === 'superadmin') return true;
-    const access = getOne(
-        'SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?',
-        [req.user.id, documentId]
-    );
-    return !!access && !access.blocked &&
-        ACCESS_LEVELS.indexOf(access.access_level) >= ACCESS_LEVELS.indexOf('supervisor');
+    let settings = {};
+    try { settings = JSON.parse(doc.settings || '{}'); } catch {}
+    const level = resolveAccessLevel(doc, settings, req);
+    return level !== null && meetsLevel(level, 'supervisor', req);
 }
 
 // PATCH /api/comments/:id

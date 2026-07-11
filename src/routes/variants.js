@@ -3,25 +3,15 @@
 const { Router } = require('express');
 const { db, getOne, getAll, run, transaction, logActivity } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { ACCESS_LEVELS } = require('../middleware/access');
+const { resolveAccessLevel, meetsLevel } = require('../middleware/access');
 
 const router = Router();
 
 function checkDocAccess(doc, req, minLevel) {
     let settings = {};
     try { settings = JSON.parse(doc.settings || '{}'); } catch {}
-    const userId = req.user ? req.user.id : null;
-    if (!userId && (!settings.allow_anonymous_view || doc.status === 'draft')) return false;
-    if (userId && doc.owner_id !== userId) {
-        const access = getOne(
-            'SELECT blocked, access_level FROM user_document_access WHERE user_id = ? AND document_id = ?',
-            [userId, doc.id]
-        );
-        if (!access || access.blocked) return false;
-        const effective = doc.status === 'draft' ? 'editor' : minLevel;
-        if (effective && ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf(effective)) return false;
-    }
-    return true;
+    const level = resolveAccessLevel(doc, settings, req);
+    return level !== null && meetsLevel(level, minLevel, req);
 }
 
 function updateTallies(variantId) {
@@ -224,13 +214,7 @@ router.patch('/:id/review-status', requireAuth, (req, res, next) => {
             return res.status(422).json({ error: 'Document must be in voting or final_voting status' });
         }
 
-        const isOwner = doc.owner_id === req.user.id;
-        if (!isOwner) {
-            const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
-            if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
-            const userIdx = ACCESS_LEVELS.indexOf(access.access_level);
-            if (userIdx < ACCESS_LEVELS.indexOf('supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
-        }
+        if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
 
         // Clear conflict ordering when removing a proposal from the vote
         const clearOrder = ['rejected', 'not_applicable', 'withdrawn'].includes(status);
@@ -256,14 +240,7 @@ router.patch('/:id/conflict-order', requireAuth, (req, res, next) => {
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (doc.status !== 'voting') return res.status(422).json({ error: 'Document must be in voting status to edit conflict order' });
 
-        const isOwner = doc.owner_id === req.user.id;
-        if (!isOwner) {
-            const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
-            if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
-            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('supervisor')) {
-                return res.status(403).json({ error: 'Supervisor access required' });
-            }
-        }
+        if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
 
         let { vote_order, parent_variant_id } = req.body;
 
@@ -304,14 +281,7 @@ router.patch('/:id/final-vote', requireAuth, (req, res, next) => {
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (doc.status !== 'final_voting') return res.status(422).json({ error: 'Document must be in final_voting status' });
 
-        const isOwner = doc.owner_id === req.user.id;
-        if (!isOwner) {
-            const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
-            if (!access || access.blocked) return res.status(403).json({ error: 'Access denied' });
-            if (ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('supervisor')) {
-                return res.status(403).json({ error: 'Supervisor access required' });
-            }
-        }
+        if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
 
         const { yes, no, abstain } = req.body;
         for (const [k, v] of [['yes', yes], ['no', no], ['abstain', abstain]]) {

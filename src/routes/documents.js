@@ -3,38 +3,13 @@
 const { Router } = require('express');
 const { db, getOne, getAll, run, transaction, logActivity, applyVotingSchedules } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { requireDocumentAccess, ACCESS_LEVELS } = require('../middleware/access');
+const { requireDocumentAccess, resolveAccessLevel, ACCESS_LEVELS } = require('../middleware/access');
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const router = Router();
 
-function applyVariantsToText(originalText, approvedVariants) {
-    const sorted = [...approvedVariants].sort((a, b) => a.char_start - b.char_start);
-    let result = '';
-    let pos = 0;
-    for (const v of sorted) {
-        if (v.char_start < pos) continue;
-        result += originalText.slice(pos, v.char_start);
-        if (v.operation !== 'delete') result += v.new_text;
-        pos = v.char_end;
-    }
-    return result + originalText.slice(pos);
-}
-
-function passesThreshold(yes, no, abstain, threshold) {
-    yes = yes || 0; no = no || 0; abstain = abstain || 0;
-    const total = yes + no + abstain;
-    if (total === 0) return false;
-    switch (threshold) {
-        case 'absolute':      return 2 * yes > total;
-        case 'two_thirds':    return 3 * yes >= 2 * total;
-        case 'three_quarters': return 4 * yes >= 3 * total;
-        default:              return yes > no;
-    }
-}
-
-const VALID_THRESHOLDS = new Set(['simple', 'absolute', 'two_thirds', 'three_quarters']);
+const { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, importText } = require('../lib/text');
 
 function resolveVariants(documentId) {
     const docRow = getOne('SELECT settings FROM documents WHERE id = ?', [documentId]);
@@ -87,22 +62,6 @@ const VALID_TRANSITIONS = {
     resolved: ['archived'],
     archived: [],
 };
-
-function importText(text, linesPerPage) {
-    const lines = text.split('\n');
-    let charOffset = 0;
-    return lines.map((lineText, i) => {
-        const item = {
-            page_num: Math.floor(i / linesPerPage) + 1,
-            line_num: i + 1,
-            original_text: lineText,
-            char_offset_start: charOffset,
-            char_offset_end: charOffset + lineText.length,
-        };
-        charOffset += lineText.length + 1; // +1 for \n
-        return item;
-    });
-}
 
 // GET /api/documents
 router.get('/', (req, res, next) => {
@@ -186,23 +145,8 @@ router.get('/:id', (req, res, next) => {
         let settings = {};
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
 
-        const userId = req.user ? req.user.id : null;
-        let myAccessLevel = null;
-
-        if (!userId) {
-            if (!settings.allow_anonymous_view || doc.status === 'draft') return res.status(403).json({ error: 'Access denied' });
-            myAccessLevel = 'viewer';
-        } else if (doc.owner_id !== userId) {
-            const access = getOne('SELECT access_level, blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [userId, doc.id]);
-            if (access && access.blocked) return res.status(403).json({ error: 'Access denied' });
-            if (!access && !ACCESS_LEVELS.includes(settings.default_access)) return res.status(403).json({ error: 'Access denied' });
-            if (doc.status === 'draft' && (!access || ACCESS_LEVELS.indexOf(access.access_level) < ACCESS_LEVELS.indexOf('editor'))) {
-                return res.status(403).json({ error: 'Access denied' });
-            }
-            myAccessLevel = access ? access.access_level : settings.default_access;
-        } else {
-            myAccessLevel = 'admin';
-        }
+        const myAccessLevel = resolveAccessLevel(doc, settings, req);
+        if (myAccessLevel === null) return res.status(403).json({ error: 'Access denied' });
 
         res.json({ document: { ...doc, settings, my_access_level: myAccessLevel } });
     } catch (err) {
@@ -316,14 +260,13 @@ router.delete('/:id', requireAuth, (req, res, next) => {
 // GET /api/documents/:id/lines
 router.get('/:id/lines', (req, res, next) => {
     try {
-        const doc = getOne('SELECT id, owner_id, settings, total_pages FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+        const doc = getOne('SELECT id, owner_id, status, settings, total_pages FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
 
         let settings = {};
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
 
-        const userId = req.user ? req.user.id : null;
-        if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
+        if (resolveAccessLevel(doc, settings, req) === null) return res.status(403).json({ error: 'Access denied' });
 
         const page = Math.max(1, parseInt(req.query.page || '1'));
         const lines = getAll('SELECT * FROM document_lines WHERE document_id = ? AND page_num = ? ORDER BY line_num', [doc.id, page]);
@@ -336,12 +279,11 @@ router.get('/:id/lines', (req, res, next) => {
 // GET /api/documents/:id/text — full reconstructed document text (for copy/export)
 router.get('/:id/text', (req, res, next) => {
     try {
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+        const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         let settings = {};
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
-        const userId = req.user ? req.user.id : null;
-        if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
+        if (resolveAccessLevel(doc, settings, req) === null) return res.status(403).json({ error: 'Access denied' });
         const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
         res.json({ text: lines.map(l => l.original_text).join('\n') });
     } catch (err) {
@@ -455,13 +397,12 @@ router.post('/:id/copy-data', requireAuth, requireDocumentAccess('admin'), (req,
 // GET /api/documents/:id/variants
 router.get('/:id/variants', (req, res, next) => {
     try {
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+        const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
 
         let settings = {};
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
-        const userId = req.user ? req.user.id : null;
-        if (!userId && !settings.allow_anonymous_view) return res.status(403).json({ error: 'Access denied' });
+        if (resolveAccessLevel(doc, settings, req) === null) return res.status(403).json({ error: 'Access denied' });
 
         const variants = getAll(
             `SELECT v.*, u.display_name as proposer_name, u.organization as proposer_org,
