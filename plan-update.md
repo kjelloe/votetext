@@ -1,6 +1,6 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-07-11_
+_Last updated: 2026-07-13_
 
 The codebase is feature-complete against the specs (use cases UC-1 through UC-20).
 Test status: **269 node tests** (239 API + 20 unit + 10 frontend contract) and
@@ -95,5 +95,5 @@ chosen direction rather than a guess.
 
 ## Small doc cleanups to fold in along the way
 
-- Add UC-20 to the manual-validation sign-off table (+ a UC-20 walkthrough).
+- ~~Add UC-20 to the manual-validation sign-off table (+ a UC-20 walkthrough).~~ Done 2026-07-13.
 - Decide on the `votetext-ops` repo at deploy time.

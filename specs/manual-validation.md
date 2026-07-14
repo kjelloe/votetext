@@ -68,6 +68,19 @@ Use the supervisor from UC-19 (or any editor/admin) plus a voter in a second bro
 
 ---
 
+## UC-20 — Comment editing
+
+Post a comment as one user; use a second browser for the reply-grace checks.
+
+- [ ] Own comment shows an **Edit** button within the window → click → inline form pre-filled with the current text; Save updates it in place
+- [ ] After saving, a "· edited <time>" marker appears next to the timestamp; reload keeps the marker and the new text
+- [ ] Another user's comment shows no Edit button; your own comment past the 30-min window (`COMMENT_EDIT_WINDOW_MINUTES`) no longer offers Edit
+- [ ] Edit a parent comment → its direct replies show a "parent comment was edited" hint and regain an **Edit** button even if their own window had passed
+- [ ] A comment hidden by a moderator cannot be edited (no Edit button; direct PATCH returns 422)
+- [ ] Activity feed / log records the edit (`comment_updated`); the previous text is not shown in the UI payload
+
+---
+
 ## Sign-off
 
 | UC | Validated by | Date | Result |
@@ -78,3 +91,4 @@ Use the supervisor from UC-19 (or any editor/admin) plus a voter in a second bro
 | UC-17 | | | |
 | UC-18 | | | |
 | UC-19 | | | |
+| UC-20 | | | |
