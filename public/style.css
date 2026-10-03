@@ -1128,12 +1128,22 @@ mark.preview-ins {
     .page-container { padding: 1.25rem 1rem; }
     .login-card { padding: 1.75rem 1.25rem; }
     .variant-layout { padding: 1rem; }
+    .review-layout { grid-template-columns: 1fr; }
+    .review-text-panel { position: static; max-height: 50vh; }
 }
 
 @media (max-width: 480px) {
-    #app-nav { display: none; }
+    .header-inner { flex-wrap: wrap; gap: 0.5rem; height: auto; min-height: 60px; padding: 0.5rem 1rem; }
+    #app-nav { order: 3; flex: none; width: 100%; justify-content: flex-start; }
+    #user-name-display { display: none; }
     .doc-text-body { font-size: 0.75rem; }
 }
+
+.access-row-blocked > span:first-child { text-decoration: line-through; opacity: 0.6; }
+.variant-card:focus-visible { outline: 2px solid var(--color-primary, #2563eb); outline-offset: 2px; }
+.alert-neutral { background: var(--color-bg-secondary); color: var(--color-text-muted, #475569); border: 1px solid var(--color-border); }
+.conflict-kbd { display: inline-flex; gap: 0.25rem; margin-left: auto; }
+.conflict-kbd button { padding: 0 0.4rem; font-size: 0.75rem; line-height: 1.5; }
 
 /* ===== Reduce motion ===== */
 @media (prefers-reduced-motion: reduce) {

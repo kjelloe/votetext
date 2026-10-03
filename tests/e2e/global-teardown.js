@@ -13,5 +13,7 @@ module.exports = async function globalTeardown() {
         try { process.kill(pid, 'SIGTERM'); } catch (_) {}
         fs.unlinkSync(pidFile);
     }
-    if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+    for (const f of [DB_PATH, DB_PATH + '-wal', DB_PATH + '-shm']) {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
 };

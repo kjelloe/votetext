@@ -32,11 +32,11 @@ function _buildOrderedBlocks(variants, varMap) {
             return a.vote_order - b.vote_order;
         });
         const items = [];
-        for (const root of roots) {
-            items.push({ v: varMap[root.id], isChild: false, parentNum: null });
-            for (const child of group.filter(c => c.parent_variant_id === root.id))
-                items.push({ v: varMap[child.id], isChild: true, parentNum: varMap[root.id].num });
-        }
+        roots.forEach((root, ri) => {
+            items.push({ v: varMap[root.id], isChild: false, parentNum: null, orderIdx: ri + 1 });
+            const children = group.filter(c => c.parent_variant_id === root.id).sort((a, b) => (a.vote_order || Infinity) - (b.vote_order || Infinity));
+            children.forEach((child, ci) => items.push({ v: varMap[child.id], isChild: true, parentNum: varMap[root.id].num, orderIdx: ci + 1 }));
+        });
         return { type: 'group', groupNum: groupIdx, minCharStart, items };
     });
 
@@ -49,7 +49,8 @@ function _buildOrderedBlocks(variants, varMap) {
 }
 
 function _csvCell(val) {
-    const s = val == null ? '' : String(val).replace(/\r?\n/g, ' ');
+    let s = val == null ? '' : String(val).replace(/\r?\n/g, ' ');
+    if (typeof val === 'string' && /^[=+\-@\t]/.test(s)) s = "'" + s;
     return '"' + s.replace(/"/g, '""') + '"';
 }
 
@@ -63,9 +64,9 @@ function _downloadCSV(doc, blocks, fullText) {
     ];
     let order = 0;
     for (const block of blocks) {
-        for (const { v, isChild, parentNum } of block.items) {
+        for (const { v, isChild, parentNum, orderIdx } of block.items) {
             order++;
-            const orig = fullText ? fullText.slice(v.char_start, v.char_end) : '';
+            const orig = fullText && v.operation !== 'insert' ? fullText.slice(v.char_start, v.char_end) : '';
             const thresholdLabel = v.majority_threshold
                 ? THRESHOLD_LABELS[v.majority_threshold] || v.majority_threshold
                 : `doc default (${THRESHOLD_LABELS[docDefaultThreshold] || docDefaultThreshold})`;
@@ -75,7 +76,7 @@ function _downloadCSV(doc, blocks, fullText) {
                 v.proposer_name || '', v.proposer_org || '',
                 orig, v.new_text,
                 block.type === 'group' ? `Group ${block.groupNum}` : '',
-                isChild ? 'child' : (v.vote_order || ''),
+                block.type === 'group' ? orderIdx : '',
                 parentNum || '',
                 v.final_yes ?? '', v.final_no ?? '', v.final_abstain ?? '',
                 thresholdLabel
@@ -98,20 +99,20 @@ function _openPrintHTML(doc, blocks, fullText) {
     let body = '';
     for (const block of blocks) {
         if (block.type === 'group') {
-            const lines = [block.items[0].v.line_start, ...block.items.map(i => i.v.line_end)];
+            const lines = block.items.flatMap(i => [i.v.line_start, i.v.line_end]).filter(Boolean);
             body += `<div class="conflict-group"><div class="group-header">Conflict group ${block.groupNum} — Lines ${Math.min(...lines)}–${Math.max(...lines)}</div>`;
         }
-        for (const { v, isChild, parentNum } of block.items) {
+        for (const { v, isChild, parentNum, orderIdx } of block.items) {
             order++;
-            const orig = fullText ? fullText.slice(v.char_start, v.char_end) : '';
+            const orig = fullText && v.operation !== 'insert' ? fullText.slice(v.char_start, v.char_end) : '';
             const childNote = isChild ? `<span class="child-note">Child of #${parentNum} — voted only if parent fails</span>` : '';
-            const orderBadge = !isChild && block.type === 'group' ? `<span class="order-badge">${v.vote_order}</span>` : '';
+            const orderBadge = !isChild && block.type === 'group' ? `<span class="order-badge">${orderIdx}</span>` : '';
             const thresholdLbl = v.majority_threshold
                 ? THRESHOLD_LABELS[v.majority_threshold] || v.majority_threshold
                 : `doc default — ${THRESHOLD_LABELS[docDefaultThreshold] || docDefaultThreshold}`;
             body += `<div class="proposal${isChild ? ' child' : ''}">
 <div class="proposal-header">${orderBadge}<strong>#${esc2(v.num)} ${esc2(v.title || v.operation)}</strong> <span class="op">${esc2(v.operation)}</span> · Lines ${esc2(v.line_start)}–${esc2(v.line_end)} · ${esc2(v.proposer_name || '')}${v.proposer_org ? ` (${esc2(v.proposer_org)})` : ''}${childNote}</div>
-<div class="texts"><div class="label">Original:</div><div class="text">${esc2(orig) || '<em>—</em>'}</div><div class="label">Proposed:</div><div class="text">${esc2(v.new_text) || '<em>—</em>'}</div></div>
+<div class="texts"><div class="label">${v.operation === 'insert' ? 'Inserted at:' : 'Original:'}</div><div class="text">${v.operation === 'insert' ? `character ${esc2(v.char_start)} (nothing removed)` : (esc2(orig) || '<em>—</em>')}</div><div class="label">Proposed:</div><div class="text">${esc2(v.new_text) || '<em>—</em>'}</div></div>
 <div class="tally">Threshold: ${esc2(thresholdLbl)} &nbsp;·&nbsp; Yes: ______ &nbsp;&nbsp; No: ______ &nbsp;&nbsp; Abstain: ______</div>
 </div>`;
         }
@@ -150,10 +151,14 @@ ${body}
 
 /* ===== Resolved Text View ===== */
 
+function _outcomeLabel(docVotePassed) {
+    return docVotePassed == null ? 'RESOLVED' : docVotePassed ? 'PASSED' : 'FAILED';
+}
+
 function _downloadMarkdown(doc, text, docVotePassed, resolvedAt) {
     let md = `# ${doc.title}\n\n`;
     if (resolvedAt) {
-        const label = docVotePassed === false ? 'FAILED' : 'PASSED';
+        const label = _outcomeLabel(docVotePassed);
         md += `_${label} at ${new Date(resolvedAt).toLocaleString()}_\n\n`;
     }
     md += text;
@@ -168,8 +173,7 @@ function _printResolvedHTML(doc, text, docVotePassed, resolvedAt) {
     const esc2 = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     let statusLine = '';
     if (resolvedAt) {
-        const label = docVotePassed === false ? 'FAILED' : 'PASSED';
-        statusLine = `<div class="status-banner ${docVotePassed === false ? 'failed' : 'passed'}">${label} at ${new Date(resolvedAt).toLocaleString()}</div>`;
+        statusLine = `<div class="status-banner ${_outcomeLabel(docVotePassed).toLowerCase()}">${_outcomeLabel(docVotePassed)} at ${new Date(resolvedAt).toLocaleString()}</div>`;
     }
     const lines = text.split('\n').map((l, i) =>
         `<div class="line"><span class="num">${i + 1}</span><span class="text">${esc2(l) || '&nbsp;'}</span></div>`
@@ -178,7 +182,7 @@ function _printResolvedHTML(doc, text, docVotePassed, resolvedAt) {
 body{font-family:Georgia,serif;max-width:820px;margin:2rem auto;color:#111}
 h1{font-size:1.4rem;margin-bottom:.25rem}
 .status-banner{padding:.5rem 1rem;border-radius:4px;font-weight:bold;margin-bottom:1rem}
-.status-banner.passed{background:#d1fae5;color:#065f46}.status-banner.failed{background:#fee2e2;color:#991b1b}
+.status-banner.passed{background:#d1fae5;color:#065f46}.status-banner.failed{background:#fee2e2;color:#991b1b}.status-banner.resolved{background:#f1f5f9;color:#334155}
 .meta{color:#777;font-size:.85rem;margin-bottom:1.5rem}
 .line{display:flex;align-items:baseline;font-size:.875rem;line-height:1.6}
 .num{min-width:3rem;color:#9ca3af;font-size:.75rem;text-align:right;padding-right:.75rem;flex-shrink:0;font-family:monospace}
@@ -213,14 +217,14 @@ async function viewResolvedText(docId) {
     printBtn.addEventListener('click', () => _printResolvedHTML(doc, text, docVotePassed, resolvedAt));
     toolbar.append(mdBtn, printBtn, backBtn);
 
-    if (doc.status === 'final_voting' && isOwner) {
+    if (doc.status === 'final_voting' && hasLevel(doc, 'supervisor')) {
         const resolveBtn = el('button', { class: 'btn btn-primary btn-sm' }, 'Mark as Resolved');
         resolveBtn.addEventListener('click', async () => {
             if (!confirm('Mark as resolved? This will finalize variant statuses and store the resolved text.')) return;
             try {
                 await api('POST', `/documents/${docId}/status`, { status: 'resolved' });
-                // Setting an identical hash fires no hashchange — re-render explicitly
-                if (location.hash === `#/documents/${docId}/resolved-text`) viewResolvedText(docId);
+                // Setting an identical hash fires no hashchange — re-render through the router queue
+                if (location.hash === `#/documents/${docId}/resolved-text`) await runRoute();
                 else location.hash = `#/documents/${docId}/resolved-text`;
             } catch (e) { alert(e.message); }
         });
@@ -245,8 +249,8 @@ async function viewResolvedText(docId) {
     hdr.append(toolbar);
 
     if (doc.status === 'resolved' || doc.status === 'archived') {
-        const passLabel = docVotePassed === false ? 'FAILED' : 'PASSED';
-        const cls = docVotePassed === false ? 'alert-error' : 'alert-success';
+        const passLabel = _outcomeLabel(docVotePassed);
+        const cls = docVotePassed == null ? 'alert-neutral' : docVotePassed ? 'alert-success' : 'alert-error';
         const banner = el('div', { class: `alert ${cls}`, style: 'margin-top:.75rem' });
         banner.textContent = resolvedAt ? `${passLabel} at ${new Date(resolvedAt).toLocaleString()}` : passLabel;
         hdr.append(banner);
@@ -261,6 +265,12 @@ async function viewResolvedText(docId) {
     ).join('');
     wrap.append(textDiv);
     setMain(wrap);
+}
+
+function _requireSupervisor(doc) {
+    if (hasLevel(doc, 'supervisor')) return true;
+    setMain(`<div class="page-container"><div class="alert alert-error">Supervisor access or higher is required for this page.</div><p class="mt-2"><a href="#/documents/${esc(String(doc.id))}">← Back to the document</a></p></div>`);
+    return false;
 }
 
 /* ===== Conflict Resolution View ===== */
@@ -300,10 +310,10 @@ async function viewConflictResolution(docId) {
         api('GET', `/documents/${docId}/variants`),
     ]);
     const doc = docData.document;
+    if (!_requireSupervisor(doc)) return;
     if (doc.status !== 'voting') { location.hash = `#/documents/${docId}/review`; return; }
 
-    const idOrder = Object.fromEntries([...varData.variants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
-    const varMap = Object.fromEntries(varData.variants.map(v => [v.id, { ...v, num: idOrder[v.id] }]));
+    const varMap = Object.fromEntries(varData.variants.map(v => [v.id, { ...v, num: v.proposal_num }]));
 
     const wrap = el('div', { class: 'page-container' });
     const hdr = el('div', { class: 'page-header' });
@@ -311,17 +321,25 @@ async function viewConflictResolution(docId) {
     hdr.append(el('a', { href: `#/documents/${esc(String(docId))}/review`, class: 'btn btn-ghost btn-sm' }, '← Back to review'));
     wrap.append(hdr);
 
+    const goFinal = async () => { try { await api('POST', `/documents/${docId}/status`, { status: 'final_voting' }); location.hash = `#/documents/${docId}`; } catch (e) { alert(e.message); } };
+    const readyBtn = el('button', { class: 'btn btn-lg conflict-ready-btn btn-warning' }, 'Ready for final voting');
+
     if (!_buildConflictGroups(Object.values(varMap)).length) {
         wrap.append(el('div', { class: 'empty-state' },
             el('h3', {}, 'No conflicts to resolve'),
             el('p', {}, 'All active proposals target non-overlapping character ranges.')
         ));
+        if (doc.status === 'voting') {
+            readyBtn.className = 'btn btn-lg conflict-ready-btn btn-success';
+            readyBtn.textContent = '✓ Ready for final voting';
+            readyBtn.onclick = goFinal;
+            wrap.append(readyBtn);
+        }
         setMain(wrap);
         return;
     }
 
     const groupsEl = el('div', { class: 'conflict-groups' });
-    const readyBtn = el('button', { class: 'btn btn-lg conflict-ready-btn btn-warning' }, 'Ready for final voting');
     wrap.append(groupsEl, readyBtn);
     setMain(wrap);
 
@@ -343,7 +361,7 @@ async function viewConflictResolution(docId) {
         readyBtn.className = `btn btn-lg conflict-ready-btn ${allDone ? 'btn-success' : 'btn-warning'}`;
         readyBtn.textContent = allDone ? '✓ Ready for final voting' : 'Ready for final voting';
         readyBtn.onclick = allDone
-            ? async () => { try { await api('POST', `/documents/${docId}/status`, { status: 'final_voting' }); location.hash = `#/documents/${docId}`; } catch (e) { alert(e.message); } }
+            ? goFinal
             : () => alert('All conflict groups must be fully ordered first.\n\nFor each group, drag every proposal into the numbered list above, or drop it onto another proposal to make it a dependent child (voted only if its parent fails).');
     }
 
@@ -363,11 +381,31 @@ function _renderConflictGroup(group, gIdx, save) {
 
     let dragId = null;
 
-    const sortedRoots = (g) => [...g.filter(v => !v.parent_variant_id)].sort((a, b) => {
-        if (a.vote_order == null && b.vote_order == null) return (a.char_start || 0) - (b.char_start || 0);
-        if (a.vote_order == null) return 1; if (b.vote_order == null) return -1;
-        return a.vote_order - b.vote_order;
-    });
+    const sortedRoots = (g) => [...g.filter(v => !v.parent_variant_id && v.vote_order != null)].sort((a, b) => a.vote_order - b.vote_order);
+
+    // Keyboard/touch alternative to drag-and-drop: move up/down, make a child of a root, add to the list
+    const kbd = (v, roots) => {
+        const box = el('span', { class: 'conflict-kbd' });
+        const isRoot = roots.some(r => r.id === v.id);
+        if (isRoot) {
+            const i = roots.findIndex(r => r.id === v.id);
+            const reorder = (from, to) => { const r = [...roots]; const [m] = r.splice(from, 1); r.splice(to, 0, m); return save(r.map((x, k) => ({ id: x.id, patch: { vote_order: k + 1, parent_variant_id: null } }))); };
+            const up = el('button', { class: 'btn btn-ghost btn-sm', title: 'Move up', onclick: () => reorder(i, i - 1) }, '↑');
+            const down = el('button', { class: 'btn btn-ghost btn-sm', title: 'Move down', onclick: () => reorder(i, i + 1) }, '↓');
+            up.disabled = i === 0; down.disabled = i === roots.length - 1;
+            box.append(up, down);
+        } else {
+            box.append(el('button', { class: 'btn btn-ghost btn-sm', title: 'Add as the last root in the voting order', onclick: () => save([{ id: v.id, patch: { vote_order: Math.max(0, ...roots.map(r => r.vote_order)) + 1, parent_variant_id: null } }]) }, '+ root'));
+        }
+        const others = roots.filter(r => r.id !== v.id);
+        if (others.length) {
+            const sel = el('select', { class: 'invite-role-select', title: 'Make this a child (voted only if the parent fails)' });
+            sel.innerHTML = `<option value="">child of…</option>${others.map(r => `<option value="${r.id}">#${esc(String(r.num))}</option>`).join('')}`;
+            sel.addEventListener('change', () => { if (sel.value) save([{ id: v.id, patch: { parent_variant_id: parseInt(sel.value) } }]); });
+            box.append(sel);
+        }
+        return box;
+    };
 
     function buildList() {
         listEl.innerHTML = '';
@@ -414,7 +452,8 @@ function _renderConflictGroup(group, gIdx, save) {
             listEl.append(mkDZ(ri));
 
             const rc = el('div', { class: 'conflict-card', draggable: 'true' });
-            rc.innerHTML = `<span class="conflict-drag-handle" title="Drag to reorder or drop onto a proposal to make this a child">⠿</span><span class="conflict-order-badge">${ri + 1}</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(root.rationale || '')}">${esc(root.title || root.operation)}</span> <span class="variant-num">#${root.num}</span><span class="text-muted conflict-card-meta"> · ${esc(root.operation)} · lines ${esc(String(root.line_start || '?'))}–${esc(String(root.line_end || '?'))}</span></span>`;
+            rc.innerHTML = `<span class="conflict-drag-handle" title="Drag to reorder or drop onto a proposal to make this a child">⠿</span><span class="conflict-order-badge">${ri + 1}</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(root.rationale || '')}">${esc(root.title || root.operation)}</span> <span class="variant-num">#${esc(String(root.num))}</span><span class="text-muted conflict-card-meta"> · ${esc(root.operation)} · lines ${esc(String(root.line_start || '?'))}–${esc(String(root.line_end || '?'))}</span></span>`;
+            rc.append(kbd(root, roots));
             rc.addEventListener('dragstart', e => { dragId = root.id; rc.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
             rc.addEventListener('dragend', () => { dragId = null; rc.classList.remove('dragging'); listEl.querySelectorAll('.conflict-card.drop-target').forEach(x => x.classList.remove('drop-target')); });
             rc.addEventListener('dragover', e => { if (dragId && dragId !== root.id) { e.preventDefault(); e.stopPropagation(); rc.classList.add('drop-target'); } });
@@ -429,7 +468,7 @@ function _renderConflictGroup(group, gIdx, save) {
             sortedChildren.forEach((child, ci) => {
                 listEl.append(mkChildDZ(root, ci, sortedChildren));
                 const cc = el('div', { class: 'conflict-card conflict-card-child', draggable: 'true' });
-                cc.innerHTML = `<span class="conflict-drag-handle" title="Drag to reorder among siblings">⠿</span><span class="conflict-child-order-badge">${ci + 1}</span><span class="conflict-child-badge">child of #${root.num}</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(child.rationale || '')}">${esc(child.title || child.operation)}</span> <span class="variant-num">#${child.num}</span></span><button class="conflict-remove-child" title="Remove child relationship">×</button>`;
+                cc.innerHTML = `<span class="conflict-drag-handle" title="Drag to reorder among siblings">⠿</span><span class="conflict-child-order-badge">${ci + 1}</span><span class="conflict-child-badge">child of #${esc(String(root.num))}</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(child.rationale || '')}">${esc(child.title || child.operation)}</span> <span class="variant-num">#${esc(String(child.num))}</span></span><button class="conflict-remove-child" title="Remove child relationship">×</button>`;
                 cc.addEventListener('dragstart', e => { dragId = child.id; cc.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
                 cc.addEventListener('dragend', () => { dragId = null; cc.classList.remove('dragging'); });
                 cc.querySelector('.conflict-remove-child').addEventListener('click', async () => {
@@ -449,7 +488,8 @@ function _renderConflictGroup(group, gIdx, save) {
             ));
             for (const v of unordered) {
                 const uc = el('div', { class: 'conflict-card conflict-card-unordered', draggable: 'true' });
-                uc.innerHTML = `<span class="conflict-drag-handle">⠿</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(v.rationale || '')}">${esc(v.title || v.operation)}</span> <span class="variant-num">#${v.num}</span><span class="text-muted conflict-card-meta"> · ${esc(v.operation)} · lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))}</span></span>`;
+                uc.innerHTML = `<span class="conflict-drag-handle">⠿</span><span class="conflict-card-body"><span class="conflict-card-title" title="${esc(v.rationale || '')}">${esc(v.title || v.operation)}</span> <span class="variant-num">#${esc(String(v.num))}</span><span class="text-muted conflict-card-meta"> · ${esc(v.operation)} · lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))}</span></span>`;
+                uc.append(kbd(v, roots));
                 uc.addEventListener('dragstart', e => { dragId = v.id; uc.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
                 uc.addEventListener('dragend', () => { dragId = null; uc.classList.remove('dragging'); listEl.querySelectorAll('.conflict-card.drop-target').forEach(x => x.classList.remove('drop-target')); });
                 listEl.append(uc);
@@ -471,13 +511,13 @@ async function viewFinalVoting(docId) {
         api('GET', `/documents/${docId}/text`),
     ]);
     const doc = docData.document;
+    if (!_requireSupervisor(doc)) return;
     if (doc.status !== 'final_voting') { location.hash = `#/documents/${docId}/review`; return; }
 
     const docSettings = (doc.settings && typeof doc.settings === 'object') ? doc.settings : {};
     const docDefaultThreshold = docSettings.majority_threshold || 'simple';
 
-    const idOrder = Object.fromEntries([...varData.variants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
-    const varMap = Object.fromEntries(varData.variants.map(v => [v.id, { ...v, num: idOrder[v.id] }]));
+    const varMap = Object.fromEntries(varData.variants.map(v => [v.id, { ...v, num: v.proposal_num }]));
     const fullText = textData.text || '';
     const blocks = _buildOrderedBlocks(varData.variants, varMap);
 
@@ -494,16 +534,38 @@ async function viewFinalVoting(docId) {
     toolbar.append(csvBtn, prntBtn, rtBtn, backBtn);
     hdr.append(toolbar);
     const progressEl = el('div', { id: 'fv-progress', class: 'fv-progress' });
-    hdr.append(progressEl);
+    const blockersEl = el('div', { id: 'fv-blockers', class: 'alert alert-error', style: 'display:none;margin-top:.5rem' });
+    hdr.append(progressEl, blockersEl);
     wrap.append(hdr);
 
     const list = el('div', { class: 'fv-list' });
 
+    const tallied = pv => pv.final_yes != null || pv.final_no != null;
+    const passes = pv => tallied(pv) && passesThreshold(pv.final_yes, pv.final_no, pv.final_abstain, pv.majority_threshold || docDefaultThreshold);
+    const skipped = item => item.isChild && varMap[item.v.parent_variant_id] && passes(varMap[item.v.parent_variant_id]);
+
     function updateProgress() {
         const allItems = blocks.flatMap(b => b.items);
-        const done = allItems.filter(i => i.v.final_yes != null || i.v.final_no != null).length;
+        const done = allItems.filter(i => tallied(varMap[i.v.id]) || skipped(i)).length;
         progressEl.textContent = `${done} of ${allItems.length} proposals recorded`;
         progressEl.className = `fv-progress${done === allItems.length ? ' fv-progress-done' : ''}`;
+        updateBlockers();
+    }
+
+    // Mirrors the server's resolve gate so the supervisor sees the problem before "Mark as Resolved"
+    function updateBlockers() {
+        const items = blocks.flatMap(b => b.items);
+        const winners = items.filter(i => !skipped(i) && passes(varMap[i.v.id])).map(i => varMap[i.v.id]);
+        const consumedEnd = pv => pv.operation === 'insert' ? pv.char_start : pv.char_end;
+        const problems = [];
+        for (let i = 0; i < winners.length; i++) for (let j = i + 1; j < winners.length; j++) {
+            const a = winners[i], b = winners[j];
+            if (a.char_start < consumedEnd(b) && b.char_start < consumedEnd(a)) problems.push(`#${a.num} and #${b.num} overlap and both pass — mark one NOT VOTING in the review view`);
+        }
+        const missing = items.filter(i => !skipped(i) && !tallied(varMap[i.v.id])).map(i => `#${varMap[i.v.id].num}`);
+        if (missing.length) problems.push(`no tally yet for ${missing.join(', ')}`);
+        blockersEl.style.display = problems.length ? '' : 'none';
+        blockersEl.innerHTML = problems.length ? `<strong>Cannot be resolved yet:</strong> ${problems.map(esc).join(' · ')}` : '';
     }
 
     function updateChildrenState(parentId) {
@@ -528,13 +590,13 @@ async function viewFinalVoting(docId) {
         badge.className = `fv-result-badge ${passed ? 'fv-result-passed' : 'fv-result-failed'}`;
     }
 
-    function renderProposalCard(v, isChild, parentNum, blockType, groupNum) {
-        const orig = fullText.slice(v.char_start, v.char_end);
+    function renderProposalCard(v, isChild, parentNum, blockType, groupNum, orderIdx) {
+        const orig = v.operation === 'insert' ? '' : fullText.slice(v.char_start, v.char_end);
         const cardAttrs = { class: `fv-card${isChild ? ' fv-card-child' : ''}`, 'data-id': String(v.id) };
         if (isChild) cardAttrs['data-parent-id'] = String(v.parent_variant_id || '');
         const card = el('div', cardAttrs);
         const statusHtml = `<span class="fv-status-badge fv-status-${v.status}">${esc(v.status)}</span>`;
-        const orderBadge = !isChild && blockType === 'group' ? `<span class="fv-order-badge">${esc(String(v.vote_order || ''))}</span>` : '';
+        const orderBadge = !isChild && blockType === 'group' ? `<span class="fv-order-badge">${esc(String(orderIdx || ''))}</span>` : '';
         const childNote  = isChild ? `<span class="fv-child-note">↳ child of #${esc(String(parentNum))} — voted only if parent fails</span>` : '';
         const skipNote   = isChild ? `<span class="fv-skip-note" style="display:none">Not voting on — parent passed</span>` : '';
         card.innerHTML = `
@@ -546,7 +608,7 @@ async function viewFinalVoting(docId) {
   ${childNote}${skipNote}
 </div>
 <div class="fv-card-texts">
-  <div class="fv-label">Original</div><div class="fv-text">${esc(orig) || '<em class="text-muted">— empty —</em>'}</div>
+  <div class="fv-label">${v.operation === 'insert' ? 'Inserted at' : 'Original'}</div><div class="fv-text">${v.operation === 'insert' ? `<em class="text-muted">character ${esc(String(v.char_start))} — nothing removed</em>` : (esc(orig) || '<em class="text-muted">— empty —</em>')}</div>
   <div class="fv-label">Proposed</div><div class="fv-text">${esc(v.new_text) || '<em class="text-muted">— deletion —</em>'}</div>
 </div>
 <div class="fv-inputs">
@@ -583,6 +645,8 @@ async function viewFinalVoting(docId) {
                 const d = await api('PATCH', `/variants/${v.id}/threshold`, { majority_threshold: val });
                 Object.assign(varMap[v.id], d.variant);
                 updateMajority();
+                updateChildrenState(isChild ? v.parent_variant_id : v.id);
+                updateProgress();
             } catch (e) { alert(e.message); thresholdSel.value = varMap[v.id].majority_threshold || ''; }
         });
 
@@ -632,8 +696,8 @@ async function viewFinalVoting(docId) {
             const allLines = block.items.flatMap(i => [i.v.line_start, i.v.line_end]).filter(Boolean);
             const sec = el('div', { class: 'fv-group' });
             sec.innerHTML = `<div class="fv-group-header">Conflict group ${esc(String(block.groupNum))} <span class="text-muted">· Lines ${Math.min(...allLines)}–${Math.max(...allLines)}</span></div>`;
-            for (const { v, isChild, parentNum } of block.items)
-                sec.append(renderProposalCard(v, isChild, parentNum, 'group', block.groupNum));
+            for (const { v, isChild, parentNum, orderIdx } of block.items)
+                sec.append(renderProposalCard(v, isChild, parentNum, 'group', block.groupNum, orderIdx));
             list.append(sec);
         } else {
             const { v } = block.items[0];
@@ -689,13 +753,13 @@ async function viewDocumentReview(docId) {
         api('GET', `/documents/${docId}/variants`).catch(() => ({ variants: [] })),
     ]);
     const doc = docData.document;
+    if (!_requireSupervisor(doc)) return;
     if (doc.status !== 'voting' && doc.status !== 'final_voting') { location.hash = `#/documents/${docId}`; return; }
     const isFinalVoting = doc.status === 'final_voting';
     const docSettings = (doc.settings && typeof doc.settings === 'object') ? doc.settings : {};
     const docDefaultThreshold = docSettings.majority_threshold || 'simple';
     const rawV = varData.variants || [];
-    const idOrder = Object.fromEntries([...rawV].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
-    let variants = rawV.map(v => ({ ...v, num: idOrder[v.id] }));
+    let variants = rawV.map(v => ({ ...v, num: v.proposal_num }));
     const overlapCount = {};
     for (let i = 0; i < variants.length; i++)
         for (let j = i + 1; j < variants.length; j++) {
@@ -715,6 +779,7 @@ async function viewDocumentReview(docId) {
     setMain(wrap);
 
     async function loadPage(page) {
+        page = Math.max(1, Math.min(doc.total_pages, page || 1));
         const d = await api('GET', `/documents/${docId}/lines?page=${page}`);
         curPage = page;
         renderLines(document.getElementById('rdoc-lines'), d.lines || [], rawV);
@@ -741,7 +806,7 @@ async function viewDocumentReview(docId) {
             const tallyHtml = isFinalVoting && hasTally
                 ? `<div class="review-final-tally">✓ ${v.final_yes ?? 0} &nbsp;✗ ${v.final_no ?? 0} &nbsp;◯ ${v.final_abstain ?? 0}</div>`
                 : '';
-            card.innerHTML = `<div class="review-card-header"><span class="variant-num">#${v.num}</span><span class="review-card-title">${esc(v.title || v.operation)}</span>${oc ? `<span class="review-overlap-badge">⊕${oc}</span>` : ''}</div><div class="text-muted review-card-meta">Lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))} · ${esc(v.operation)} · ▲${v.votes_for} ▼${v.votes_against}</div>${tallyHtml}<div class="review-actions"><button class="review-btn review-btn-voting${isVoting ? ' review-btn-active' : ''}" data-action="pending">VOTING</button><button class="review-btn review-btn-conflict${v.status === 'conflict' || suggestConflict ? ' review-btn-active' : ''}" data-action="conflict">CONFLICT</button><button class="review-btn review-btn-danger${v.status === 'rejected' ? ' review-btn-active' : ''}" data-action="rejected">NOT VOTING</button><button class="review-btn review-btn-danger${v.status === 'not_applicable' ? ' review-btn-active' : ''}" data-action="not_applicable">Not applicable</button><button class="review-btn review-btn-danger${v.status === 'withdrawn' ? ' review-btn-active' : ''}" data-action="withdrawn">Withdrawn</button></div><div class="review-threshold text-muted" style="font-size:.8rem;margin-top:.4rem">Threshold <select class="review-thresh-sel"><option value="">Doc default (${esc(THRESHOLD_LABELS[docDefaultThreshold] || 'Simple')})</option><option value="simple">Simple</option><option value="absolute">Absolute</option><option value="two_thirds">⅔</option><option value="three_quarters">¾</option></select></div>`;
+            card.innerHTML = `<div class="review-card-header"><span class="variant-num">#${esc(String(v.num))}</span><span class="review-card-title">${esc(v.title || v.operation)}</span>${oc ? `<span class="review-overlap-badge">⊕${oc}</span>` : ''}</div><div class="text-muted review-card-meta">Lines ${esc(String(v.line_start || '?'))}–${esc(String(v.line_end || '?'))} · ${esc(v.operation)} · ▲${v.votes_for} ▼${v.votes_against}</div>${tallyHtml}<div class="review-actions"><button class="review-btn review-btn-voting${isVoting ? ' review-btn-active' : ''}" data-action="pending">VOTING</button><button class="review-btn review-btn-conflict${v.status === 'conflict' || suggestConflict ? ' review-btn-active' : ''}" data-action="conflict">CONFLICT</button><button class="review-btn review-btn-danger${v.status === 'rejected' ? ' review-btn-active' : ''}" data-action="rejected">NOT VOTING</button><button class="review-btn review-btn-danger${v.status === 'not_applicable' ? ' review-btn-active' : ''}" data-action="not_applicable">Not applicable</button><button class="review-btn review-btn-danger${v.status === 'withdrawn' ? ' review-btn-active' : ''}" data-action="withdrawn">Withdrawn</button></div><div class="review-threshold text-muted" style="font-size:.8rem;margin-top:.4rem">Threshold <select class="review-thresh-sel"><option value="">Doc default (${esc(THRESHOLD_LABELS[docDefaultThreshold] || 'Simple')})</option><option value="simple">Simple</option><option value="absolute">Absolute</option><option value="two_thirds">⅔</option><option value="three_quarters">¾</option></select></div>`;
             const threshSel = card.querySelector('.review-thresh-sel');
             threshSel.value = v.majority_threshold || '';
             threshSel.addEventListener('change', async () => {
@@ -837,11 +902,11 @@ async function viewModeration(docId) {
     wrap.addEventListener('click', async e => {
         const vBtn = e.target.closest('.mod-unhide-variant');
         if (vBtn) {
-            try { await api('POST', `/variants/${vBtn.dataset.id}/unhide`); viewModeration(docId); } catch (err) { alert(err.message); }
+            try { await api('POST', `/variants/${vBtn.dataset.id}/unhide`); runRoute(); } catch (err) { alert(err.message); }
         }
         const cBtn = e.target.closest('.mod-unhide-comment');
         if (cBtn) {
-            try { await api('POST', `/comments/${cBtn.dataset.id}/unhide`); viewModeration(docId); } catch (err) { alert(err.message); }
+            try { await api('POST', `/comments/${cBtn.dataset.id}/unhide`); runRoute(); } catch (err) { alert(err.message); }
         }
     });
 }
@@ -881,7 +946,165 @@ async function viewUserAdmin() {
         if (!btn) return;
         try {
             await api('PATCH', `/users/${btn.dataset.id}/protection`, { is_protected: parseInt(btn.dataset.val) });
-            viewUserAdmin();
+            runRoute();
         } catch (err) { alert(err.message); }
+    });
+}
+
+/* ===== Manage access modal (supervisor+ read; admin edits) ===== */
+function openAccessModal(docId) {
+    openModal(`<div class="loading-spinner">Loading…</div>`, 'Manage access');
+
+    api('GET', `/documents/${docId}/access`).then(data => {
+        const rows = data.access || [];
+        const defaultAccessLevels = ['viewer', 'commenter', 'proposer', 'voter'];
+        const myLevel = data.my_access_level || 'admin';
+        const myIdx = ACCESS_LEVELS.indexOf(myLevel);
+        const isAdmin = myLevel === 'admin';
+        const canEditSettings = ['editor', 'admin'].includes(myLevel);
+        const allowedLevels = ACCESS_LEVELS.filter((_, i) => i <= myIdx);
+        const defaultLevel = allowedLevels.includes('proposer') ? 'proposer' : allowedLevels[allowedLevels.length - 1];
+        const currentDefault = data.default_access || '';
+        const mc = document.getElementById('modal-content');
+        mc.innerHTML = `
+            <div class="modal-title">Manage access</div>
+            ${canEditSettings ? `
+            <p class="mb-1" style="font-weight:600">Default access</p>
+            <div class="flex items-center gap-1 mb-1">
+                <select id="default-access-select" class="invite-role-select">
+                    <option value="">None — invite only</option>
+                    ${defaultAccessLevels.map(l => `<option value="${l}"${l === currentDefault ? ' selected' : ''}>${l}</option>`).join('')}
+                </select>
+                <span class="text-muted" style="font-size:0.8rem">Role for any signed-in user who opens the document's link</span>
+            </div>
+            <p id="default-access-status" style="font-size:0.75rem;min-height:1rem;margin-bottom:0.5rem"></p>
+            <hr style="margin:0.75rem 0;border:none;border-top:1px solid var(--color-border)">` : ''}
+            <div class="mb-2">${rows.map(r => `
+                <div class="flex items-center justify-between gap-1 mb-1 access-row${r.blocked ? ' access-row-blocked' : ''}" data-user="${esc(r.user_id)}">
+                    <span>${esc(r.email)}</span>
+                    ${isAdmin
+                        ? `<select class="invite-role-select access-level-sel" data-user="${esc(r.user_id)}" title="Change access level">${ACCESS_LEVELS.map(l => `<option value="${l}"${l === r.access_level ? ' selected' : ''}>${l}</option>`).join('')}</select>
+                           <span class="row-actions"><button class="btn btn-ghost btn-sm" data-block="${esc(r.user_id)}" data-blocked="${r.blocked ? 1 : 0}">${r.blocked ? 'Unblock' : 'Block'}</button><button class="btn btn-ghost btn-sm" data-remove="${esc(r.user_id)}">Remove</button></span>`
+                        : `<span class="text-muted">${esc(r.access_level)}${r.blocked ? ' (blocked)' : ''}</span>`}
+                </div>`).join('') || '<p class="text-muted">No explicit access records.</p>'}
+            </div>
+            <hr style="margin:1rem 0;border:none;border-top:1px solid var(--color-border)">
+            <p class="mb-1" style="font-weight:600">Invite user</p>
+            <div class="flex gap-1 mb-1" style="position:relative">
+                <div style="flex:1;position:relative">
+                    <input type="text" id="invite-search" placeholder="Search by name, email or organisation…" autocomplete="off">
+                    <ul id="invite-results" class="user-search-dropdown" style="display:none"></ul>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="invite-search-btn" title="Search">🔍</button>
+                <select id="invite-level" class="invite-role-select">
+                    ${allowedLevels.map(l => `<option value="${l}"${l === defaultLevel ? ' selected' : ''}>${l}</option>`).join('')}
+                </select>
+            </div>
+            <p id="invite-err" class="error-msg" style="display:none"></p>
+            <button id="invite-submit" class="btn btn-primary btn-sm">Invite</button>
+        `;
+
+        const defaultAccessSelect = document.getElementById('default-access-select');
+        if (defaultAccessSelect) defaultAccessSelect.addEventListener('change', async e => {
+            const statusEl = document.getElementById('default-access-status');
+            const val = e.target.value;
+            statusEl.textContent = 'Saving…'; statusEl.style.color = '';
+            try {
+                await api('PATCH', `/documents/${docId}`, { settings: { default_access: val || null } });
+                statusEl.textContent = val ? `Default set to "${val}"` : 'Set to invite only';
+                statusEl.style.color = 'var(--color-success, #16a34a)';
+            } catch (err) {
+                statusEl.textContent = err.message; statusEl.style.color = 'var(--color-error, #dc2626)';
+            }
+        });
+
+        const searchInput = document.getElementById('invite-search');
+        const resultsList = document.getElementById('invite-results');
+        const errEl = document.getElementById('invite-err');
+        let selectedEmail = '';
+
+        function hideResults() { resultsList.style.display = 'none'; resultsList.innerHTML = ''; }
+
+        async function runSearch() {
+            const q = searchInput.value.trim();
+            if (q.length < 3) { hideResults(); return; }
+            try {
+                const { users } = await api('GET', `/auth/search?q=${encodeURIComponent(q)}`);
+                if (!users.length) { hideResults(); return; }
+                resultsList.innerHTML = users.map(u => `
+                    <li class="user-search-result" data-email="${esc(u.email)}">
+                        <span class="user-search-name">${esc(u.display_name || u.email)}</span>
+                        <span class="user-search-meta">${esc([u.email, u.organization].filter(Boolean).join(' · '))}</span>
+                    </li>`).join('');
+                resultsList.style.display = '';
+            } catch { hideResults(); }
+        }
+
+        document.getElementById('invite-search-btn').addEventListener('click', runSearch);
+        searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
+        searchInput.addEventListener('input', () => { selectedEmail = ''; });
+
+        resultsList.addEventListener('click', e => {
+            const li = e.target.closest('.user-search-result');
+            if (!li) return;
+            selectedEmail = li.dataset.email;
+            searchInput.value = li.dataset.email;
+            hideResults();
+            errEl.style.display = 'none';
+        });
+
+        document.getElementById('invite-submit').addEventListener('click', async () => {
+            errEl.style.display = 'none';
+            const email = (selectedEmail || searchInput.value).trim();
+            const level = document.getElementById('invite-level').value;
+            if (!email || !email.includes('@')) { errEl.textContent = 'Select a user from results or enter a valid email address'; errEl.style.display = ''; return; }
+            try {
+                await api('POST', `/documents/${docId}/access`, { email, access_level: level });
+                openAccessModal(docId);
+            } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
+        });
+
+        mc.addEventListener('change', async e => {
+            const sel = e.target.closest('.access-level-sel');
+            if (!sel) return;
+            try { await api('PATCH', `/documents/${docId}/access/${sel.dataset.user}`, { access_level: sel.value }); }
+            catch (err) { alert(err.message); openAccessModal(docId); }
+        });
+
+        mc.addEventListener('click', async e => {
+            if (!e.target.closest('#invite-search') && !e.target.closest('#invite-results')) hideResults();
+            const blockBtn = e.target.closest('button[data-block]');
+            if (blockBtn) {
+                try { await api('PATCH', `/documents/${docId}/access/${blockBtn.dataset.block}`, { blocked: blockBtn.dataset.blocked !== '1' }); openAccessModal(docId); }
+                catch (err) { alert(err.message); }
+                return;
+            }
+            const removeBtn = e.target.closest('button[data-remove]');
+            if (removeBtn) {
+                const actions = removeBtn.closest('.row-actions');
+                const userId = removeBtn.dataset.remove;
+                actions.innerHTML =
+                    `<button class="btn btn-danger btn-sm" data-confirm-remove="${esc(userId)}">OK</button>` +
+                    `<button class="btn btn-ghost btn-sm" data-cancel-remove="${esc(userId)}">Cancel</button>`;
+                return;
+            }
+            const cancelBtn = e.target.closest('button[data-cancel-remove]');
+            if (cancelBtn) {
+                const actions = cancelBtn.closest('.row-actions');
+                const blocked = cancelBtn.closest('.access-row').classList.contains('access-row-blocked');
+                actions.innerHTML = `<button class="btn btn-ghost btn-sm" data-block="${esc(cancelBtn.dataset.cancelRemove)}" data-blocked="${blocked ? 1 : 0}">${blocked ? 'Unblock' : 'Block'}</button><button class="btn btn-ghost btn-sm" data-remove="${esc(cancelBtn.dataset.cancelRemove)}">Remove</button>`;
+                return;
+            }
+            const confirmBtn = e.target.closest('button[data-confirm-remove]');
+            if (confirmBtn) {
+                try {
+                    await api('DELETE', `/documents/${docId}/access/${confirmBtn.dataset.confirmRemove}`);
+                    openAccessModal(docId);
+                } catch (err) { alert(err.message); }
+            }
+        });
+    }).catch(err => {
+        const mc = document.getElementById('modal-content');
+        if (mc) mc.innerHTML = `<div class="modal-title">Manage access</div><div class="alert alert-error">${esc(err.message)}</div>`;
     });
 }

@@ -319,7 +319,11 @@ CREATE TABLE IF NOT EXISTS activity_log (
                             'variant_threshold_changed',
                             'variant_hidden', 'variant_unhidden',
                             'comment_hidden', 'comment_unhidden',
-                            'user_protected', 'user_unprotected'
+                            'user_protected', 'user_unprotected',
+                            'document_deleted', 'document_data_copied',
+                            'user_access_changed', 'user_access_removed',
+                            'variant_share_changed', 'variant_relation_added',
+                            'comment_deleted'
                         )),
     metadata    TEXT    NOT NULL DEFAULT '{}',   -- JSON with action-specific data
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

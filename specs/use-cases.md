@@ -119,6 +119,10 @@ Each card in the sidebar shows:
 
 Cards are displayed in **document position order** (`char_start ASC, created_at ASC`). Overlapping proposals — those whose character ranges intersect — appear adjacent to each other in the sidebar, matching the order a reader encounters them in the text.
 
+### Numbering
+
+`#N` is assigned by the server (`proposal_num` = rank by creation among all proposals of the document, including withdrawn and hidden ones), so numbers never shift when a proposal is withdrawn or hidden mid-vote and printed tally sheets stay valid *(Q13, 2026-10-03)*. Cards are keyboard-focusable; Enter opens the proposal.
+
 ### Hover behaviour
 
 When the user hovers any proposal card:
@@ -175,7 +179,7 @@ The page heading shows **Proposal #N** where N is the sequential number from cre
 
 Below the heading a metadata line shows: `operation · position · proposed by Name · time ago`.
 
-For **INSERT** proposals the position is shown as `char N` (a single insertion point — there is no range being removed). For **replace** and **delete** the position is `chars N–M`.
+For **INSERT** proposals the position is shown as `char N` (a single insertion point — there is no range being removed). For **replace** and **delete** the position is `chars N–M`. The same rule holds when the document is resolved: an approved insert adds its text at the start of the selection and keeps the selected text *(fixed 2026-10-02 — the merge used to drop it)*.
 
 ### Voting (voter+ access)
 
@@ -220,6 +224,7 @@ When a user with no explicit access record requests any document endpoint:
 - If not set (invite-only), the request is denied with 403.
 - Explicitly blocked users are always denied regardless of the default.
 - `default_access` never applies to `draft` documents (see UC-14).
+- A document reached only through `default_access` does not appear in that user's document list or activity feed — the owner shares its link. *(Decided 2026-10-02; auto-join is a possible later addition.)*
 
 *(Hardened 2026-07-11)* All access decisions — document reads, variant sub-routes, comment moderation, middleware — now run through a single `resolveAccessLevel()` in `middleware/access.js`. This closed a hole where `GET /:id/lines`, `/:id/text`, and `/:id/variants` accepted any authenticated user, and made `default_access` apply consistently to variant sub-routes (previously a default-access commenter could open a document but got 403 posting a comment). Site-level `superadmin` now acts as document admin everywhere. Guard-rail coverage: test-plan Group Y.
 
@@ -242,6 +247,12 @@ When the invited email has no prior account, an invitation email is sent via Res
 - **Body:** inviter's name, document name, role, sign-in URL with the invited email address noted, one-line opt-out sentence
 - Plain text + minimal HTML, no images, no tracking
 - Email is fire-and-forget — a send failure does not roll back the access grant
+- User-supplied values (inviter name, document title) are HTML-escaped
+- Each inviter may send at most 20 invitations to new addresses per hour (429 beyond that)
+
+### Change level, block, remove
+
+An admin sees a level dropdown on each row (saves immediately via `PATCH /api/documents/:id/access/:userId`), a **Block**/**Unblock** button (same endpoint, `blocked`), and a **Remove** button. Supervisors see the list read-only. *(Level and block controls added 2026-10-03; e2e `access.spec.js`.)*
 
 ### Remove user access
 
@@ -279,8 +290,8 @@ Users can toggle **Non-searchable profile** in their profile page (`PATCH /api/a
 
 ### Preconditions
 
-- Document is in `open` status.
-- User is the document owner (or has `admin` access).
+- Document is in `open` status — a countdown is only accepted there (400 otherwise); `final_voting → voting` is a plain transition.
+- User has `supervisor` access or higher (UC-19).
 
 ### Main flow — scheduled countdown
 
@@ -335,13 +346,13 @@ Users can toggle **Non-searchable profile** in their profile page (`PATCH /api/a
 
 ## UC-9: Review proposals before resolution
 
-**Actor:** Document owner or user with `editor`/`admin` access
+**Actor:** Document owner or user with `supervisor` access or higher (UC-19)
 **Entry point:** Document viewer → "Review" button (visible when document is in `voting` status)
 
 ### Preconditions
 
 - Document is in `voting` status.
-- User is authenticated and has `editor` or `admin` access (or is the document owner).
+- User is authenticated and has `supervisor` access or higher (or is the document owner).
 
 ### Main flow
 
@@ -398,7 +409,7 @@ Two statuses are only set via the review endpoint, not by proposers:
 
 ## UC-10: Resolve conflicts before final voting
 
-**Actor:** Document owner or user with `editor`/`admin` access
+**Actor:** Document owner or user with `supervisor` access or higher (UC-19)
 **Entry point:** Review view (`#/documents/:id/review`) → "Resolve conflicts" button
 
 ### Preconditions
@@ -409,6 +420,8 @@ Two statuses are only set via the review endpoint, not by proposers:
 ### Conflict group computation
 
 A conflict group is a set of ≥ 2 active proposals (not withdrawn / rejected / not_applicable) whose character ranges overlap. The system computes connected components of the overlap graph client-side. Each group must be resolved before the document can proceed to final voting.
+
+When no proposals overlap, the conflict view shows "No conflicts to resolve" with the green **✓ Ready for final voting** button directly *(added 2026-10-02 — before that such a document had no way into final voting from the browser)*.
 
 ### Main flow
 
@@ -440,7 +453,7 @@ Within a conflict group, root proposals are voted in vote-order number sequence 
 
 ## UC-11: Conduct final voting
 
-**Actor:** Document owner or user with `editor`/`admin` access
+**Actor:** Document owner or user with `supervisor` access or higher (UC-19)
 **Entry point:** Review view (`#/documents/:id/review`) → "Voting walkthrough" button (visible when document is in `final_voting`)
 
 ### Preconditions
@@ -465,6 +478,17 @@ Within a conflict group, root proposals are voted in vote-order number sequence 
 5. At the bottom, an **Overall document vote** section records the total vote on the document as a whole. Clicking **Save** calls `PATCH /api/documents/:id/doc-vote`.
 6. After all tallies are recorded, the editor can click **Resolved text** in the toolbar to preview the document with all approved variants applied (see UC-15).
 7. The document remains in `final_voting` until the owner clicks **Mark as Resolved** on the resolved-text view (or uses **Change Status → resolved**), which triggers the status transition and stores the resolved text.
+
+### Resolve gate *(added 2026-10-02)*
+
+Resolving is refused, with nothing changed, in two situations:
+
+- **Overlapping winners** — two proposals whose character ranges overlap have both passed. The error names both. The supervisor marks one of them NOT VOTING in the review view (allowed during final voting), or rolls back to `voting` and makes one a child of the other.
+- **Missing tally** — a voteable proposal has no recorded tally. The error names up to three. The supervisor records a tally or marks the proposal NOT VOTING. A child whose parent passed needs no tally.
+
+The same rule applies to the `voting → resolved` shortcut, which therefore only works when no voteable proposals remain.
+
+The final-voting walkthrough shows the same two conditions in a red banner under the progress line as tallies are saved, so the supervisor sees "#3 and #5 overlap and both pass" or "no tally yet for #4" before clicking Mark as Resolved *(2026-10-03)*. When no overall document vote was recorded, the resolved document is labelled **RESOLVED** rather than PASSED or FAILED *(Q10, 2026-10-03)*.
 
 ### Proposal ordering in export and walkthrough
 
@@ -523,6 +547,8 @@ When `allow_anonymous_share = 0` (default): anonymous access to a non-public doc
 4. If user clicks **Save and continue**: client calls `PATCH /auth/profile` with the entered values, updates `state.user`, then navigates to `#/documents`.
 5. If user clicks **Skip for now**: client navigates to `#/documents` without saving. The modal appears again on the next login if the name is still empty.
 
+New accounts are created with the email prefix as display name, so the client treats a name that is empty *or still equals the email prefix* as "not chosen yet" and shows the modal *(fixed 2026-10-03; e2e `profile.spec.js`, `crossfile.spec.js`)*.
+
 ---
 
 ## UC-14: Draft document visibility restriction
@@ -540,7 +566,7 @@ When `allow_anonymous_share = 0` (default): anonymous access to a non-public doc
 | User relying on `settings.default_access` | No (403 — defaults never apply to drafts) |
 | Anonymous (even with `allow_anonymous_view = true`) | No (403) |
 
-This restriction applies to **every** document read: `GET /documents/:id`, `/lines`, `/text`, `/variants`, `/activity`, the document list, and all variant sub-routes — enforced centrally by `resolveAccessLevel()` since the 2026-07-11 hardening (previously `/lines`, `/text`, and `/variants` were not covered). Once a document transitions to `open`, normal access rules apply.
+This restriction applies to **every** document read: `GET /documents/:id`, `/lines`, `/text`, `/variants`, `/activity`, the document list, and all variant sub-routes — enforced centrally by `resolveAccessLevel()` since the 2026-07-11 hardening (previously `/lines`, `/text`, and `/variants` were not covered). The 2026-10-02 review found the variant sub-routes `/comments`, `/votes` and `/relations` and the cross-document activity feed still let a viewer-level user through on drafts; both are closed (test-plan AA2, AA3). Once a document transitions to `open`, normal access rules apply.
 
 ---
 
@@ -560,7 +586,7 @@ This restriction applies to **every** document read: `GET /documents/:id`, `/lin
 
 1. Editor clicks **Resolved text** from the final-vote walkthrough toolbar.
 2. Browser navigates to `#/documents/:id/resolved-text`.
-3. The system computes the resolved text on-the-fly: all approved variants are applied to the original text in character-offset order (overlapping approved variants are skipped).
+3. The system computes the resolved text on-the-fly: every proposal whose recorded tally currently passes its threshold is applied to the original text in character-offset order; children of a passing parent are left out. Nothing is written, so the preview follows the tallies as they are saved.
 4. The view shows the resolved text in a scrollable read-only pane with line numbers.
 5. The toolbar offers:
    - **Export Markdown** — downloads `<title>_resolved.md` with a `# Title` heading.
@@ -588,12 +614,11 @@ This restriction applies to **every** document read: `GET /documents/:id`, `/lin
 
 ### Access control
 
-| User | Access |
-|------|--------|
-| Owner | Yes |
-| Editor / admin | Yes |
-| Viewer–voter | No (403) |
-| Anonymous | No (401) |
+| User | `final_voting` preview | `resolved` / `archived` |
+|------|------------------------|-------------------------|
+| Owner, admin, editor, supervisor | Yes | Yes |
+| Viewer–voter | No (403) | Yes |
+| Anonymous | No (401) | No (401) |
 
 ---
 
@@ -646,9 +671,10 @@ The **overall document vote** (`doc-vote`, PASSED/FAILED banner) intentionally s
 
 ### Implementation notes
 
-- `passesThreshold(yes, no, abstain, threshold)` lives in `src/routes/documents.js` (server-side) and is mirrored verbatim in `public/review.js` (client-side). These must stay in sync.
-- The doc-settings modal frontend dropdown for the document-level default is **not yet implemented** — the backend accepts `majority_threshold` in `settings` via the existing PATCH endpoint, but there is no UI control in the modal yet.
-- `VALID_THRESHOLDS` Set defined at module level in `documents.js`; inline `VALID` array in `variants.js` — both guard `simple|absolute|two_thirds|three_quarters`.
+- `passesThreshold(yes, no, abstain, threshold)` lives in `src/lib/text.js` (server-side) and is mirrored verbatim in `public/review.js` (client-side). A contract test in `tests/frontend.test.js` fails if the two copies differ.
+- The document-level default is set in the document settings modal ("Majority required for proposals").
+- `VALID_THRESHOLDS` Set is exported from `src/lib/text.js`; `variants.js` has an inline `VALID` array — both guard `simple|absolute|two_thirds|three_quarters`.
+- The pass/fail decision at resolve and in the final-voting preview goes through `decideOutcomes()` in `src/lib/text.js`, which applies the per-proposal threshold or the document default.
 
 ### Test plan (Group T, 8 tests)
 
@@ -675,7 +701,7 @@ The **overall document vote** (`doc-vote`, PASSED/FAILED banner) intentionally s
 
 1. User opens a proposal detail page. A **Fork** button is shown when the document is `open`/`voting`/`final_voting` and the variant is not withdrawn/rejected/not_applicable/merged.
 2. Clicking Fork opens the proposal modal pre-filled with title "Your variant of {original title}", the original proposed text, and an empty rationale.
-3. Submitting calls `POST /api/variants/:id/fork` — creates the new variant, a `based_on` relation to the original, and logs `variant_proposed` with `forked_from`.
+3. Submitting calls `POST /api/variants/:id/fork` — creates the new variant, a `based_on` relation to the original, and logs `variant_proposed` with `forked_from`. The proposal page shows "based on #N <title>" under the heading, and the original shows "forked as #M" *(2026-10-03)*.
 4. The user is navigated to the new proposal's detail page.
 
 **Access:** proposer+ on `open` documents; supervisor+ on `voting`/`final_voting` (the button is shown to any authenticated user in an eligible status — the backend enforces the level, 403 otherwise). Draft/resolved/archived documents → 422.
@@ -741,6 +767,10 @@ Supervisor may `POST /documents/:id/access` for users **without an existing acce
 - Draft filter in `GET /documents` (`access_level IN ('editor','admin')`) is unchanged — supervisors do not see drafts.
 - Index-based comparisons (`ACCESS_LEVELS.indexOf`) keep working since supervisor is inserted, not appended.
 
+### Browser controls (2026-10-03)
+
+Every control is gated on `my_access_level` with `hasLevel(doc, level)` in `app.js`, mirroring the API: **Change status** for supervisor+ (the modal offers only the voting-cycle transitions below admin, including `final_voting → voting`), **Mark as Resolved** for supervisor+, **Settings** for editor+, **Propose** for proposer+ while the document is not resolved/archived, vote buttons enabled for voter+ while voting is open, the comment form for commenter+, **Fork** for proposer+ on open documents and supervisor+ during voting. The review, conflict and final-voting pages refuse below supervisor. Covered by `tests/e2e/supervisor.spec.js`.
+
 ### Implementation checklist
 
 1. **`schema.sql`** — add `'supervisor'` to the `user_document_access.access_level` CHECK constraint. ⚠ Requires table-recreate migration in `scripts/migrate.js` (PRAGMA foreign_keys OFF pattern), same as previous CHECK extensions.
@@ -768,7 +798,7 @@ Supervisor may `POST /documents/:id/access` for users **without an existing acce
 
 1. Moderator opens a proposal and clicks **Hide** in the header row, confirming the prompt.
 2. `POST /api/variants/:id/hide` sets `variants.is_hidden = 1` and logs `variant_hidden`.
-3. The proposal disappears from all listings and the resolved-text merge for regular participants; a direct link returns 404 for them (including anonymous share links).
+3. The proposal disappears from all listings and the resolved-text merge for regular participants; a direct link returns 404 for them (including anonymous share links), and so do its comments, votes and relations. Activity entries about it are left out of their feeds. If it was the parent of other proposals in a conflict group, those children become ordinary unordered proposals again.
 4. Supervisors still see the proposal, with a red *Hidden by moderator* banner and an **Unhide** button.
 5. The document's **Moderation** page lists it under *Hidden proposals* with an Unhide action (`POST /api/variants/:id/unhide`, logs `variant_unhidden`).
 
@@ -785,7 +815,7 @@ Supervisor may `POST /documents/:id/access` for users **without an existing acce
 
 | | `is_hidden` | `hidden_by` | Visible as | Reversible |
 |---|---|---|---|---|
-| Author delete (`DELETE /comments/:id` by author) | 1 | NULL | gone for everyone | no (422 on unhide) |
+| Author delete (`DELETE /comments/:id` by author) | 1 | NULL | gone for everyone | no (422 on unhide) — refused with 422 while the comment is moderator-hidden *(Q12, 2026-10-03)* |
 | Moderator hide (`POST /hide`, or `DELETE` by doc admin/superadmin) | 1 | moderator's user id | placeholder; full text for supervisor+ | yes |
 
 A `DELETE` of someone else's comment by a doc admin is recorded as a moderation hide (`hidden_by` set, `comment_hidden` logged) so it appears on the Moderation page and can be reversed.
@@ -823,7 +853,7 @@ A `DELETE` of someone else's comment by a doc admin is recorded as a moderation 
 | Edit marker storage | New `comments.edited_at TEXT` column — set **only** by the author's PATCH. `updated_at` cannot be used: moderation hide/unhide touches it, which would show false "edited" markers. |
 | Edit window | Unchanged: 30 minutes from posting (`COMMENT_EDIT_WINDOW_MINUTES`). Later fixes remain delete-and-repost. |
 | Reply grace period | Editing a comment re-opens the edit window for its **direct replies**, measured from the parent's `edited_at`. Deleting a reply is already possible at any time. |
-| Edit history | The previous text is snapshotted into the `comment_updated` activity-log metadata (`previous_text`) — audit trail without UI or schema cost. |
+| Edit history | The previous text is snapshotted into the `comment_updated` activity-log metadata (`previous_text`) — audit trail without UI or schema cost. Since 2026-10-02 the activity API returns it only to supervisor+ on the document's own feed. |
 
 ### Main flow — author edits
 
@@ -855,6 +885,27 @@ A `DELETE` of someone else's comment by a doc admin is recorded as a moderation 
 
 ---
 
+## UC-21: Invite-only sign-in
+
+**Status: implemented 2026-10-02 (off by default).**
+
+**Actor:** The person hosting the instance.
+
+**Goal:** Stop strangers from signing in, creating documents and sending invitation mail from the host's domain.
+
+### Behaviour
+
+- `SIGNUP_MODE=open` (default): any email address can request a code and gets an account on first sign-in.
+- `SIGNUP_MODE=invited`: `POST /api/auth/request-otp` issues a code only when the address already has an account — which an invitation to a document creates — or matches `SIGNUP_ALLOWLIST`, a comma-separated list of addresses and `@domains`.
+- Everyone else receives the same `200 { message: 'Code sent' }` and no code, so the response does not reveal which addresses have accounts.
+- The host's own address or domain must be on the allowlist unless the account already exists.
+
+Any signed-in user can still create documents and invite others, so access spreads by invitation; the switch closes anonymous self-registration, not the invitation chain.
+
+**Tests:** AA14 in `tests/api.test.js`.
+
+---
+
 ## Planned / future use cases
 
-*(none currently — all specced use cases are implemented)*
+All specced use cases are implemented in the API. The open UI gaps against them (supervisor buttons, profile modal trigger, access-level editing, "based on" display, line tooltip) and their order are tracked in `plan-update.md`, phase 3.

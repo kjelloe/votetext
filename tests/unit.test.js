@@ -4,7 +4,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, importText } = require('../src/lib/text');
+const { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, decideOutcomes, escapeHtml, importText } = require('../src/lib/text');
 
 // ── applyVariantsToText ───────────────────────────────────────────────────────
 
@@ -149,4 +149,79 @@ test('import + apply round-trip: offsets from import are valid apply targets', (
         { char_start: beta.char_offset_start, char_end: beta.char_offset_end, operation: 'replace', new_text: 'BETA' },
     ]);
     assert.equal(out, 'alpha\nBETA\ngamma');
+});
+
+// ── applyVariantsToText tie-break ─────────────────────────────────────────────
+
+test('apply: insert at the start of a replaced range survives regardless of input order', () => {
+    const replace = { char_start: 4, char_end: 9, operation: 'replace', new_text: 'slow' };
+    const insert = { char_start: 4, char_end: 4, operation: 'insert', new_text: 'very ' };
+    assert.equal(applyVariantsToText(TEXT, [replace, insert]), 'The very slow brown fox jumps over the lazy dog');
+    assert.equal(applyVariantsToText(TEXT, [insert, replace]), 'The very slow brown fox jumps over the lazy dog');
+});
+
+test('apply: an insert proposed over a selected range keeps the selected text', () => {
+    const insert = { char_start: 4, char_end: 9, operation: 'insert', new_text: 'very ' };
+    assert.equal(applyVariantsToText(TEXT, [insert]), 'The very quick brown fox jumps over the lazy dog');
+    const later = { char_start: 6, char_end: 9, operation: 'replace', new_text: 'IET' };
+    assert.equal(applyVariantsToText(TEXT, [insert, later]), 'The very quIET brown fox jumps over the lazy dog', 'the selected range is not consumed, so a later change inside it still applies');
+});
+
+// ── decideOutcomes ────────────────────────────────────────────────────────────
+
+const V = (id, cs, ce, yes, no, extra = {}) => ({ id, char_start: cs, char_end: ce, final_yes: yes, final_no: no, final_abstain: 0, parent_variant_id: null, majority_threshold: null, ...extra });
+
+test('outcomes: tallied roots pass or fail by the document threshold', () => {
+    const r = decideOutcomes([V(1, 0, 5, 3, 1), V(2, 10, 15, 1, 3)], 'simple');
+    assert.deepEqual(r.outcomes, { 1: 'approved', 2: 'rejected' });
+    assert.deepEqual(r.untallied, []);
+    assert.deepEqual(r.overlaps, []);
+});
+
+test('outcomes: per-proposal threshold overrides the document default', () => {
+    const r = decideOutcomes([V(1, 0, 5, 6, 4, { majority_threshold: 'two_thirds' }), V(2, 10, 15, 6, 4)], 'simple');
+    assert.deepEqual(r.outcomes, { 1: 'rejected', 2: 'approved' });
+});
+
+test('outcomes: child is not_applicable when its parent passes, voted when the parent fails', () => {
+    const passed = decideOutcomes([V(1, 0, 5, 3, 1), V(2, 0, 5, 9, 0, { parent_variant_id: 1 })], 'simple');
+    assert.deepEqual(passed.outcomes, { 1: 'approved', 2: 'not_applicable' });
+    const failed = decideOutcomes([V(1, 0, 5, 1, 3), V(2, 0, 5, 9, 0, { parent_variant_id: 1 })], 'simple');
+    assert.deepEqual(failed.outcomes, { 1: 'rejected', 2: 'approved' });
+});
+
+test('outcomes: proposals without a tally are reported, except children of a passed parent', () => {
+    const r = decideOutcomes([
+        V(1, 0, 5, 3, 1), V(2, 0, 5, null, null, { parent_variant_id: 1 }),
+        V(3, 10, 15, null, null),
+        V(4, 20, 25, 1, 3), V(5, 20, 25, null, null, { parent_variant_id: 4 }),
+    ], 'simple');
+    assert.deepEqual(r.untallied, [3, 5]);
+    assert.equal(r.outcomes[2], 'not_applicable');
+});
+
+test('outcomes: overlapping passing proposals are reported; touching ranges and failed ones are not', () => {
+    const r = decideOutcomes([V(1, 0, 10, 3, 1), V(2, 6, 16, 3, 1), V(3, 16, 20, 3, 1), V(4, 0, 30, 1, 3)], 'simple');
+    assert.deepEqual(r.overlaps, [[1, 2]]);
+});
+
+test('outcomes: an insert inside a passing range overlaps it; an insert at its edge does not', () => {
+    const inside = decideOutcomes([V(1, 0, 10, 3, 1), V(2, 5, 5, 3, 1)], 'simple');
+    assert.deepEqual(inside.overlaps, [[1, 2]]);
+    const edge = decideOutcomes([V(1, 0, 10, 3, 1), V(2, 10, 10, 3, 1), V(3, 0, 0, 3, 1)], 'simple');
+    assert.deepEqual(edge.overlaps, []);
+});
+
+// ── escapeHtml ────────────────────────────────────────────────────────────────
+
+test('escapeHtml: neutralises markup and quotes, tolerates null', () => {
+    assert.equal(escapeHtml('<a href="x" onclick=\'y\'>A&B</a>'), '&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;A&amp;B&lt;/a&gt;');
+    assert.equal(escapeHtml(null), '');
+    assert.equal(escapeHtml(42), '42');
+});
+
+test('outcomes: an insert counts as a point at char_start, whatever range was selected', () => {
+    const insert = V(1, 4, 9, 3, 1, { operation: 'insert' });
+    assert.deepEqual(decideOutcomes([insert, V(2, 6, 12, 3, 1)], 'simple').overlaps, [], 'a replace inside the selected range does not conflict');
+    assert.deepEqual(decideOutcomes([insert, V(2, 0, 12, 3, 1)], 'simple').overlaps, [[1, 2]], 'a replace that spans the insertion point does');
 });

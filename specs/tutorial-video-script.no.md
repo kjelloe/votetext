@@ -66,8 +66,8 @@ nummererte linjer og sider helt automatisk.
 [screen: click Create — the document opens in the viewer, status badge "Draft"]
 
 Det nye dokumentet starter som et *utkast*. Utkast er private: bare Anna og
-eventuelle redaktører hun utpeker, kan se det. Det gir henne rom til å rette
-skrivefeil før gruppen kaster seg over teksten.
+eventuelle redaktører hun utpeker, kan se det. Det gir henne anledning til å sjekke at
+teksten kom riktig inn før gruppen kaster seg over den.
 
 [screen: click "Change status", choose Open]
 
@@ -85,13 +85,14 @@ nettstedet.
 
 Anna inviterer Erik. Rollen avgjør hva han kan gjøre: en *viewer* bare leser, en
 *commenter* deltar i diskusjonen, en *proposer* kan foreslå endringer, og en *voter*
-gjør alt dette og stemmer. Erik får en e-post om at han er invitert.
+gjør alt dette og stemmer. Dokumentet dukker nå opp i Eriks liste — og den som aldri
+har brukt VoteText før, får en e-post med invitasjon.
 
 [screen: point at the Default access selector]
 
-For større grupper finnes en snarvei: *default access* gir alle innloggede brukere en
-grunnrolle på akkurat dette dokumentet, så du slipper å invitere hele nabolaget én
-og én.
+For større grupper finnes en snarvei: *default access* gir alle innloggede brukere som
+åpner lenken til dokumentet, en grunnrolle — så du kan dele én lenke i stedet for å
+invitere hele nabolaget én og én.
 
 ## Kapittel 4 — Finne og lese et dokument *(1:15)* — Bjørn, Community Garden Charter
 
@@ -115,10 +116,10 @@ du ser hvilke forslag som berører linjen.
 Sidepanelet følger deg mens du leser — det viser forslagene for siden du står på,
 eller hele dokumentet om du heller vil det.
 
-[screen: click a proposal card — page jumps to the line; then click the proposal title]
+[screen: hover a proposal card — click the ↗ link that appears: the page jumps to the line; then click the card itself]
 
-Klikk på et forslagskort for å hoppe til avsnittet det endrer — og klikk på tittelen
-for å åpne hele forslaget.
+Hold pekeren over et forslagskort og følg pilen for å hoppe til avsnittet det endrer —
+eller klikk på kortet for å åpne hele forslaget.
 
 ## Kapittel 5 — Delta i diskusjonen *(1:00)* — Clara, forslaget «Raise the annual fee»
 
@@ -139,28 +140,28 @@ Clara legger til sitt syn — synlig for alle i samme øyeblikk som hun publiser
 
 ## Kapittel 6 — Foreslå en endring *(1:30)* — Bjørn, Community Garden Charter
 
-[screen: document view — select the guest rule sentence with the mouse; "Propose change" button appears]
+[screen: document view — select the guest rule sentence with the mouse]
 
 Nå selve hjertet i VoteText. Bjørn mener en setning bør endres — så han markerer den.
-Og der, med en gang: en knapp.
 
-[screen: click "Propose change" — modal with the selected text collapsed, three fields]
+[screen: click "Propose" at the top of the proposal sidebar — modal showing the selected text, the operation selector and three fields]
 
 Forslagsskjemaet ber om tre ting: en kort tittel, den nye formuleringen, og — det
 viktigste — *hvorfor*. En god begrunnelse er det som gjør et endringsønske til et
 argument gruppen kan veie.
 
-[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal"]
+[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the new proposal's page opens]
 
-[screen: the new card appears in the sidebar; the selected lines turn amber]
+Sendt inn. Forslaget er umiddelbart synlig for alle deltakere.
 
-Sendt inn. Forslaget er umiddelbart synlig for alle deltakere, festet til nøyaktig de
-linjene det ville endre.
-
-[screen: on the new proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
+[screen: on the proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
 
 Helt til avstemningen starter kan Bjørn finpusse formuleringen — eller trekke
 forslaget helt, hvis diskusjonen får ham på andre tanker.
+
+[screen: click "← Back to document" — the new card in the sidebar, the selected lines now amber]
+
+Tilbake i dokumentet er forslaget festet til nøyaktig de linjene det ville endre.
 
 ## Kapittel 7 — Stemme *(0:45)* — Clara, forslaget «Clarify the dog rule»
 
@@ -259,6 +260,9 @@ Se på reserven: i det øyeblikket hovedforslaget vedtas, tas den automatisk av 
 
 Trenger du papir til møtet, eller et regneark til protokollen? Ett klikk hver. Hver
 lagrede telling havner dessuten i en revisjonslogg — hvem som registrerte hva, og når.
+
+Og VoteText lar ikke resultatet bli endelig så lenge et forslag mangler telling —
+eller mens to forslag som ikke kan stå sammen, begge er vedtatt.
 
 ## Kapittel 11 — Lese resultatet *(0:45)* — Clara, Tool Shed Rules 2026
 

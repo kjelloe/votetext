@@ -7,6 +7,8 @@ These stories describe the main user flows as experienced from the browser. They
 
 The stories assume a document has already been created and is in **Open** status, with at least one invited participant. Supervisor actions use the `supervisor` access role (UC-19) — editor/admin also qualify.
 
+> Phase 3 (2026-10-03) closed the gaps noted here earlier: the profile modal appears for new accounts, highlighted lines carry a tooltip, and supervisors who do not own the document see **Change status** and **Mark as Resolved**. `tests/e2e/supervisor.spec.js` walks US-8/US-9 as a non-owner supervisor.
+
 ---
 
 ## Roles in these stories
@@ -42,11 +44,11 @@ The stories assume a document has already been created and is in **Open** status
 1. The document list shows each document's title, status badge (Draft / Open / Voting / Resolved), and total proposal count.
 2. User clicks a document in **Open** status.
 3. The document view opens: paginated text on the left, a proposal sidebar on the right.
-4. Lines covered by proposals are highlighted in amber. Hovering a highlighted line shows a tooltip with the overlapping proposal numbers.
-5. User scrolls through the text. The sidebar automatically shows only proposals that overlap the current page.
-6. User clicks **All** in the sidebar filter bar to see every proposal across the whole document; clicks **On-page** to return to the current-page view.
-7. User clicks a proposal card in the sidebar — the page jumps to the relevant line and the card comes into view.
-8. User clicks the proposal title to open the full proposal detail page.
+4. Lines covered by proposals are highlighted in amber. Hovering a highlighted line shows a tooltip with the overlapping proposal numbers; clicking it opens the first of them.
+5. User scrolls through the text. The sidebar lists every proposal in the document, in document order.
+6. User clicks **On-page** in the sidebar filter bar to see only the proposals that overlap the current page; clicks **All** to return to the full list.
+7. User hovers a proposal card and clicks the **↗ p.N** link that appears — the page jumps to the relevant line.
+8. User clicks the proposal card to open the full proposal detail page.
 9. User clicks the browser **Back** button (or the **← Document** link) to return to the document, scrolled back to the proposal's line.
 
 ---
@@ -72,20 +74,20 @@ The stories assume a document has already been created and is in **Open** status
 **Goal:** Highlight a passage and submit a proposal to change it
 
 1. On the document view, user reads through the text and identifies a passage they want to change.
-2. User clicks at the start of the passage and drags to the end to select it. A **Propose change** button appears below the selection.
-3. User clicks **Propose change**. A modal opens showing the selected text (collapsed) plus three fields.
+2. User clicks at the start of the passage and drags to the end to select it.
+3. User clicks **Propose** at the top of the proposal sidebar. A modal opens showing the selected text, the operation selector and three fields.
 4. User fills in:
    - **Title** — a short label, e.g. "Replace vague deadline with specific date"
    - **Proposed text** — the replacement wording
    - **Rationale** — why this change is needed
-5. User clicks **Submit proposal**. The modal closes; the new proposal card appears in the sidebar and the selected lines turn amber.
+5. User clicks **Submit proposal**. The new proposal's detail page opens; back on the document its card is in the sidebar and the selected lines are amber.
 6. The proposal begins in **Pending** status. Other participants can now see it, vote on it, and comment.
 
 ---
 
 ## US-5 — Edit or withdraw a proposal
 
-**Actor:** Proposer (owner of the proposal; document must be in Open status)
+**Actor:** Proposer (owner of the proposal; document must be in Draft or Open status — once voting starts the Edit and Withdraw buttons are gone and removal is the supervisor's call)
 **Goal:** Refine wording or retract a proposal that is no longer needed
 
 **Edit:**
@@ -158,7 +160,7 @@ The stories assume a document has already been created and is in **Open** status
 7. Supervisor fills in the **Overall document vote** totals at the bottom of the page and clicks **Save**.
 8. Supervisor optionally clicks **Export CSV** to download a full tally sheet, or **Print HTML** to open a printable version in a new tab — each proposal shows its threshold requirement alongside the yes/no/abstain blanks.
 9. Supervisor clicks **Resolved text** in the toolbar to preview the document with all passing proposals applied.
-10. Supervisor clicks **Mark as Resolved** and confirms. The document transitions to **Resolved** status; the resolved text is stored and a PASSED or FAILED banner appears with the timestamp.
+10. Supervisor clicks **Mark as Resolved** and confirms. If a proposal still has no tally, or two overlapping proposals have both passed, the app refuses and names them; the supervisor records the missing tally or marks one proposal NOT VOTING and tries again. Otherwise the document transitions to **Resolved** status; the resolved text is stored and a PASSED or FAILED banner appears with the timestamp.
 
 ---
 
@@ -177,7 +179,7 @@ The stories assume a document has already been created and is in **Open** status
 
 ## Coverage map
 
-> All 10 stories have Playwright coverage as of 2026-07-10 (44 tests in `tests/e2e/`, incl. an XSS guard-rail spec) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
+> All 10 stories have Playwright coverage as of 2026-07-10 (65 tests in `tests/e2e/`, incl. an XSS guard-rail spec) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
 
 | Story | Playwright priority | Video segment |
 |-------|--------------------|-|

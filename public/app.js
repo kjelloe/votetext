@@ -17,6 +17,12 @@ const state = {
 };
 
 /* ===== Utilities ===== */
+const ACCESS_LEVELS = ['viewer', 'commenter', 'proposer', 'voter', 'supervisor', 'editor', 'admin'];
+
+function hasLevel(doc, minLevel) {
+    return !!(doc && doc.my_access_level) && ACCESS_LEVELS.indexOf(doc.my_access_level) >= ACCESS_LEVELS.indexOf(minLevel);
+}
+
 function esc(str) {
     if (str == null) return '';
     return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c]));
@@ -62,6 +68,12 @@ async function api(method, path, body = null) {
     const res = await fetch('/api' + path, opts);
     if (res.status === 204) return null;
     const data = await res.json();
+    if (res.status === 401 && state.user) {
+        state.user = null;
+        updateHeader();
+        closeModal();
+        location.hash = '#/login';
+    }
     if (!res.ok) {
         const err = new Error(data.error || `HTTP ${res.status}`);
         err.status = res.status;
@@ -125,25 +137,28 @@ async function pollActivity() {
                     let meta = {};
                     try { meta = JSON.parse(e.metadata || '{}'); } catch {}
                     const mins = meta.countdown_minutes;
-                    const docLabel = esc(e.document_title || 'a document');
+                    const docLabel = e.document_title || 'a document';
                     const msg = `⏱ Voting for "${docLabel}" opens in ${mins} minute${mins !== 1 ? 's' : ''}`;
                     showToast(msg, e.document_id, dismissSecs);
                 }
             }
         }
         state.lastActivityTime = newest;
-        if (state.activitySeenTime) { state.activityUnread = events.filter(e => e.created_at > state.activitySeenTime).length; updateHeader(); }
+        if (state.activitySeenTime) { state.activityUnread = events.filter(e => e.created_at > state.activitySeenTime && e.user_id !== state.user.id).length; updateHeader(); }
     } catch {}
 }
 
 /* ===== Modal ===== */
 function openModal(contentHtml, title = '') {
     const overlay = document.getElementById('modal-overlay');
-    const content = document.getElementById('modal-content');
+    // Fresh node per modal: listeners a previous modal attached to the content must not fire for this one
+    const content = document.getElementById('modal-content').cloneNode(false);
+    document.getElementById('modal-content').replaceWith(content);
     content.innerHTML = title ? `<div class="modal-title">${esc(title)}</div>${contentHtml}` : contentHtml;
     overlay.classList.remove('hidden');
     document.getElementById('modal-close').onclick = closeModal;
-    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); }, { once: true });
+    overlay.onclick = e => { if (e.target === overlay) closeModal(); };
+    content.addEventListener('click', e => { if (e.target.closest('.modal-cancel')) closeModal(); });
 }
 
 function closeModal() {
@@ -285,7 +300,7 @@ function openCreateDocModal(prefill = {}) {
         <p id="create-doc-err" class="error-msg" style="display:none"></p>
         <div class="form-actions">
             <button id="create-doc-submit" class="btn btn-primary">Create document</button>
-            <button onclick="closeModal()" class="btn btn-ghost">Cancel</button>
+            <button class="btn btn-ghost modal-cancel">Cancel</button>
         </div>
     `, 'New Document');
 
@@ -453,8 +468,7 @@ async function viewDocument(docId) {
     const rawVariants = variantData.variants || [];
     const heatConfig = variantData.comment_heat || { orange: 10, red: 25 };
     const topPercent = variantData.top_percent || 10;
-    const idOrder = Object.fromEntries([...rawVariants].sort((a, b) => a.id - b.id).map((v, i) => [v.id, i + 1]));
-    const variants = rawVariants.map(v => ({ ...v, proposal_num: idOrder[v.id] }));
+    const variants = rawVariants;
 
     // Build overlap map: variantId → [{id, num}] for all pairs whose char ranges intersect
     const overlapMap = {};
@@ -470,7 +484,7 @@ async function viewDocument(docId) {
     }
     state.docCache[docId] = doc;
 
-    let currentPage = parseInt(new URLSearchParams(location.hash.split('?')[1] || '').get('page') || '1');
+    let currentPage = 1;
 
     const linesData = await api('GET', `/documents/${docId}/lines?page=${currentPage}`);
     const lines = linesData.lines || [];
@@ -488,10 +502,10 @@ async function viewDocument(docId) {
                 <span>${statusBadge(doc.status)}</span>
             </div>
             <div class="flex gap-1 items-center">
-                ${(doc.status === 'voting' || doc.status === 'final_voting') && state.user ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}${(['resolved', 'archived'].includes(doc.status) && state.user) || (doc.status === 'final_voting' && ['supervisor', 'editor', 'admin'].includes(doc.my_access_level)) ? `<a href="#/documents/${esc(String(docId))}/resolved-text" class="btn btn-ghost btn-sm">Resolved text</a>` : ''}
-                ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
+                ${(doc.status === 'voting' || doc.status === 'final_voting') && hasLevel(doc, 'supervisor') ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}${(['resolved', 'archived'].includes(doc.status) && state.user) || (doc.status === 'final_voting' && hasLevel(doc, 'supervisor')) ? `<a href="#/documents/${esc(String(docId))}/resolved-text" class="btn btn-ghost btn-sm">Resolved text</a>` : ''}
+                ${hasLevel(doc, 'editor') ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
                 ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
-                ${(doc.owner_id === (state.user && state.user.id)) ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
+                ${hasLevel(doc, 'supervisor') ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
             </div>
         </div>
         <div class="doc-text-body" id="doc-lines-container"></div>
@@ -512,7 +526,7 @@ async function viewDocument(docId) {
             <p class="text-muted mb-1">${esc(doc.description) || '<em>No description</em>'}</p>
             <p class="text-muted">Owner: <span class="author-tip" title="${esc([doc.owner_name, doc.owner_organization].filter(Boolean).join(' · '))}">${esc(doc.owner_name)}</span></p>
             <p class="text-muted">${doc.total_lines} lines · ${doc.total_pages} pages</p>
-            ${['supervisor', 'editor', 'admin'].includes(doc.my_access_level) ? `<button class="btn btn-ghost btn-sm mt-2" id="access-btn">Manage access</button> <a href="#/documents/${esc(String(docId))}/moderation" class="btn btn-ghost btn-sm mt-2">Moderation</a>` : ''}
+            ${hasLevel(doc, 'supervisor') ? `<button class="btn btn-ghost btn-sm mt-2" id="access-btn">Manage access</button> <a href="#/documents/${esc(String(docId))}/moderation" class="btn btn-ghost btn-sm mt-2">Moderation</a>` : ''}
         </div>
     `;
 
@@ -576,7 +590,7 @@ async function viewDocument(docId) {
                     <button id="filter-page-btn" class="btn btn-sm btn-ghost">On-page 0</button>
                     <button id="filter-top-btn" class="btn btn-sm btn-ghost">Top</button>
                 </div>
-                ${state.user ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
+                ${hasLevel(doc, 'proposer') && !['resolved', 'archived'].includes(doc.status) ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
             </div>
         </div>
         <div class="sidebar-body" id="variants-list"></div>
@@ -589,16 +603,24 @@ async function viewDocument(docId) {
     // Voting countdown banner
     if (doc.voting_scheduled_at && doc.status === 'open') {
         const scheduledMs = new Date(doc.voting_scheduled_at).getTime();
-        const isOwner = doc.owner_id === (state.user && state.user.id);
+        const canCancel = hasLevel(doc, 'supervisor');
         const banner = el('div', { class: 'voting-banner', id: 'voting-banner' });
-        banner.innerHTML = `<span id="voting-banner-countdown"></span>${isOwner ? '<button class="btn btn-ghost btn-sm" id="voting-banner-cancel">Cancel</button>' : ''}`;
+        banner.innerHTML = `<span id="voting-banner-countdown"></span>${canCancel ? '<button class="btn btn-ghost btn-sm" id="voting-banner-cancel">Cancel</button>' : ''}`;
         textPanel.querySelector('.doc-text-header').insertAdjacentElement('afterend', banner);
 
         function tickBanner() {
             const countdown = document.getElementById('voting-banner-countdown');
             if (!countdown) return;
             const remaining = scheduledMs - Date.now();
-            if (remaining <= 0) { clearInterval(state.votingBannerInterval); state.votingBannerInterval = null; location.reload(); return; }
+            if (remaining <= 0) {
+                // The server flips the status on its own clock — poll it instead of reloading in a loop
+                clearInterval(state.votingBannerInterval);
+                countdown.textContent = '⏱ Voting is opening…';
+                state.votingBannerInterval = setInterval(async () => {
+                    try { const d = await api('GET', `/documents/${docId}`); if (d.document.status !== 'open' || !d.document.voting_scheduled_at) location.reload(); } catch {}
+                }, 5000);
+                return;
+            }
             const totalMins = Math.floor(remaining / 60000);
             const secs = Math.floor((remaining % 60000) / 1000);
             const hrs = Math.floor(totalMins / 60);
@@ -609,7 +631,7 @@ async function viewDocument(docId) {
         tickBanner();
         state.votingBannerInterval = setInterval(tickBanner, 1000);
 
-        if (isOwner) {
+        if (canCancel) {
             document.getElementById('voting-banner-cancel').addEventListener('click', async () => {
                 try {
                     await api('POST', `/documents/${docId}/status`, { cancel_schedule: true });
@@ -646,6 +668,11 @@ async function viewDocument(docId) {
             }
             const card = e.target.closest('.variant-card[data-id]');
             if (card) location.hash = `#/variants/${card.dataset.id}`;
+        });
+
+        variantsList.addEventListener('keydown', e => {
+            const card = e.target.closest('.variant-card[data-id]');
+            if (card && e.target === card && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); location.hash = `#/variants/${card.dataset.id}`; }
         });
 
         variantsList.addEventListener('mouseover', e => {
@@ -685,7 +712,7 @@ async function viewDocument(docId) {
     // Event: clicking a highlighted line
     textPanel.querySelector('#doc-lines-container').addEventListener('click', e => {
         const lineEl = e.target.closest('.line-text[data-variant-id]');
-        if (lineEl) location.hash = `#/variants/${lineEl.dataset.variantId}`;
+        if (lineEl && window.getSelection().isCollapsed) location.hash = `#/variants/${lineEl.dataset.variantId}`;
     });
 
     // Pagination
@@ -755,17 +782,29 @@ async function viewDocument(docId) {
     // Text selection → char offset tracking
     let pendingSelection = null;
     const linesContainer = textPanel.querySelector('#doc-lines-container');
-    linesContainer.addEventListener('mouseup', () => {
+    const captureSelection = () => {
         const sel = window.getSelection();
-        if (!sel || sel.isCollapsed || !sel.toString().trim()) { pendingSelection = null; return; }
+        if (!sel || sel.rangeCount === 0 || !linesContainer.contains(sel.anchorNode)) return;
+        if (sel.isCollapsed || !sel.toString().trim()) { pendingSelection = null; return; }
         const anchor = resolveSelectionOffset(sel.anchorNode, sel.anchorOffset);
-        const focus = resolveSelectionOffset(sel.focusNode, sel.focusOffset);
+        let focus = resolveSelectionOffset(sel.focusNode, sel.focusOffset);
+        if (focus === null && !linesContainer.contains(sel.focusNode)) {
+            // Dragged past the text panel: clamp to the first or last line on the page
+            const lines = linesContainer.querySelectorAll('.line-text');
+            const forward = sel.anchorNode.compareDocumentPosition(sel.focusNode) & Node.DOCUMENT_POSITION_FOLLOWING;
+            focus = lines.length ? parseInt(forward ? lines[lines.length - 1].dataset.charEnd : lines[0].dataset.charStart) : null;
+        }
         if (anchor === null || focus === null) { pendingSelection = null; return; }
+        const text = sel.toString().replace(/\n+$/, '');
         const charStart = Math.min(anchor, focus);
-        const charEnd = Math.max(anchor, focus);
+        const charEnd = Math.min(Math.max(anchor, focus), charStart + text.length);
         if (charStart >= charEnd) { pendingSelection = null; return; }
-        pendingSelection = { char_start: charStart, char_end: charEnd, text: sel.toString() };
-    });
+        pendingSelection = { char_start: charStart, char_end: charEnd, text };
+    };
+    if (state.selectionListener) document.removeEventListener('selectionchange', state.selectionListener);
+    state.selectionListener = captureSelection;
+    document.addEventListener('selectionchange', captureSelection);
+    linesContainer.addEventListener('mouseup', captureSelection);
 
     // Propose button
     const proposeBtn = varSection.querySelector('#propose-btn');
@@ -799,7 +838,10 @@ function renderLines(container, lines, variants) {
         textEl.textContent = line.original_text || ' ';
         textEl.dataset.charStart = line.char_offset_start;
         textEl.dataset.charEnd = line.char_offset_end;
-        if (firstVariant) textEl.dataset.variantId = firstVariant.id;
+        if (firstVariant) {
+            textEl.dataset.variantId = firstVariant.id;
+            textEl.title = `Proposal${overlapping.length > 1 ? 's' : ''} ${overlapping.map(x => '#' + x.proposal_num).join(', ')}`;
+        }
 
         lineEl.append(numEl, textEl);
         container.append(lineEl);
@@ -837,7 +879,7 @@ function renderVariantCard(v, overlaps = [], totalComments = 0, heatConfig = { o
     const heatClass = pct >= heatConfig.red ? 'comment-heat-red' : pct >= heatConfig.orange ? 'comment-heat-orange' : '';
     const commentBubble = `<span class="comment-bubble ${heatClass}" title="${esc(cc)} comment${cc !== 1 ? 's' : ''}">💬 ${esc(cc)}</span>`;
     return `
-        <div class="variant-card" data-id="${esc(v.id)}" data-char-start="${esc(v.char_start)}" data-char-end="${esc(v.char_end)}" data-line-start="${esc(v.line_start ?? '')}">
+        <div class="variant-card" tabindex="0" data-id="${esc(v.id)}" data-char-start="${esc(v.char_start)}" data-char-end="${esc(v.char_end)}" data-line-start="${esc(v.line_start ?? '')}">
             <div class="variant-card-title">${numPrefix}${esc(v.title) || esc(v.operation) + ' at ' + esc(v.char_start)}</div>
             <div class="variant-card-meta">${meta}</div>
             <div class="variant-card-footer">
@@ -879,9 +921,20 @@ function openDocSettingsModal(doc) {
         <p id="settings-err" class="error-msg" style="display:none"></p>
         <div class="form-actions">
             <button id="save-settings" class="btn btn-primary">Save</button>
-            <button onclick="closeModal()" class="btn btn-ghost">Cancel</button>
+            <button class="btn btn-ghost modal-cancel">Cancel</button>
+            ${state.user && doc.owner_id === state.user.id ? '<span class="row-actions" style="margin-left:auto"><button id="delete-doc-btn" class="btn btn-danger btn-sm">Delete document</button></span>' : ''}
         </div>
     `, 'Document settings');
+
+    const deleteBtn = document.getElementById('delete-doc-btn');
+    if (deleteBtn) deleteBtn.addEventListener('click', () => {
+        const actions = deleteBtn.closest('.row-actions');
+        actions.innerHTML = '<span class="text-muted" style="font-size:.8rem">Delete this document and all its proposals?</span> <button id="delete-doc-ok" class="btn btn-danger btn-sm">OK</button> <button class="btn btn-ghost btn-sm modal-cancel">Cancel</button>';
+        document.getElementById('delete-doc-ok').addEventListener('click', async () => {
+            try { await api('DELETE', `/documents/${doc.id}`); closeModal(); location.hash = '#/documents'; }
+            catch (err) { const errEl = document.getElementById('settings-err'); errEl.textContent = err.message; errEl.style.display = ''; }
+        });
+    });
 
     document.getElementById('s-threshold').value = settings.majority_threshold || '';
 
@@ -902,10 +955,12 @@ function openDocSettingsModal(doc) {
 }
 
 function openStatusModal(doc) {
-    const transitions = { draft: ['open'], open: ['voting', 'draft'], voting: ['resolved', 'open'], resolved: ['archived'], archived: [] };
-    const allowed = transitions[doc.status] || [];
-    if (!allowed.length) {
-        openModal(`<p>No further status transitions available for <strong>${esc(doc.status)}</strong>.</p>`, 'Document status');
+    const transitions = { draft: ['open'], open: ['voting', 'draft'], voting: ['resolved', 'open'], final_voting: ['voting', 'resolved'], resolved: ['archived'], archived: [] };
+    const supervisorTransitions = { open: ['voting'], voting: [], final_voting: ['voting', 'resolved'] };
+    const allowed = (hasLevel(doc, 'admin') ? transitions[doc.status] : supervisorTransitions[doc.status]) || [];
+    if (!allowed.length && !(doc.voting_scheduled_at && doc.status === 'open')) {
+        const hint = doc.status === 'voting' ? ' Use Review → Resolve conflicts → Ready for final voting to move on.' : '';
+        openModal(`<p>No status change available here for <strong>${esc(doc.status)}</strong>.${esc(hint)}</p>`, 'Document status');
         return;
     }
 
@@ -917,11 +972,11 @@ function openStatusModal(doc) {
         : '';
 
     const otherBtns = allowed
-        .filter(s => s !== 'voting')
+        .filter(s => s !== 'voting' || doc.status !== 'open')
         .map(s => `<button class="btn btn-ghost mb-1" style="width:100%" data-status="${esc(s)}">${esc(s)}</button>`)
         .join('');
 
-    const votingSection = allowed.includes('voting') ? `
+    const votingSection = allowed.includes('voting') && doc.status === 'open' ? `
         <button class="btn btn-ghost mb-1" style="width:100%" id="voting-transition-btn">voting</button>
         <div id="voting-form" style="display:none;margin-top:0.25rem;padding:0.75rem;background:var(--color-bg-secondary);border:1px solid var(--color-border);border-radius:var(--radius);margin-bottom:0.5rem">
             <label style="display:block;margin-bottom:0.5rem;font-size:0.875rem;font-weight:600">Minutes until voting opens <span class="text-muted">(0 = immediate)</span></label>
@@ -980,159 +1035,27 @@ function openStatusModal(doc) {
     });
 }
 
-function openAccessModal(docId) {
-    openModal(`<div class="loading-spinner">Loading…</div>`, 'Manage access');
-
-    api('GET', `/documents/${docId}/access`).then(data => {
-        const rows = data.access || [];
-        const allLevels = ['viewer', 'commenter', 'proposer', 'voter', 'supervisor', 'editor', 'admin'];
-        const defaultAccessLevels = ['viewer', 'commenter', 'proposer', 'voter'];
-        const myLevel = data.my_access_level || 'admin';
-        const myIdx = allLevels.indexOf(myLevel);
-        const isAdmin = myLevel === 'admin';
-        const canEditSettings = ['editor', 'admin'].includes(myLevel);
-        const allowedLevels = allLevels.filter((_, i) => i <= myIdx);
-        const defaultLevel = allowedLevels.includes('proposer') ? 'proposer' : allowedLevels[allowedLevels.length - 1];
-        const currentDefault = data.default_access || '';
-        document.getElementById('modal-content').innerHTML = `
-            <div class="modal-title">Manage access</div>
-            ${canEditSettings ? `
-            <p class="mb-1" style="font-weight:600">Default access</p>
-            <div class="flex items-center gap-1 mb-1">
-                <select id="default-access-select" class="invite-role-select">
-                    <option value="">None — invite only</option>
-                    ${defaultAccessLevels.map(l => `<option value="${l}"${l === currentDefault ? ' selected' : ''}>${l}</option>`).join('')}
-                </select>
-                <span class="text-muted" style="font-size:0.8rem">Role granted to any signed-in user not explicitly invited</span>
-            </div>
-            <p id="default-access-status" style="font-size:0.75rem;min-height:1rem;margin-bottom:0.5rem"></p>
-            <hr style="margin:0.75rem 0;border:none;border-top:1px solid var(--color-border)">` : ''}
-            <div class="mb-2">${rows.map(r => `
-                <div class="flex items-center justify-between gap-1 mb-1">
-                    <span>${esc(r.email)}</span>
-                    <span class="text-muted">${esc(r.access_level)}</span>
-                    ${isAdmin ? `<span class="row-actions"><button class="btn btn-ghost btn-sm" data-remove="${esc(r.user_id)}">Remove</button></span>` : ''}
-                </div>`).join('') || '<p class="text-muted">No explicit access records.</p>'}
-            </div>
-            <hr style="margin:1rem 0;border:none;border-top:1px solid var(--color-border)">
-            <p class="mb-1" style="font-weight:600">Invite user</p>
-            <div class="flex gap-1 mb-1" style="position:relative">
-                <div style="flex:1;position:relative">
-                    <input type="text" id="invite-search" placeholder="Search by name, email or organisation…" autocomplete="off">
-                    <ul id="invite-results" class="user-search-dropdown" style="display:none"></ul>
-                </div>
-                <button class="btn btn-ghost btn-sm" id="invite-search-btn" title="Search">🔍</button>
-                <select id="invite-level" class="invite-role-select">
-                    ${allowedLevels.map(l => `<option value="${l}"${l === defaultLevel ? ' selected' : ''}>${l}</option>`).join('')}
-                </select>
-            </div>
-            <p id="invite-err" class="error-msg" style="display:none"></p>
-            <button id="invite-submit" class="btn btn-primary btn-sm">Invite</button>
-        `;
-
-        const defaultAccessSelect = document.getElementById('default-access-select');
-        if (defaultAccessSelect) defaultAccessSelect.addEventListener('change', async e => {
-            const statusEl = document.getElementById('default-access-status');
-            const val = e.target.value;
-            statusEl.textContent = 'Saving…'; statusEl.style.color = '';
-            try {
-                await api('PATCH', `/documents/${docId}`, { settings: { default_access: val || null } });
-                statusEl.textContent = val ? `Default set to "${val}"` : 'Set to invite only';
-                statusEl.style.color = 'var(--color-success, #16a34a)';
-            } catch (err) {
-                statusEl.textContent = err.message; statusEl.style.color = 'var(--color-error, #dc2626)';
-            }
-        });
-
-        const searchInput = document.getElementById('invite-search');
-        const resultsList = document.getElementById('invite-results');
-        const errEl = document.getElementById('invite-err');
-        let selectedEmail = '';
-
-        function hideResults() { resultsList.style.display = 'none'; resultsList.innerHTML = ''; }
-
-        async function runSearch() {
-            const q = searchInput.value.trim();
-            if (q.length < 3) { hideResults(); return; }
-            try {
-                const { users } = await api('GET', `/auth/search?q=${encodeURIComponent(q)}`);
-                if (!users.length) { hideResults(); return; }
-                resultsList.innerHTML = users.map(u => `
-                    <li class="user-search-result" data-email="${esc(u.email)}">
-                        <span class="user-search-name">${esc(u.display_name || u.email)}</span>
-                        <span class="user-search-meta">${esc([u.email, u.organization].filter(Boolean).join(' · '))}</span>
-                    </li>`).join('');
-                resultsList.style.display = '';
-            } catch { hideResults(); }
-        }
-
-        document.getElementById('invite-search-btn').addEventListener('click', runSearch);
-        searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
-        searchInput.addEventListener('input', () => { selectedEmail = ''; });
-
-        resultsList.addEventListener('click', e => {
-            const li = e.target.closest('.user-search-result');
-            if (!li) return;
-            selectedEmail = li.dataset.email;
-            searchInput.value = li.dataset.email;
-            hideResults();
-            errEl.style.display = 'none';
-        });
-
-        document.addEventListener('click', e => {
-            if (!e.target.closest('#invite-search') && !e.target.closest('#invite-results')) hideResults();
-        }, { once: false, capture: false });
-
-        document.getElementById('invite-submit').addEventListener('click', async () => {
-            errEl.style.display = 'none';
-            const email = (selectedEmail || searchInput.value).trim();
-            const level = document.getElementById('invite-level').value;
-            if (!email || !email.includes('@')) { errEl.textContent = 'Select a user from results or enter a valid email address'; errEl.style.display = ''; return; }
-            try {
-                await api('POST', `/documents/${docId}/access`, { email, access_level: level });
-                closeModal();
-                openAccessModal(docId);
-            } catch (err) { errEl.textContent = err.message; errEl.style.display = ''; }
-        });
-
-        document.getElementById('modal-content').addEventListener('click', async e => {
-            const removeBtn = e.target.closest('button[data-remove]');
-            if (removeBtn) {
-                const actions = removeBtn.closest('.row-actions');
-                const userId = removeBtn.dataset.remove;
-                actions.innerHTML =
-                    `<button class="btn btn-danger btn-sm" data-confirm-remove="${esc(userId)}">OK</button>` +
-                    `<button class="btn btn-ghost btn-sm" data-cancel-remove="${esc(userId)}">Cancel</button>`;
-                return;
-            }
-            const cancelBtn = e.target.closest('button[data-cancel-remove]');
-            if (cancelBtn) {
-                const actions = cancelBtn.closest('.row-actions');
-                actions.innerHTML = `<button class="btn btn-ghost btn-sm" data-remove="${esc(cancelBtn.dataset.cancelRemove)}">Remove</button>`;
-                return;
-            }
-            const confirmBtn = e.target.closest('button[data-confirm-remove]');
-            if (confirmBtn) {
-                try {
-                    await api('DELETE', `/documents/${docId}/access/${confirmBtn.dataset.confirmRemove}`);
-                    closeModal();
-                    openAccessModal(docId);
-                } catch (err) { alert(err.message); }
-            }
-        });
-    });
-}
-
 function resolveSelectionOffset(node, nodeOffset) {
-    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-    const lineTextEl = el.closest('.line-text');
+    if (node.nodeType !== Node.TEXT_NODE) {
+        // Element-anchored selection (triple-click, keyboard): the offset is a child index,
+        // so the point is the start of that child or the end of the one before it
+        const after = node.childNodes[nodeOffset];
+        const before = node.childNodes[nodeOffset - 1];
+        const target = after || before || node;
+        const holder = target.nodeType === Node.TEXT_NODE ? target.parentElement : target;
+        const lt = holder.closest('.line-text') || holder.querySelector('.line-text') || (holder.closest('.doc-line') || holder).querySelector?.('.line-text');
+        if (!lt) return null;
+        const edge = after ? 'charStart' : 'charEnd';
+        const v = parseInt(lt.dataset[edge]);
+        return isNaN(v) ? null : v;
+    }
+    const lineTextEl = node.parentElement.closest('.line-text');
     if (lineTextEl) {
         const cs = parseInt(lineTextEl.dataset.charStart);
         return isNaN(cs) ? null : cs + nodeOffset;
     }
-    const lineEl = el.closest('.doc-line');
-    if (!lineEl) return null;
-    const lt = lineEl.querySelector('.line-text');
+    const lineEl = node.parentElement.closest('.doc-line');
+    const lt = lineEl && lineEl.querySelector('.line-text');
     if (!lt) return null;
     const cs = parseInt(lt.dataset.charStart);
     return isNaN(cs) ? null : cs;
@@ -1177,7 +1100,7 @@ function openProposeModal(doc, selection) {
         <p id="propose-err" class="error-msg" style="display:none"></p>
         <div class="form-actions">
             <button id="propose-submit" class="btn btn-primary" ${hasSelection ? '' : 'disabled'}>Submit proposal</button>
-            <button onclick="closeModal()" class="btn btn-ghost">Cancel</button>
+            <button class="btn btn-ghost modal-cancel">Cancel</button>
         </div>
     `, 'Propose variant');
 
@@ -1221,35 +1144,34 @@ async function viewVariant(variantId) {
     state.commentAuthorId = null;
     const data = await api('GET', `/variants/${variantId}`);
     const v = data.variant;
-    state.commentAuthorId = v.user_id;
+    state.commentAuthorId = v.proposed_by;
 
     // Fetch doc, all doc variants, comments, votes in parallel
-    const [docData, allVariantsData, commentData, voteData] = await Promise.all([
+    const [docData, allVariantsData, commentData, voteData, relData] = await Promise.all([
         api('GET', `/documents/${v.document_id}`).catch(() => null),
         api('GET', `/documents/${v.document_id}/variants`).catch(() => ({ variants: [] })),
         api('GET', `/variants/${variantId}/comments`).catch(() => ({ comments: [] })),
         api('GET', `/variants/${variantId}/votes`).catch(() => ({ votes: [], tallies: {} })),
+        api('GET', `/variants/${variantId}/relations`).catch(() => ({ relations: [] })),
     ]);
 
     const doc = docData && docData.document;
     state.canModerate = !!(state.user && doc && ['supervisor', 'editor', 'admin'].includes(doc.my_access_level));
+    state.canComment = hasLevel(doc, 'commenter');
     if (!state.user && !doc) {
         setMain(`<div class="page-container"><div class="card"><h1>${esc(v.title||'Proposal')}</h1>${v.rationale?`<p style="border-left:3px solid var(--color-border);padding:.5rem .75rem;font-style:italic">${esc(v.rationale)}</p>`:''}<div class="diff-block">${renderDiff(v,null)}</div><p class="text-muted mt-2"><a href="#/login">Log in</a> to view the full document and other proposals.</p></div></div>`);
         return;
     }
     const rawVariants = allVariantsData.variants || [];
-
-    // Proposal number: id-ascending order (same as sidebar #N)
-    const idOrder = Object.fromEntries([...rawVariants].sort((a, b) => a.id - b.id).map((vv, i) => [vv.id, i + 1]));
-    const proposalNum = idOrder[variantId];
+    const proposalNum = v.proposal_num;
 
     // Document-position order (same as sidebar listing) for prev/next
     const docOrdered = [...rawVariants].sort((a, b) =>
         a.char_start !== b.char_start ? a.char_start - b.char_start : new Date(a.created_at) - new Date(b.created_at)
     );
     const posIdx = docOrdered.findIndex(vv => vv.id === variantId);
-    const prevV = posIdx > 0 ? { ...docOrdered[posIdx - 1], proposal_num: idOrder[docOrdered[posIdx - 1].id] } : null;
-    const nextV = posIdx < docOrdered.length - 1 ? { ...docOrdered[posIdx + 1], proposal_num: idOrder[docOrdered[posIdx + 1].id] } : null;
+    const prevV = posIdx > 0 ? docOrdered[posIdx - 1] : null;
+    const nextV = posIdx < docOrdered.length - 1 ? docOrdered[posIdx + 1] : null;
 
     // Page + line for back-to-document jump
     const thisInList = rawVariants.find(vv => vv.id === variantId);
@@ -1261,20 +1183,16 @@ async function viewVariant(variantId) {
         ? Math.ceil(lineStart / linesPerPage)
         : Math.max(1, Math.ceil((v.char_start / Math.max((doc && doc.total_chars) || 1, 1)) * ((doc && doc.total_pages) || 1)));
 
-    // Get original text from doc lines if available
+    // Make sure every page the proposal touches is cached, then cut the original text out of it
     let originalText = null;
     if (doc) {
-        const allLines = Object.values(state.docLines[v.document_id] || {}).flat();
-        if (allLines.length > 0) {
-            originalText = extractTextRange(allLines, v.char_start, v.char_end);
-        } else {
-            try {
-                const ld = await api('GET', `/documents/${v.document_id}/lines?page=${jumpPage}`);
-                state.docLines[v.document_id] = state.docLines[v.document_id] || {};
-                state.docLines[v.document_id][jumpPage] = ld.lines;
-                originalText = extractTextRange(ld.lines, v.char_start, v.char_end);
-            } catch {}
+        state.docLines[v.document_id] = state.docLines[v.document_id] || {};
+        const lastPage = thisInList && thisInList.line_end ? Math.ceil(thisInList.line_end / linesPerPage) : jumpPage;
+        for (let p = jumpPage; p <= Math.max(jumpPage, lastPage); p++) {
+            if (state.docLines[v.document_id][p]) continue;
+            try { state.docLines[v.document_id][p] = (await api('GET', `/documents/${v.document_id}/lines?page=${p}`)).lines; } catch {}
         }
+        originalText = extractTextRange(Object.values(state.docLines[v.document_id]).flat(), v.char_start, v.char_end);
     }
 
     const affectedLines = Object.values(state.docLines[v.document_id] || {}).flat()
@@ -1286,9 +1204,17 @@ async function viewVariant(variantId) {
 
     const wrap = el('div', { class: 'variant-layout' });
 
-    const canFork = state.user && doc &&
-        ['open', 'voting', 'final_voting'].includes(doc.status) &&
-        !['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(v.status);
+    const canFork = !['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(v.status) &&
+        (doc && doc.status === 'open' ? hasLevel(doc, 'proposer') : ['voting', 'final_voting'].includes(doc && doc.status) && hasLevel(doc, 'supervisor'));
+    const canVote = hasLevel(doc, 'voter') && ['draft', 'open', 'voting'].includes(doc.status);
+    const voteNote = !state.user ? 'Log in to vote' : canVote ? '' : (hasLevel(doc, 'voter') ? 'Voting on proposals is closed' : 'Voter access is required to vote');
+    const numOf = id => { const m = rawVariants.find(x => x.id === id); return m ? `#${m.proposal_num}` : ''; };
+    const basedOn = (relData.relations || []).filter(r => r.relation_type === 'based_on' && r.from_variant_id === variantId);
+    const forks = (relData.relations || []).filter(r => r.relation_type === 'based_on' && r.to_variant_id === variantId);
+    const relationLine = [
+        ...basedOn.map(r => `based on <a href="#/variants/${esc(r.to_variant_id)}">${esc(numOf(r.to_variant_id))} ${esc(r.to_title || 'proposal')}</a>`),
+        ...forks.map(r => `forked as <a href="#/variants/${esc(r.from_variant_id)}">${esc(numOf(r.from_variant_id))} ${esc(r.from_title || 'proposal')}</a>`),
+    ].join(' · ');
 
     const prevLabel = prevV ? `#${prevV.proposal_num} ${prevV.title || prevV.operation}` : '';
     const nextLabel = nextV ? `#${nextV.proposal_num} ${nextV.title || nextV.operation}` : '';
@@ -1312,6 +1238,7 @@ async function viewVariant(variantId) {
                 ${esc(v.operation)} · ${v.operation === 'insert' ? `char ${esc(v.char_start)}` : `chars ${esc(v.char_start)}–${esc(v.char_end)}`} ·
                 proposed by <strong>${esc(v.proposer_name)}</strong> · ${timeAgo(v.created_at)}
             </p>
+            ${relationLine ? `<p class="text-muted mb-2" id="variant-relations">${relationLine}</p>` : ''}
             ${v.rationale ? `<p style="border-left:3px solid var(--color-border);padding:.5rem .75rem;font-style:italic;margin-bottom:.5rem">${esc(v.rationale)}</p>` : ''}
 
             <div class="diff-block">
@@ -1330,7 +1257,7 @@ async function viewVariant(variantId) {
                 <div id="line-preview-content" class="line-preview-block"></div>
             </div>` : ''}
 
-            ${state.user && v.proposed_by === state.user.id && v.status === 'pending' ? `
+            ${state.user && v.proposed_by === state.user.id && v.status === 'pending' && doc && ['draft', 'open'].includes(doc.status) ? `
                 <div class="flex gap-1 mt-2">
                     <button id="edit-variant-btn" class="btn btn-ghost btn-sm">Edit</button>
                     <button id="withdraw-variant-btn" class="btn btn-danger btn-sm">Withdraw</button>
@@ -1341,7 +1268,7 @@ async function viewVariant(variantId) {
             <div class="sidebar-header" style="margin:-1.25rem -1.25rem 1rem;padding:.875rem 1.25rem;background:var(--color-bg-secondary);border-bottom:1px solid var(--color-border);border-radius:12px 12px 0 0">
                 Votes
             </div>
-            ${renderVoteSection(v, myVote)}
+            ${renderVoteSection(v, myVote, canVote, voteNote)}
         </div>
 
         <div class="card">
@@ -1355,16 +1282,16 @@ async function viewVariant(variantId) {
                 <button id="csort-author" class="btn btn-sm btn-ghost" data-sort="author">Author's</button>
             </div>
             <div id="comment-thread">
-                ${renderCommentThread(commentData.comments || [], v.id, 'chrono', v.user_id)}
+                ${renderCommentThread(commentData.comments || [], v.id, 'chrono', v.proposed_by)}
             </div>
-            ${state.user ? `
+            ${hasLevel(doc, 'commenter') ? `
                 <div class="mt-2" id="comment-form">
                     <textarea id="comment-text" class="comment-form" placeholder="Add a comment…"></textarea>
                     <div class="flex gap-1 mt-1">
                         <button id="post-comment-btn" class="btn btn-primary btn-sm">Post comment</button>
                     </div>
                     <p id="comment-err" class="error-msg" style="display:none"></p>
-                </div>` : '<p class="text-muted mt-2">Log in to comment.</p>'}
+                </div>` : `<p class="text-muted mt-2">${state.user ? 'Commenter access is required to post.' : 'Log in to comment.'}</p>`}
         </div>
     `;
 
@@ -1374,11 +1301,11 @@ async function viewVariant(variantId) {
     const modHideBtn = document.getElementById('mod-hide-btn');
     if (modHideBtn) modHideBtn.addEventListener('click', async () => {
         if (!confirm('Hide this proposal from all participants?')) return;
-        try { await api('POST', `/variants/${variantId}/hide`); viewVariant(variantId); } catch (err) { alert(err.message); }
+        try { await api('POST', `/variants/${variantId}/hide`); runRoute(); } catch (err) { alert(err.message); }
     });
     const modUnhideBtn = document.getElementById('mod-unhide-btn');
     if (modUnhideBtn) modUnhideBtn.addEventListener('click', async () => {
-        try { await api('POST', `/variants/${variantId}/unhide`); viewVariant(variantId); } catch (err) { alert(err.message); }
+        try { await api('POST', `/variants/${variantId}/unhide`); runRoute(); } catch (err) { alert(err.message); }
     });
 
     // Share button
@@ -1398,14 +1325,15 @@ async function viewVariant(variantId) {
             const defaultTitle = `Your variant of ${v.title || v.operation}`;
             openModal(`
                 <div class="form-group"><label>Title</label><input type="text" id="fork-title" value="${esc(defaultTitle)}"></div>
-                <div class="form-group"><label>Proposed text</label><textarea id="fork-text" class="comment-form" rows="4">${esc(v.new_text)}</textarea></div>
+                <div class="form-group"><label>Proposed text</label><textarea id="fork-text" class="comment-form" rows="4"></textarea></div>
                 <div class="form-group"><label>Rationale</label><textarea id="fork-rationale" class="comment-form" rows="2" placeholder="Why does this variant differ?"></textarea></div>
                 <p id="fork-err" class="error-msg" style="display:none"></p>
                 <div class="form-actions">
                     <button id="fork-submit-btn" class="btn btn-primary">Submit fork</button>
-                    <button onclick="closeModal()" class="btn btn-ghost">Cancel</button>
+                    <button class="btn btn-ghost modal-cancel">Cancel</button>
                 </div>
             `, 'Fork proposal');
+            document.getElementById('fork-text').value = v.new_text;
             document.getElementById('fork-submit-btn').addEventListener('click', async () => {
                 const errEl = document.getElementById('fork-err');
                 errEl.style.display = 'none';
@@ -1500,7 +1428,7 @@ async function viewVariant(variantId) {
             v.votes_abstain = tallies.votes_abstain;
             voteCard.innerHTML = `
                 <div class="sidebar-header" style="margin:-1.25rem -1.25rem 1rem;padding:.875rem 1.25rem;background:var(--color-bg-secondary);border-bottom:1px solid var(--color-border);border-radius:12px 12px 0 0">Votes</div>
-                ${renderVoteSection(v, currentVote)}`;
+                ${renderVoteSection(v, currentVote, canVote, voteNote)}`;
         } catch (err) { alert(err.message); }
     });
 
@@ -1630,20 +1558,21 @@ function renderDiff(v, originalText) {
                 <div class="diff-context">Text deleted (${esc(v.char_end - v.char_start)} characters)</div>`;
     }
     // replace
-    return `${originalText ? `<div class="diff-del">${esc(originalText)}</div>` : `<div class="diff-del">[${v.char_end - v.char_start} chars at position ${v.char_start}]</div>`}
+    return `${originalText ? `<div class="diff-del">${esc(originalText)}</div>` : `<div class="diff-del">${esc(`[${v.char_end - v.char_start} chars at position ${v.char_start}]`)}</div>`}
             ${v.new_text ? `<div class="diff-ins">${esc(v.new_text)}</div>` : ''}`;
 }
 
-function renderVoteSection(v, myVote) {
+function renderVoteSection(v, myVote, canVote = true, note = '') {
     const isFor = myVote === 1;
     const isAgainst = myVote === -1;
     const isAbstain = myVote === 0;
+    const dis = canVote ? '' : ' disabled';
     return `
         <div class="vote-section">
-            <button class="vote-btn ${isFor ? 'active-for' : ''}" data-value="1">▲ For <strong>${esc(v.votes_for)}</strong></button>
-            <button class="vote-btn ${isAgainst ? 'active-against' : ''}" data-value="-1">▼ Against <strong>${esc(v.votes_against)}</strong></button>
-            <button class="vote-btn ${isAbstain ? 'active-abstain' : ''}" data-value="0">◆ Abstain <strong>${esc(v.votes_abstain)}</strong></button>
-            ${!state.user ? '<span class="text-muted">Log in to vote</span>' : ''}
+            <button class="vote-btn ${isFor ? 'active-for' : ''}" data-value="1"${dis}>▲ For <strong>${esc(v.votes_for)}</strong></button>
+            <button class="vote-btn ${isAgainst ? 'active-against' : ''}" data-value="-1"${dis}>▼ Against <strong>${esc(v.votes_against)}</strong></button>
+            <button class="vote-btn ${isAbstain ? 'active-abstain' : ''}" data-value="0"${dis}>◆ Abstain <strong>${esc(v.votes_abstain)}</strong></button>
+            ${note ? `<span class="text-muted">${esc(note)}</span>` : ''}
         </div>`;
 }
 
@@ -1682,8 +1611,8 @@ function renderCommentThread(comments, variantId, sortMode = 'chrono', authorId 
             </div>
             <div class="comment-text">${esc(c.text)}</div>
             ${parentEditedLater ? `<div class="comment-time" style="font-style:italic">parent comment was edited</div>` : ''}
-            ${state.user && (!isReply || canDelete || canEdit || canHide) ? `<div class="comment-actions">
-                ${!isReply ? `<button class="btn btn-ghost btn-sm reply-btn" data-parent="${esc(c.id)}">Reply</button>` : ''}
+            ${state.user && ((!isReply && state.canComment) || canDelete || canEdit || canHide) ? `<div class="comment-actions">
+                ${!isReply && state.canComment ? `<button class="btn btn-ghost btn-sm reply-btn" data-parent="${esc(c.id)}">Reply</button>` : ''}
                 ${canEdit ? `<button class="btn btn-ghost btn-sm edit-comment-btn" data-id="${esc(c.id)}">Edit</button>` : ''}
                 ${canDelete ? `<button class="btn btn-ghost btn-sm delete-comment-btn" data-id="${esc(c.id)}">Delete</button>` : ''}
                 ${canHide ? `<button class="btn btn-ghost btn-sm hide-comment-btn" data-id="${esc(c.id)}">Hide</button>` : ''}
@@ -1696,7 +1625,8 @@ function renderCommentThread(comments, variantId, sortMode = 'chrono', authorId 
 
 function wireCommentActions(variantId) {
     const thread = document.getElementById('comment-thread');
-    if (!thread) return;
+    if (!thread || thread.dataset.wired) return;
+    thread.dataset.wired = '1';
 
     const applyRefresh = (comments) => {
         const sortBar = document.getElementById('comment-sort-bar');
@@ -1822,14 +1752,16 @@ function wireCommentActions(variantId) {
 function openEditVariantModal(v) {
     openModal(`
         <div class="form-group"><label>Title</label><input type="text" id="edit-title" value="${esc(v.title)}"></div>
-        <div class="form-group"><label>Rationale</label><textarea id="edit-rationale">${esc(v.rationale)}</textarea></div>
-        <div class="form-group"><label>New text</label><textarea id="edit-newtext">${esc(v.new_text)}</textarea></div>
+        <div class="form-group"><label>Rationale</label><textarea id="edit-rationale"></textarea></div>
+        <div class="form-group"><label>New text</label><textarea id="edit-newtext"></textarea></div>
         <p id="edit-err" class="error-msg" style="display:none"></p>
         <div class="form-actions">
             <button id="save-edit-btn" class="btn btn-primary">Save</button>
-            <button onclick="closeModal()" class="btn btn-ghost">Cancel</button>
+            <button class="btn btn-ghost modal-cancel">Cancel</button>
         </div>
     `, 'Edit variant');
+    document.getElementById('edit-rationale').value = v.rationale || '';
+    document.getElementById('edit-newtext').value = v.new_text || '';
 
     document.getElementById('save-edit-btn').addEventListener('click', async () => {
         const errEl = document.getElementById('edit-err');
@@ -1858,7 +1790,7 @@ async function renderActivity(mineOnly) {
     const activity = data.activity || [];
 
     const wrap = el('div', { class: 'page-container' });
-    const icons = { document_created: '📄', document_updated: '✏️', document_status_changed: '🔄', variant_proposed: '💡', variant_updated: '✏️', variant_withdrawn: '↩️', vote_cast: '🗳️', vote_changed: '🔁', vote_retracted: '↩️', comment_added: '💬', comment_updated: '✏️', user_invited: '👤', user_blocked: '🚫', user_unblocked: '✅', voting_scheduled: '⏱', voting_schedule_cancelled: '🚫' };
+    const icons = { document_created: '📄', document_updated: '✏️', document_status_changed: '🔄', variant_proposed: '💡', variant_updated: '✏️', variant_withdrawn: '↩️', vote_cast: '🗳️', vote_changed: '🔁', vote_retracted: '↩️', comment_added: '💬', comment_updated: '✏️', user_invited: '👤', user_blocked: '🚫', user_unblocked: '✅', voting_scheduled: '⏱', voting_schedule_cancelled: '🚫', variant_threshold_changed: '⚖️', variant_hidden: '🙈', variant_unhidden: '👁️', comment_hidden: '🙈', comment_unhidden: '👁️', user_protected: '🛡️', user_unprotected: '🛡️', document_deleted: '🗑️', document_data_copied: '📋', user_access_changed: '🔑', user_access_removed: '🚪', variant_share_changed: '🔗', variant_relation_added: '🧷', comment_deleted: '🗑️' };
 
     wrap.innerHTML = `
         <div class="page-header">
@@ -1900,6 +1832,20 @@ async function renderActivity(mineOnly) {
 document.getElementById('login-btn').addEventListener('click', () => { location.hash = '#/login'; });
 document.getElementById('logout-btn').addEventListener('click', async () => { await api('POST', '/auth/logout'); state.user = null; updateHeader(); location.hash = '#/login'; });
 
+// Called at boot and again after an in-tab login: loads config, the unread badge and starts polling
+async function startSession() {
+    if (!state.user) return;
+    try { state.config = (await api('GET', '/auth/me')).config || {}; } catch {}
+    state.activitySeenTime = localStorage.getItem(`act_seen_${state.user.id}`) || new Date().toISOString();
+    try {
+        const data = await api('GET', '/activity');
+        state.lastActivityTime = (data.activity && data.activity[0]) ? data.activity[0].created_at : new Date().toISOString();
+        state.activityUnread = (data.activity || []).filter(e => e.created_at > state.activitySeenTime && e.user_id !== state.user.id).length;
+        updateHeader();
+    } catch {}
+    if (!state.pollTimer) state.pollTimer = setInterval(pollActivity, 30000);
+}
+
 async function init() {
     try {
         const data = await api('GET', '/auth/me');
@@ -1909,17 +1855,7 @@ async function init() {
     updateHeader();
     window.addEventListener('hashchange', () => runRoute());
     await runRoute();
-    if (state.user) {
-        const seenKey = `act_seen_${state.user.id}`;
-        state.activitySeenTime = localStorage.getItem(seenKey) || new Date().toISOString();
-        try {
-            const data = await api('GET', '/activity');
-            state.lastActivityTime = (data.activity && data.activity[0]) ? data.activity[0].created_at : new Date().toISOString();
-            state.activityUnread = (data.activity || []).filter(e => e.created_at > state.activitySeenTime).length;
-            updateHeader();
-        } catch {}
-        setInterval(pollActivity, 30000);
-    }
+    await startSession();
 }
 
 // Defer boot until DOMContentLoaded so auth.js/review.js are guaranteed to have

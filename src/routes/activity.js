@@ -3,11 +3,12 @@
 const { Router } = require('express');
 const { getAll, applyVotingSchedules } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { redactActivity, VISIBLE_DOCUMENT_IDS_SQL } = require('../middleware/access');
 
 const router = Router();
 
 // GET /api/activity
-// Returns activity on all documents the user owns or has access to.
+// Returns activity on all documents the user owns or has access to (drafts only with editor+).
 // ?mine=true restricts to actions performed by the requesting user.
 router.get('/', requireAuth, (req, res, next) => {
     try {
@@ -27,18 +28,16 @@ router.get('/', requireAuth, (req, res, next) => {
              FROM activity_log al
              JOIN users u ON u.id = al.user_id
              LEFT JOIN documents d ON d.id = al.document_id
-             WHERE al.document_id IN (
-                 SELECT id FROM documents WHERE owner_id = ?
-                 UNION
-                 SELECT document_id FROM user_document_access WHERE user_id = ? AND blocked = 0
-             )
+             LEFT JOIN variants hv ON hv.id = al.variant_id
+             WHERE al.document_id IN (${VISIBLE_DOCUMENT_IDS_SQL})
+               AND (hv.id IS NULL OR hv.is_hidden = 0)
              ${mineClause}
              ORDER BY al.created_at DESC
              LIMIT ? OFFSET ?`,
             params
         );
 
-        res.json({ activity, page });
+        res.json({ activity: redactActivity(activity), page });
     } catch (err) {
         next(err);
     }

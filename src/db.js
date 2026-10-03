@@ -49,4 +49,10 @@ function applyVotingSchedules() {
     }
 }
 
-module.exports = { db, getOne, getAll, run, transaction, logActivity, applyVotingSchedules };
+function purgeExpired() {
+    const now = new Date().toISOString();
+    db.prepare('DELETE FROM otp_codes WHERE expires_at < ?').run(now);
+    db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now);
+}
+
+module.exports = { db, getOne, getAll, run, transaction, logActivity, applyVotingSchedules, purgeExpired };

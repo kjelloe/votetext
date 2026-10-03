@@ -88,17 +88,16 @@ test.describe('US-1: sign-in flow', () => {
         const otpRes = await request.get(`http://localhost:3001/api/auth/test-otp?email=${encodeURIComponent(email)}`);
         // Fallback: read directly from DB via a small inline fetch to a debug route.
         // If no debug route, skip and document as a known limitation.
-        test.skip(!otpRes.ok(), 'OTP debug endpoint not available — see tests/e2e/README.md');
+        test.skip(!otpRes.ok(), 'OTP debug endpoint not available — the server must run with NODE_ENV=test (see global-setup.js)');
 
         const { code } = await otpRes.json();
         // Filling 6 digits auto-submits (input listener clicks Verify)
         await page.locator('#otp-input').fill(code);
 
-        // Profile modal may appear for first-time user
+        // First-time user: the profile completion modal appears (UC-13)
         const skipBtn = page.getByRole('button', { name: /skip/i });
-        if (await skipBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await skipBtn.click();
-        }
+        await expect(skipBtn).toBeVisible();
+        await skipBtn.click();
 
         // Should land on document list
         await expect(page).toHaveURL(/#\/(documents)?$/);

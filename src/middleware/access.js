@@ -71,4 +71,27 @@ function requireDocumentAccess(minLevel) {
     };
 }
 
-module.exports = { requireDocumentAccess, resolveAccessLevel, meetsLevel, ACCESS_LEVELS };
+// Documents a signed-in user sees in listings and feeds: owned, or an unblocked
+// access record (drafts only with editor+). Bind the user id twice.
+const VISIBLE_DOCUMENT_IDS_SQL = `
+    SELECT d.id FROM documents d
+    LEFT JOIN user_document_access uda ON uda.document_id = d.id AND uda.user_id = ?
+    WHERE d.deleted_at IS NULL AND (
+        d.owner_id = ?
+        OR (uda.user_id IS NOT NULL AND uda.blocked = 0 AND (d.status != 'draft' OR uda.access_level IN ('editor', 'admin')))
+    )`;
+
+// Strip activity metadata that only supervisors should read: the previous text
+// of edited comments and the email addresses of invitees.
+function redactActivity(rows) {
+    return rows.map(row => {
+        let meta;
+        try { meta = JSON.parse(row.metadata || '{}'); } catch { return row; }
+        if (!('previous_text' in meta) && !('email' in meta)) return row;
+        delete meta.previous_text;
+        delete meta.email;
+        return { ...row, metadata: JSON.stringify(meta) };
+    });
+}
+
+module.exports = { requireDocumentAccess, resolveAccessLevel, meetsLevel, redactActivity, ACCESS_LEVELS, VISIBLE_DOCUMENT_IDS_SQL };

@@ -6,6 +6,7 @@ process.env.PORT = '3099';
 process.env.NODE_ENV = 'test';
 process.env.SESSION_LIFETIME_HOURS = '1';
 process.env.OTP_EXPIRY_MINUTES = '10';
+process.env.RATE_LIMIT_MAX = '100000';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -55,10 +56,12 @@ after(async () => {
 // ── Helper ───────────────────────────────────────────────────────────────────
 
 async function req(method, urlPath, opts = {}) {
-    const { body, cookie } = opts;
+    const { body, cookie, ip } = opts;
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (cookie) headers['Cookie'] = cookie;
+    // The app trusts one proxy hop, so this sets req.ip — lets a test act as a distinct client address
+    if (ip) headers['X-Forwarded-For'] = ip;
 
     const res = await fetch(BASE + urlPath, {
         method,
@@ -78,6 +81,24 @@ function latestOtp(email) {
     return db.prepare(
         "SELECT code FROM otp_codes WHERE email = ? AND used = 0 ORDER BY created_at DESC LIMIT 1"
     ).get(email.toLowerCase());
+}
+
+async function loginAs(email) {
+    await req('POST', '/auth/request-otp', { body: { email } });
+    const r = await req('POST', '/auth/verify-otp', { body: { email, code: latestOtp(email).code } });
+    return `session_id=${r.sessionId}`;
+}
+
+// Resolve gate: proposals without a final tally block resolution. Asserts the
+// 422, then marks the listed proposals as not voting so the caller can resolve.
+async function rejectUntallied(documentId, cookie) {
+    const r = await req('POST', `/documents/${documentId}/status`, { body: { status: 'resolved' }, cookie });
+    assert.equal(r.status, 422, 'untallied proposals must block resolution');
+    assert.ok(Array.isArray(r.data.untallied) && r.data.untallied.length > 0, '422 body lists the untallied proposals');
+    for (const id of r.data.untallied) {
+        const p = await req('PATCH', `/variants/${id}/review-status`, { body: { status: 'rejected' }, cookie });
+        assert.equal(p.status, 200);
+    }
 }
 
 // ── AUTH ─────────────────────────────────────────────────────────────────────
@@ -577,6 +598,7 @@ test('POST /documents/:id/status — full lifecycle: open → voting → resolve
     assert.equal(r.status, 200);
     assert.equal(r.data.document.status, 'voting');
 
+    await rejectUntallied(docId, sessionCookie);
     r = await req('POST', `/documents/${docId}/status`, { body: { status: 'resolved' }, cookie: sessionCookie });
     assert.equal(r.status, 200);
     assert.equal(r.data.document.status, 'resolved');
@@ -1377,6 +1399,7 @@ test('Setup: record final tally on pending variant for resolve test', async () =
 });
 
 test('POST /documents/:id/status — final_voting → resolved — processes tallies → 200', async () => {
+    await rejectUntallied(votingDocId, sessionCookie);
     const r = await req('POST', `/documents/${votingDocId}/status`, {
         body: { status: 'resolved' },
         cookie: sessionCookie,
@@ -1972,6 +1995,7 @@ test('W13: supervisor tallies, audit log, doc-vote, resolved-text → 200', asyn
 });
 
 test('W14: supervisor final_voting → resolved → 200', async () => {
+    await rejectUntallied(supDocId, supCookie);
     const r = await req('POST', `/documents/${supDocId}/status`, { body: { status: 'resolved' }, cookie: supCookie });
     assert.equal(r.status, 200);
     assert.equal(r.data.document.status, 'resolved');
@@ -2455,6 +2479,529 @@ test('Z9: GET comments listing surfaces edited_at (the marker contract) and neve
     const edited = all.find(c => c.id === zCommentId);
     assert.ok(edited && edited.edited_at, 'listing must expose edited_at so the UI can render the marker');
     assert.ok(!('previous_text' in edited), 'previous text stays in the activity log, never in the comment payload');
+});
+
+// ── GROUP AA: 2026-10 REVIEW FIXES ────────────────────────────────────────────
+// Draft rule on variant sub-routes and the global feed, activity redaction,
+// vote-retract/relations access, import limits, withdraw guard, nesting,
+// final-voting preview, resolve gate, OTP attempt limit, signup mode, API 404.
+
+let aaDraftId, aaDraftVarId, aaDocId, aaA, aaB, aaC, aaD, aaVoterCookie, aaCommentId;
+
+test('AA1: setup — draft doc with proposal + comment, open doc, voter and viewer invited', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AA draft', text: 'Hello draft world' }, cookie: sessionCookie });
+    aaDraftId = d.data.document.id;
+    const v = await req('POST', `/documents/${aaDraftId}/variants`, {
+        body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'Howdy', title: 'AA secret draft proposal' }, cookie: sessionCookie,
+    });
+    aaDraftVarId = v.data.variant.id;
+    await req('POST', `/variants/${aaDraftVarId}/comments`, { body: { text: 'owner-only draft comment' }, cookie: sessionCookie });
+
+    const o = await req('POST', '/documents', {
+        body: { title: 'AA open', text: 'Alpha beta gamma delta epsilon\nSecond line of text\nThird line of text' }, cookie: sessionCookie,
+    });
+    aaDocId = o.data.document.id;
+    await req('POST', `/documents/${aaDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+
+    for (const [id, level] of [[aaDraftId, 'viewer'], [aaDocId, 'voter']]) {
+        const r = await req('POST', `/documents/${id}/access`, { body: { email: 'aavoter@test.com', access_level: level }, cookie: sessionCookie });
+        assert.equal(r.status, 201);
+    }
+    const b = await req('POST', `/documents/${aaDocId}/access`, { body: { email: 'aaviewer@test.com', access_level: 'viewer' }, cookie: sessionCookie });
+    assert.equal(b.status, 201);
+    aaVoterCookie = await loginAs('aavoter@test.com');
+
+    const mk = async (cs, ce, text, title, cookie) => (await req('POST', `/documents/${aaDocId}/variants`, {
+        body: { char_start: cs, char_end: ce, operation: 'replace', new_text: text, title }, cookie,
+    })).data.variant.id;
+    aaA = await mk(0, 10, 'AAAA', 'AA-A', sessionCookie);
+    aaB = await mk(6, 16, 'BBBB', 'AA-B', sessionCookie);
+    aaC = await mk(31, 37, 'CCCC', 'AA-C', sessionCookie);
+    aaD = await mk(38, 42, 'DDDD', 'AA-D', aaVoterCookie);
+    assert.ok(aaA && aaB && aaC && aaD);
+});
+
+test('AA2: draft doc — viewer record → 403 on variant sub-routes (comments, votes, relations)', async () => {
+    for (const sub of ['comments', 'votes', 'relations']) {
+        const r = await req('GET', `/variants/${aaDraftVarId}/${sub}`, { cookie: aaVoterCookie });
+        assert.equal(r.status, 403, `GET /${sub} must honour the draft rule`);
+    }
+    const post = await req('POST', `/variants/${aaDraftVarId}/comments`, { body: { text: 'should not land' }, cookie: aaVoterCookie });
+    assert.equal(post.status, 403);
+    const owner = await req('GET', `/variants/${aaDraftVarId}/comments`, { cookie: sessionCookie });
+    assert.equal(owner.status, 200);
+});
+
+test('AA3: global activity feed hides draft documents from viewer-level users', async () => {
+    const r = await req('GET', '/activity', { cookie: aaVoterCookie });
+    assert.equal(r.status, 200);
+    assert.ok(!r.data.activity.some(a => a.document_id === aaDraftId), 'no draft activity for a viewer');
+    assert.ok(r.data.activity.some(a => a.document_id === aaDocId), 'open doc activity still listed');
+    const owner = await req('GET', '/activity', { cookie: sessionCookie });
+    assert.ok(owner.data.activity.some(a => a.document_id === aaDraftId), 'owner still sees the draft');
+});
+
+test('AA4: activity metadata — previous_text and invitee email only for supervisor+', async () => {
+    const c = await req('POST', `/variants/${aaA}/comments`, { body: { text: 'first wording' }, cookie: aaVoterCookie });
+    aaCommentId = c.data.comment.id;
+    const e = await req('PATCH', `/comments/${aaCommentId}`, { body: { text: 'second wording' }, cookie: aaVoterCookie });
+    assert.equal(e.status, 200);
+
+    const pick = rows => rows.filter(a => ['comment_updated', 'user_invited'].includes(a.action)).map(a => JSON.parse(a.metadata));
+    const asVoter = pick((await req('GET', `/documents/${aaDocId}/activity`, { cookie: aaVoterCookie })).data.activity);
+    assert.ok(asVoter.length >= 3);
+    assert.ok(asVoter.every(m => !('previous_text' in m) && !('email' in m)), 'redacted below supervisor');
+    assert.ok(asVoter.some(m => m.comment_id === aaCommentId), 'non-sensitive metadata is kept');
+
+    const asOwner = pick((await req('GET', `/documents/${aaDocId}/activity`, { cookie: sessionCookie })).data.activity);
+    assert.ok(asOwner.some(m => m.previous_text === 'first wording'));
+    assert.ok(asOwner.some(m => m.email === 'aaviewer@test.com'));
+
+    const feed = pick((await req('GET', '/activity', { cookie: sessionCookie })).data.activity);
+    assert.ok(feed.every(m => !('previous_text' in m) && !('email' in m)), 'global feed is always redacted');
+});
+
+test('AA5: DELETE /vote — no access → 403 and nothing logged; retract without a vote logs nothing', async () => {
+    const count = () => db.prepare("SELECT COUNT(*) n FROM activity_log WHERE document_id = ? AND action = 'vote_retracted'").get(aaDocId).n;
+    const before = count();
+    const stranger = await req('DELETE', `/variants/${aaA}/vote`, { cookie: viewerCookie });
+    assert.equal(stranger.status, 403);
+    const noVote = await req('DELETE', `/variants/${aaA}/vote`, { cookie: aaVoterCookie });
+    assert.equal(noVote.status, 204);
+    assert.equal(count(), before, 'no vote_retracted row without an actual retraction');
+
+    await req('POST', `/variants/${aaA}/vote`, { body: { vote_value: 1 }, cookie: aaVoterCookie });
+    const real = await req('DELETE', `/variants/${aaA}/vote`, { cookie: aaVoterCookie });
+    assert.equal(real.status, 204);
+    assert.equal(count(), before + 1);
+});
+
+test('AA6: POST /relations — viewer → 403, proposer+ → 201', async () => {
+    const aaViewerCookie = await loginAs('aaviewer@test.com');
+    const body = { to_variant_id: aaC, relation_type: 'supersedes' };
+    const v = await req('POST', `/variants/${aaA}/relations`, { body, cookie: aaViewerCookie });
+    assert.equal(v.status, 403);
+    const p = await req('POST', `/variants/${aaA}/relations`, { body, cookie: aaVoterCookie });
+    assert.equal(p.status, 201);
+});
+
+test('AA7: POST /documents — too many pages → 400; invalid lines_per_page → 400', async () => {
+    const text = Array.from({ length: 6100 }, (_, i) => `line ${i}`).join('\n');
+    const big = await req('POST', '/documents', { body: { title: 'Too long', text }, cookie: sessionCookie });
+    assert.equal(big.status, 400);
+    assert.match(big.data.error, /max 200 pages/);
+    for (const lpp of [0, -3, 'abc']) {
+        const r = await req('POST', '/documents', { body: { title: 'Bad lpp', text: 'x', settings: { lines_per_page: lpp } }, cookie: sessionCookie });
+        assert.equal(r.status, 400, `lines_per_page ${lpp} must be rejected`);
+    }
+});
+
+test('AA8: withdraw is only allowed before voting starts', async () => {
+    await req('POST', `/documents/${aaDocId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    const r = await req('DELETE', `/variants/${aaD}`, { cookie: aaVoterCookie });
+    assert.equal(r.status, 422);
+    assert.equal(db.prepare('SELECT status FROM variants WHERE id = ?').get(aaD).status, 'pending');
+});
+
+test('AA9: conflict-order — a root with children cannot become a child; vote_order must be ≥ 1', async () => {
+    const child = await req('PATCH', `/variants/${aaB}/conflict-order`, { body: { parent_variant_id: aaA }, cookie: sessionCookie });
+    assert.equal(child.status, 200);
+    const nested = await req('PATCH', `/variants/${aaA}/conflict-order`, { body: { parent_variant_id: aaC }, cookie: sessionCookie });
+    assert.equal(nested.status, 400);
+    for (const bad of [0, -1, 1.5, 'first']) {
+        const r = await req('PATCH', `/variants/${aaC}/conflict-order`, { body: { vote_order: bad }, cookie: sessionCookie });
+        assert.equal(r.status, 400, `vote_order ${bad} must be rejected`);
+    }
+    // Leave A and B as two overlapping roots for the resolve-gate tests
+    await req('PATCH', `/variants/${aaB}/conflict-order`, { body: { parent_variant_id: null, vote_order: 1 }, cookie: sessionCookie });
+    await req('PATCH', `/variants/${aaA}/conflict-order`, { body: { parent_variant_id: null, vote_order: 2 }, cookie: sessionCookie });
+});
+
+test('AA10: final_voting preview applies passing tallies and leaves failing ones out', async () => {
+    await req('POST', `/documents/${aaDocId}/status`, { body: { status: 'final_voting' }, cookie: sessionCookie });
+    await req('PATCH', `/variants/${aaA}/final-vote`, { body: { yes: 10, no: 1, abstain: 0 }, cookie: sessionCookie });
+    await req('PATCH', `/variants/${aaC}/final-vote`, { body: { yes: 1, no: 5, abstain: 0 }, cookie: sessionCookie });
+    const r = await req('GET', `/documents/${aaDocId}/resolved-text`, { cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    assert.ok(r.data.text.startsWith('AAAA gamma'), 'passing proposal is applied in the preview');
+    assert.ok(!r.data.text.includes('CCCC'), 'failing proposal is not applied');
+    assert.equal(db.prepare('SELECT status FROM variants WHERE id = ?').get(aaA).status, 'pending', 'preview writes nothing');
+});
+
+test('AA11: resolve gate — overlapping proposals that both pass block resolution', async () => {
+    await req('PATCH', `/variants/${aaB}/final-vote`, { body: { yes: 9, no: 2, abstain: 0 }, cookie: sessionCookie });
+    const blocked = await req('POST', `/documents/${aaDocId}/status`, { body: { status: 'resolved' }, cookie: sessionCookie });
+    assert.equal(blocked.status, 422);
+    assert.deepEqual(blocked.data.overlaps.map(pair => [...pair].sort((x, y) => x - y)), [[aaA, aaB]]);
+    assert.match(blocked.data.error, /AA-A.*AA-B|AA-B.*AA-A/);
+    assert.equal(db.prepare('SELECT status FROM documents WHERE id = ?').get(aaDocId).status, 'final_voting', 'nothing changed');
+    assert.equal(db.prepare('SELECT status FROM variants WHERE id = ?').get(aaA).status, 'pending');
+
+    const drop = await req('PATCH', `/variants/${aaB}/review-status`, { body: { status: 'rejected' }, cookie: sessionCookie });
+    assert.equal(drop.status, 200);
+    await rejectUntallied(aaDocId, sessionCookie);
+
+    const ok = await req('POST', `/documents/${aaDocId}/status`, { body: { status: 'resolved' }, cookie: sessionCookie });
+    assert.equal(ok.status, 200);
+    assert.ok(ok.data.document.resolved_text.startsWith('AAAA gamma'));
+    const status = id => db.prepare('SELECT status FROM variants WHERE id = ?').get(id).status;
+    assert.equal(status(aaA), 'approved');
+    assert.equal(status(aaC), 'rejected');
+    const log = db.prepare("SELECT COUNT(*) n FROM activity_log WHERE document_id = ? AND action = 'document_status_changed' AND metadata LIKE '%resolved%'").get(aaDocId).n;
+    assert.equal(log, 1, 'blocked attempts log no status change');
+});
+
+test('AA12: withdraw on a resolved document → 422, approved proposal untouched', async () => {
+    const r = await req('DELETE', `/variants/${aaA}`, { cookie: sessionCookie });
+    assert.equal(r.status, 422);
+    assert.equal(db.prepare('SELECT status FROM variants WHERE id = ?').get(aaA).status, 'approved');
+});
+
+test('AA13: verify-otp — wrong codes invalidate the outstanding code at OTP_MAX_ATTEMPTS', async () => {
+    const email = 'aaguess@test.com';
+    await req('POST', '/auth/request-otp', { body: { email } });
+    const real = latestOtp(email).code;
+    const wrong = real === '111111' ? '222222' : '111111';
+    for (let i = 1; i <= 4; i++) {
+        const r = await req('POST', '/auth/verify-otp', { body: { email, code: wrong } });
+        assert.equal(r.status, 401, `attempt ${i}`);
+    }
+    const fifth = await req('POST', '/auth/verify-otp', { body: { email, code: wrong } });
+    assert.equal(fifth.status, 429);
+    const late = await req('POST', '/auth/verify-otp', { body: { email, code: real } });
+    assert.equal(late.status, 401, 'the real code no longer works after the limit');
+
+    await req('POST', '/auth/request-otp', { body: { email } });
+    const fresh = await req('POST', '/auth/verify-otp', { body: { email, code: latestOtp(email).code } });
+    assert.equal(fresh.status, 200, 'a newly requested code works');
+});
+
+test('AA14: SIGNUP_MODE=invited — unknown emails get no code; existing and allowlisted ones do', async () => {
+    const otpCount = email => db.prepare('SELECT COUNT(*) n FROM otp_codes WHERE email = ?').get(email).n;
+    process.env.SIGNUP_MODE = 'invited';
+    process.env.SIGNUP_ALLOWLIST = 'boss@allowed.test, @friends.test';
+    try {
+        const unknown = await req('POST', '/auth/request-otp', { body: { email: 'nobody@elsewhere.test' } });
+        assert.equal(unknown.status, 200, 'same response, no account enumeration');
+        assert.equal(unknown.data.message, 'Code sent');
+        assert.equal(otpCount('nobody@elsewhere.test'), 0);
+
+        for (const email of ['boss@allowed.test', 'anyone@friends.test']) {
+            await req('POST', '/auth/request-otp', { body: { email } });
+            assert.equal(otpCount(email), 1, `${email} is allowlisted`);
+        }
+        const before = otpCount('aaviewer@test.com');
+        await req('POST', '/auth/request-otp', { body: { email: 'aaviewer@test.com' } });
+        assert.equal(otpCount('aaviewer@test.com'), before + 1, 'invited users already have an account');
+    } finally {
+        delete process.env.SIGNUP_MODE;
+        delete process.env.SIGNUP_ALLOWLIST;
+    }
+});
+
+test('AA15: unknown API route → 404 JSON; /healthz → 200', async () => {
+    const r = await req('GET', '/no-such-route');
+    assert.equal(r.status, 404);
+    assert.equal(r.data.error, 'Not found');
+    const h = await fetch('http://localhost:3099/healthz');
+    assert.equal(h.status, 200);
+    assert.deepEqual(await h.json(), { ok: true });
+});
+
+test('AA16: POST variants — char offsets must be whole numbers (stored-XSS guard)', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AA offsets', text: 'Some text to change here' }, cookie: sessionCookie });
+    const id = d.data.document.id;
+    const payload = '<img src=x onerror=alert(1)>';
+    for (const [cs, ce] of [[payload, payload], ['3', '5'], [1.5, 4], [null, 4], [2, undefined]]) {
+        const r = await req('POST', `/documents/${id}/variants`, { body: { char_start: cs, char_end: ce, operation: 'replace', new_text: 'x', title: 'bad' }, cookie: sessionCookie });
+        assert.equal(r.status, 400, `char_start=${JSON.stringify(cs)} char_end=${JSON.stringify(ce)} must be rejected`);
+    }
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM variants WHERE document_id = ?').get(id).n, 0);
+});
+
+let aa2DocId, aa2A, aa2B, aa2C, aa2D;
+
+test('AA17: a parent leaving the vote releases its children', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AA2 doc', text: 'Alpha beta gamma delta epsilon zeta eta theta' }, cookie: sessionCookie });
+    aa2DocId = d.data.document.id;
+    await req('POST', `/documents/${aa2DocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${aa2DocId}/access`, { body: { email: 'aavoter@test.com', access_level: 'voter' }, cookie: sessionCookie });
+    const mk = async (cs, ce, title, cookie = sessionCookie) => (await req('POST', `/documents/${aa2DocId}/variants`, {
+        body: { char_start: cs, char_end: ce, operation: 'replace', new_text: title, title }, cookie,
+    })).data.variant.id;
+    aa2A = await mk(0, 10, 'AA2-A');
+    aa2B = await mk(5, 12, 'AA2-B');
+    aa2C = await mk(20, 25, 'AA2-C');
+    aa2D = await mk(22, 28, 'AA2-D', aaVoterCookie);
+    await req('POST', `/documents/${aa2DocId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    const link = id => db.prepare('SELECT parent_variant_id, vote_order FROM variants WHERE id = ?').get(id);
+
+    await req('PATCH', `/variants/${aa2B}/conflict-order`, { body: { parent_variant_id: aa2A }, cookie: sessionCookie });
+    assert.equal(link(aa2B).parent_variant_id, aa2A);
+    const rej = await req('PATCH', `/variants/${aa2A}/review-status`, { body: { status: 'rejected' }, cookie: sessionCookie });
+    assert.equal(rej.status, 200);
+    assert.deepEqual(link(aa2B), { parent_variant_id: null, vote_order: null }, 'child of a rejected parent becomes an unordered root');
+
+    await req('PATCH', `/variants/${aa2D}/conflict-order`, { body: { parent_variant_id: aa2C }, cookie: sessionCookie });
+    assert.equal(link(aa2D).parent_variant_id, aa2C);
+    const hide = await req('POST', `/variants/${aa2C}/hide`, { cookie: sessionCookie });
+    assert.equal(hide.status, 200);
+    assert.deepEqual(link(aa2D), { parent_variant_id: null, vote_order: null }, 'child of a hidden parent is released too');
+});
+
+test('AA18: conflict-order — parent id must be an integer; hidden children do not count as children', async () => {
+    const self = await req('PATCH', `/variants/${aa2B}/conflict-order`, { body: { parent_variant_id: String(aa2B) }, cookie: sessionCookie });
+    assert.equal(self.status, 400, 'a string id must not slip past the self-parent check');
+    assert.equal(db.prepare('SELECT parent_variant_id FROM variants WHERE id = ?').get(aa2B).parent_variant_id, null);
+
+    // aa2C is hidden (AA17). Make it a child of B directly, then B must still be allowed to become a child of D.
+    db.prepare('UPDATE variants SET parent_variant_id = ? WHERE id = ?').run(aa2B, aa2C);
+    const r = await req('PATCH', `/variants/${aa2B}/conflict-order`, { body: { parent_variant_id: aa2D }, cookie: sessionCookie });
+    assert.equal(r.status, 200, 'a hidden child is not an active child');
+    db.prepare('UPDATE variants SET parent_variant_id = NULL WHERE id IN (?, ?)').run(aa2B, aa2C);
+});
+
+test('AA19: a hidden proposal does not exist below supervisor — sub-routes, relations, activity', async () => {
+    await req('POST', `/variants/${aa2B}/relations`, { body: { to_variant_id: aa2C, relation_type: 'conflicts' }, cookie: sessionCookie });
+
+    for (const sub of ['comments', 'votes', 'relations']) {
+        const r = await req('GET', `/variants/${aa2C}/${sub}`, { cookie: aaVoterCookie });
+        assert.equal(r.status, 404, `GET /${sub} on a hidden proposal`);
+        const o = await req('GET', `/variants/${aa2C}/${sub}`, { cookie: sessionCookie });
+        assert.equal(o.status, 200, `supervisor+ still reads /${sub}`);
+    }
+    const c = await req('POST', `/variants/${aa2C}/comments`, { body: { text: 'into the void' }, cookie: aaVoterCookie });
+    assert.equal(c.status, 404);
+    const v = await req('POST', `/variants/${aa2C}/vote`, { body: { vote_value: 1 }, cookie: aaVoterCookie });
+    assert.equal(v.status, 404);
+
+    const rel = await req('GET', `/variants/${aa2B}/relations`, { cookie: aaVoterCookie });
+    assert.ok(!rel.data.relations.some(x => x.to_variant_id === aa2C || x.from_variant_id === aa2C), 'relations to a hidden proposal are not listed');
+    const relOwner = await req('GET', `/variants/${aa2B}/relations`, { cookie: sessionCookie });
+    assert.ok(relOwner.data.relations.some(x => x.to_variant_id === aa2C));
+
+    const feed = await req('GET', `/documents/${aa2DocId}/activity`, { cookie: aaVoterCookie });
+    assert.ok(!feed.data.activity.some(a => a.variant_id === aa2C), 'no activity rows about the hidden proposal');
+    const feedOwner = await req('GET', `/documents/${aa2DocId}/activity`, { cookie: sessionCookie });
+    assert.ok(feedOwner.data.activity.some(a => a.variant_id === aa2C && a.action === 'variant_hidden'));
+    const global = await req('GET', '/activity', { cookie: aaVoterCookie });
+    assert.ok(!global.data.activity.some(a => a.variant_id === aa2C));
+});
+
+test('AA20: a blocked proposer can neither edit nor share their proposal', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AA blocked', text: 'Text for a blocked proposer' }, cookie: sessionCookie });
+    const id = d.data.document.id;
+    await req('POST', `/documents/${id}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${id}/access`, { body: { email: 'aavoter@test.com', access_level: 'proposer' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${id}/variants`, { body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'Word', title: 'mine' }, cookie: aaVoterCookie });
+    const voterId = db.prepare("SELECT id FROM users WHERE email = 'aavoter@test.com'").get().id;
+    await req('PATCH', `/documents/${id}/access/${voterId}`, { body: { blocked: true }, cookie: sessionCookie });
+
+    const edit = await req('PATCH', `/variants/${v.data.variant.id}`, { body: { title: 'still mine?' }, cookie: aaVoterCookie });
+    assert.equal(edit.status, 403);
+    const share = await req('PATCH', `/variants/${v.data.variant.id}/share`, { body: { allow_anonymous_share: 1 }, cookie: aaVoterCookie });
+    assert.equal(share.status, 403);
+    assert.equal(db.prepare('SELECT allow_anonymous_share FROM variants WHERE id = ?').get(v.data.variant.id).allow_anonymous_share, 0);
+});
+
+test('AA21: requesting a new code does not reset the wrong-code count', async () => {
+    const email = 'aacount@test.com', ip = '203.0.113.21';
+    await req('POST', '/auth/request-otp', { body: { email }, ip });
+    for (let i = 0; i < 4; i++) {
+        const r = await req('POST', '/auth/verify-otp', { body: { email, code: '000000' }, ip });
+        assert.equal(r.status, 401);
+    }
+    await req('POST', '/auth/request-otp', { body: { email }, ip });
+    const fifth = await req('POST', '/auth/verify-otp', { body: { email, code: '000000' }, ip });
+    assert.equal(fifth.status, 429, 'the fifth wrong code counts even though a new code was issued in between');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM otp_codes WHERE email = ? AND used = 0').get(email).n, 0, 'both codes are invalidated');
+});
+
+test('AA22: one client address cannot keep invalidating a victim\'s code', async () => {
+    const victim = 'aavictim@test.com', attacker = '203.0.113.22';
+    await req('POST', '/auth/request-otp', { body: { email: victim }, ip: '203.0.113.50' });
+    const real = latestOtp(victim).code;
+    const wrong = real === '111111' ? '222222' : '111111';
+    for (let i = 0; i < 4; i++) await req('POST', '/auth/verify-otp', { body: { email: victim, code: wrong }, ip: attacker });
+    for (let i = 0; i < 16; i++) {
+        const r = await req('POST', '/auth/verify-otp', { body: { email: `nobody${i}@nowhere.test`, code: wrong }, ip: attacker });
+        assert.equal(r.status, 401, 'wrong codes for addresses with no outstanding code are just 401');
+    }
+    const blocked = await req('POST', '/auth/verify-otp', { body: { email: victim, code: wrong }, ip: attacker });
+    assert.equal(blocked.status, 429);
+    assert.match(blocked.data.error, /from this address/);
+    const ok = await req('POST', '/auth/verify-otp', { body: { email: victim, code: real }, ip: '203.0.113.50' });
+    assert.equal(ok.status, 200, 'the victim\'s code survived: the blocked attempt was not counted against the email');
+});
+
+test('AA23: sign-in endpoints — RATE_LIMIT_MAX requests per client address, oversized input rejected', async () => {
+    const ip = '203.0.113.23';
+    const previous = process.env.RATE_LIMIT_MAX;
+    process.env.RATE_LIMIT_MAX = '3';
+    try {
+        for (let i = 0; i < 3; i++) {
+            const r = await req('POST', '/auth/request-otp', { body: { email: 'not-an-email' }, ip });
+            assert.equal(r.status, 400);
+        }
+        const fourth = await req('POST', '/auth/request-otp', { body: { email: 'aaflood@test.com' }, ip });
+        assert.equal(fourth.status, 429);
+        const verify = await req('POST', '/auth/verify-otp', { body: { email: 'aaflood@test.com', code: '123456' }, ip });
+        assert.equal(verify.status, 429, 'the limit covers both endpoints');
+    } finally {
+        process.env.RATE_LIMIT_MAX = previous;
+    }
+
+    const long = 'a'.repeat(300) + '@test.com';
+    assert.equal((await req('POST', '/auth/request-otp', { body: { email: long } })).status, 400);
+    assert.equal((await req('POST', '/auth/verify-otp', { body: { email: long, code: '123456' } })).status, 400);
+    assert.equal((await req('POST', '/auth/verify-otp', { body: { email: 'aaflood@test.com', code: 123456 } })).status, 400);
+    assert.equal((await req('POST', '/auth/request-otp', { body: { email: ['a@b.c'] } })).status, 400);
+});
+
+test('AA24: proposal numbers are assigned by creation order and survive hiding/withdrawing', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AA numbering', text: 'One two three four five six' }, cookie: sessionCookie });
+    const id = d.data.document.id;
+    await req('POST', `/documents/${id}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const ids = [];
+    for (const [cs, ce] of [[0, 3], [4, 7], [8, 13]]) {
+        ids.push((await req('POST', `/documents/${id}/variants`, { body: { char_start: cs, char_end: ce, operation: 'replace', new_text: 'x', title: `n${cs}` }, cookie: sessionCookie })).data.variant.id);
+    }
+    await req('DELETE', `/variants/${ids[0]}`, { cookie: sessionCookie });
+    const list = await req('GET', `/documents/${id}/variants`, { cookie: sessionCookie });
+    assert.deepEqual(list.data.variants.map(v => v.proposal_num), [2, 3], 'withdrawing #1 does not renumber the others');
+    const one = await req('GET', `/variants/${ids[2]}`, { cookie: sessionCookie });
+    assert.equal(one.data.variant.proposal_num, 3);
+});
+
+test('AA25: security headers on every response', async () => {
+    const r = await fetch('http://localhost:3099/');
+    assert.match(r.headers.get('content-security-policy') || '', /default-src 'self'/);
+    assert.match(r.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+    assert.equal(r.headers.get('x-frame-options'), 'DENY');
+    assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(r.headers.get('referrer-policy'), 'same-origin');
+    assert.equal(r.headers.get('x-powered-by'), null);
+    const api = await req('GET', '/healthz'.replace('/healthz', '/documents'));
+    assert.equal(api.status, 200);
+});
+
+test('AA26: a voting countdown can only be scheduled on an open document', async () => {
+    const r = await req('POST', `/documents/${aaDocId}/status`, { body: { status: 'voting', countdown_minutes: 5 }, cookie: sessionCookie });
+    assert.equal(r.status, 422, 'resolved doc: the transition itself is invalid');
+    const d = await req('POST', '/documents', { body: { title: 'AA countdown', text: 'Tick tock' }, cookie: sessionCookie });
+    const id = d.data.document.id;
+    await req('POST', `/documents/${id}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${id}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    await req('POST', `/documents/${id}/status`, { body: { status: 'final_voting' }, cookie: sessionCookie });
+    const back = await req('POST', `/documents/${id}/status`, { body: { status: 'voting', countdown_minutes: 5 }, cookie: sessionCookie });
+    assert.equal(back.status, 400);
+    const doc = db.prepare('SELECT status, voting_scheduled_at FROM documents WHERE id = ?').get(id);
+    assert.deepEqual(doc, { status: 'final_voting', voting_scheduled_at: null }, 'no dangling schedule');
+    const plain = await req('POST', `/documents/${id}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    assert.equal(plain.status, 200);
+});
+
+// ── GROUP AB: ACTIVITY LOG — previously unlogged mutations ───────────────────
+
+let abDocId, abVarId, abVoterId;
+const abLog = (action, documentId = abDocId) => db.prepare(
+    'SELECT * FROM activity_log WHERE action = ? AND document_id = ? ORDER BY id'
+).all(action, documentId).map(r => ({ ...r, metadata: JSON.parse(r.metadata) }));
+
+test('AB1: setup; share toggle logs variant_share_changed only when the value changes', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AB doc', text: 'Logging every mutation matters' }, cookie: sessionCookie });
+    abDocId = d.data.document.id;
+    await req('POST', `/documents/${abDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    await req('POST', `/documents/${abDocId}/access`, { body: { email: 'aaviewer@test.com', access_level: 'voter' }, cookie: sessionCookie });
+    abVoterId = db.prepare("SELECT id FROM users WHERE email = 'aaviewer@test.com'").get().id;
+    const v = await req('POST', `/documents/${abDocId}/variants`, { body: { char_start: 0, char_end: 7, operation: 'replace', new_text: 'Recording', title: 'AB proposal' }, cookie: sessionCookie });
+    abVarId = v.data.variant.id;
+
+    await req('PATCH', `/variants/${abVarId}/share`, { body: { allow_anonymous_share: 1 }, cookie: sessionCookie });
+    await req('PATCH', `/variants/${abVarId}/share`, { body: { allow_anonymous_share: 1 }, cookie: sessionCookie });
+    await req('PATCH', `/variants/${abVarId}/share`, { body: { allow_anonymous_share: 0 }, cookie: sessionCookie });
+    assert.deepEqual(abLog('variant_share_changed').map(r => r.metadata.allow_anonymous_share), [1, 0]);
+});
+
+test('AB2: creating a relation logs variant_relation_added', async () => {
+    const v2 = await req('POST', `/documents/${abDocId}/variants`, { body: { char_start: 8, char_end: 13, operation: 'replace', new_text: 'each', title: 'AB second' }, cookie: sessionCookie });
+    const r = await req('POST', `/variants/${abVarId}/relations`, { body: { to_variant_id: v2.data.variant.id, relation_type: 'supersedes' }, cookie: sessionCookie });
+    assert.equal(r.status, 201);
+    const dup = await req('POST', `/variants/${abVarId}/relations`, { body: { to_variant_id: v2.data.variant.id, relation_type: 'supersedes' }, cookie: sessionCookie });
+    assert.equal(dup.status, 409);
+    const rows = abLog('variant_relation_added');
+    assert.equal(rows.length, 1, 'the rejected duplicate logs nothing');
+    assert.deepEqual(rows[0].metadata, { to_variant_id: v2.data.variant.id, relation_type: 'supersedes' });
+    assert.equal(rows[0].variant_id, abVarId);
+});
+
+test('AB3: changing an access level logs user_access_changed with from/to', async () => {
+    const r = await req('PATCH', `/documents/${abDocId}/access/${abVoterId}`, { body: { access_level: 'supervisor' }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    await req('PATCH', `/documents/${abDocId}/access/${abVoterId}`, { body: { access_level: 'supervisor' }, cookie: sessionCookie });
+    const rows = abLog('user_access_changed');
+    assert.equal(rows.length, 1, 'setting the same level again logs nothing');
+    assert.deepEqual(rows[0].metadata, { user_id: abVoterId, from: 'voter', to: 'supervisor' });
+});
+
+test('AB4: removing access logs user_access_removed once', async () => {
+    const r = await req('DELETE', `/documents/${abDocId}/access/${abVoterId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 204);
+    const again = await req('DELETE', `/documents/${abDocId}/access/${abVoterId}`, { cookie: sessionCookie });
+    assert.equal(again.status, 204);
+    const rows = abLog('user_access_removed');
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].metadata, { user_id: abVoterId, access_level: 'supervisor' });
+});
+
+test('AB5: author delete logs comment_deleted once; an admin deleting someone else\'s comment logs comment_hidden', async () => {
+    const mine = await req('POST', `/variants/${abVarId}/comments`, { body: { text: 'my own remark' }, cookie: sessionCookie });
+    await req('DELETE', `/comments/${mine.data.comment.id}`, { cookie: sessionCookie });
+    await req('DELETE', `/comments/${mine.data.comment.id}`, { cookie: sessionCookie });
+    const rows = abLog('comment_deleted');
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].metadata, { comment_id: mine.data.comment.id });
+
+    await req('POST', `/documents/${abDocId}/access`, { body: { email: 'aavoter@test.com', access_level: 'commenter' }, cookie: sessionCookie });
+    const theirs = await req('POST', `/variants/${abVarId}/comments`, { body: { text: 'a guest remark' }, cookie: aaVoterCookie });
+    await req('DELETE', `/comments/${theirs.data.comment.id}`, { cookie: sessionCookie });
+    assert.ok(abLog('comment_hidden').some(r => r.metadata.comment_id === theirs.data.comment.id));
+    assert.equal(abLog('comment_deleted').length, 1);
+});
+
+test('AB5b: an author cannot delete a comment a moderator has hidden', async () => {
+    const c = await req('POST', `/variants/${abVarId}/comments`, { body: { text: 'borderline remark' }, cookie: aaVoterCookie });
+    const h = await req('POST', `/comments/${c.data.comment.id}/hide`, { cookie: sessionCookie });
+    assert.equal(h.status, 204);
+    const del = await req('DELETE', `/comments/${c.data.comment.id}`, { cookie: aaVoterCookie });
+    assert.equal(del.status, 422);
+    const mod = await req('GET', `/documents/${abDocId}/moderation`, { cookie: sessionCookie });
+    assert.ok(mod.data.hidden_comments.some(x => x.id === c.data.comment.id), 'still restorable from the moderation page');
+});
+
+test('AB6: copy-data logs document_data_copied on the target document', async () => {
+    const t = await req('POST', '/documents', { body: { title: 'AB copy target', text: 'Logging every mutation matters' }, cookie: sessionCookie });
+    const targetId = t.data.document.id;
+    const none = await req('POST', `/documents/${abDocId}/copy-data`, { body: { target_doc_id: targetId, copy_votes: true }, cookie: sessionCookie });
+    assert.equal(none.status, 200);
+    assert.equal(abLog('document_data_copied', targetId).length, 0, 'nothing copied, nothing logged');
+
+    const r = await req('POST', `/documents/${abDocId}/copy-data`, { body: { target_doc_id: targetId, copy_variants: true, copy_comments: true }, cookie: sessionCookie });
+    assert.equal(r.status, 200);
+    const rows = abLog('document_data_copied', targetId);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].metadata.source_document_id, abDocId);
+    assert.equal(rows[0].metadata.variants, r.data.copied.variants);
+});
+
+test('AB7: deleting a document logs document_deleted and removes it from the feed', async () => {
+    const r = await req('DELETE', `/documents/${abDocId}`, { cookie: sessionCookie });
+    assert.equal(r.status, 204);
+    const rows = abLog('document_deleted');
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].metadata, { title: 'AB doc' });
+    const feed = await req('GET', '/activity', { cookie: sessionCookie });
+    assert.ok(!feed.data.activity.some(a => a.document_id === abDocId), 'activity of a deleted document is no longer listed');
 });
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────

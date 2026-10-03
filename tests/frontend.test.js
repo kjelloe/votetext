@@ -231,3 +231,24 @@ test('passesThreshold: backend (src/lib/text.js) and frontend (review.js) copies
     assert.equal(frontend, backend,
         'passesThreshold has drifted between src/lib/text.js and public/review.js — no build step, so the copies must be edited together');
 });
+
+// ── Guard rails added 2026-10-03 ─────────────────────────────────────────────
+
+test('no inline event handlers or javascript: URLs anywhere in public/ (the CSP forbids them)', () => {
+    for (const f of fs.readdirSync(PUBLIC).filter(f => /\.(js|html)$/.test(f))) {
+        const src = fs.readFileSync(path.join(PUBLIC, f), 'utf8');
+        assert.ok(!/\son[a-z]+\s*=\s*["']/i.test(src), `${f}: inline on*= handler found — use addEventListener`);
+        assert.ok(!/javascript:/i.test(src), `${f}: javascript: URL found`);
+    }
+    const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+    assert.ok(!/<script(?![^>]*\ssrc=)[^>]*>\s*\S/.test(html), 'index.html must not contain inline script bodies');
+    assert.ok(!/https?:\/\//.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'index.html must not load external resources');
+});
+
+test('ACCESS_LEVELS order is identical in public/app.js and src/middleware/access.js', () => {
+    const grab = src => (src.match(/ACCESS_LEVELS = \[([^\]]+)\]/) || [])[1];
+    const front = grab(fs.readFileSync(path.join(PUBLIC, 'app.js'), 'utf8'));
+    const back = grab(fs.readFileSync(path.join(__dirname, '..', 'src', 'middleware', 'access.js'), 'utf8'));
+    assert.ok(front && back, 'both files must define ACCESS_LEVELS');
+    assert.equal(front.replace(/\s+/g, ''), back.replace(/\s+/g, ''), 'hasLevel() in the browser must rank levels exactly like the server');
+});

@@ -81,6 +81,51 @@ Post a comment as one user; use a second browser for the reply-grace checks.
 
 ---
 
+## Review fixes, phase 1 (2026-10-02)
+
+Two browsers: the document owner and an invited voter.
+
+- [ ] Draft doc with a proposal: a user invited as viewer gets an error opening the proposal link, and their Activity page shows nothing about the draft
+- [ ] Open doc: your own pending proposal shows **Edit** and **Withdraw**; move the doc to voting → both buttons are gone
+- [ ] Final voting: save a passing tally → **Resolved text** preview shows that change applied; a failing tally is not applied
+- [ ] Leave one proposal without a tally → **Mark as Resolved** shows an error naming it and the doc stays in final voting; record the tally → resolve works
+- [ ] Two overlapping proposals with passing tallies → **Mark as Resolved** names both; mark one NOT VOTING in the review view → resolve works and only the other is applied
+- [ ] Login: five wrong codes → "Too many incorrect codes", the emailed code no longer works, a newly requested code does
+- [ ] Activity page as a voter: an edited comment shows "comment updated" with no old text anywhere in the page or the network response
+- [ ] Create a document with more than 6000 short lines → clear error about the page limit, no blank failure
+- [ ] Propose an **Insert** over a selected word, approve it in final voting, resolve → the resolved text has the new text *and* the selected word
+- [ ] Voting doc whose proposals do not overlap: Review → Resolve conflicts shows "No conflicts" and a green **Ready for final voting** button that works
+- [ ] Open Change status on one document, close it, go to another document and change its status → only the second document changes
+- [ ] Post a comment, then click **Reply** on it without reloading → the reply form opens (and closes on a second click)
+- [ ] On a line that already has a proposal, drag-select a phrase → you stay on the document and can click Propose
+- [ ] Make a proposal a child in conflict resolution, then mark its parent NOT VOTING → the child is back under Unassigned
+- [ ] Activity page shows an icon and a readable line for: access changed, access removed, share changed, document deleted
+
+## Phase 3 (2026-10-03) — UI gaps and review findings
+
+- [ ] Supervisor who is not the owner: document page shows **Change status** (voting-cycle options only) but no **Settings**; can start voting, order conflicts with the **+ root / ↑ ↓ / child of…** controls without dragging, record tallies, and **Mark as Resolved**
+- [ ] Viewer-level user: no Propose button, vote buttons greyed with "Voter access is required", no comment form, review page refuses
+- [ ] Final voting: red banner lists missing tallies and overlapping winners and disappears when fixed; order badges read 1, 2, 3; progress reaches "N of N" when a child is skipped because its parent passed
+- [ ] Resolved document with no overall vote shows **RESOLVED** (not PASSED) in the banner, the Markdown export and the print view
+- [ ] Manage access as admin: change a level from the dropdown, Block/Unblock, Remove; as supervisor the list is read-only
+- [ ] Settings modal (owner): **Delete document** → OK → back on the list without it
+- [ ] Fork a proposal → new proposal shows "based on #N"; the original shows "forked as #M"
+- [ ] Hover a highlighted line → tooltip with proposal numbers; Tab to a proposal card and press Enter → it opens
+- [ ] Phone (≤480px): Documents and Activity links visible under the logo; long-press to select text, then Propose works; review page stacks text above proposals
+- [ ] Let the session expire (or delete the cookie) → next action returns you to the login page instead of an empty document list
+- [ ] Log in in the same tab → the unread badge and voting toasts work without a reload
+- [ ] An insert proposal: the final-voting card says "Inserted at character N — nothing removed"
+
+## Deploy (`ssh-deploy.sh`)
+
+- [ ] `./ssh-deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing
+- [ ] `./ssh-deploy.sh` → tests run, confirmation prompt, service back within seconds, `https://<domain>/healthz` returns `{"ok":true}`
+- [ ] `~/backups/votetext-predeploy-*.db` exists on the server after the deploy
+- [ ] Data created before the deploy is still there afterwards
+- [ ] With `SIGNUP_MODE=invited`: an unknown address gets "Code sent" but no email; an invited address and an allowlisted address get a code
+
+---
+
 ## Sign-off
 
 | UC | Validated by | Date | Result |
@@ -92,3 +137,6 @@ Post a comment as one user; use a second browser for the reply-grace checks.
 | UC-18 | | | |
 | UC-19 | | | |
 | UC-20 | | | |
+| Review fixes, phase 1 | | | |
+| Phase 3 UI | | | |
+| Deploy | | | |

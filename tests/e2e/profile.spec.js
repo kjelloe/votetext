@@ -1,21 +1,12 @@
 'use strict';
 
-// US-1 (extension) — First-time profile completion modal.
-// The modal shows after OTP verify when display_name is empty. New users get
-// their email prefix as display_name, so we blank it directly in the DB first.
+// US-1 (extension) — First-time profile completion modal (UC-13).
+// New accounts get the email prefix as display_name; the modal shows after OTP
+// verify while the name is empty or still equals that prefix, so a brand-new
+// email is enough to trigger it.
 
 const { test, expect } = require('@playwright/test');
-const path = require('path');
-const Database = require('better-sqlite3');
 
-const DB_PATH = path.resolve('data/e2e_votetext.db');
-
-function createBlankNameUser(email) {
-    const db = new Database(DB_PATH);
-    db.prepare("INSERT OR IGNORE INTO users (email, display_name) VALUES (?, '')").run(email);
-    db.prepare("UPDATE users SET display_name = '' WHERE email = ?").run(email);
-    db.close();
-}
 
 async function loginViaUi(page, request, email) {
     await page.goto('/#/login');
@@ -29,7 +20,6 @@ async function loginViaUi(page, request, email) {
 
 test('profile modal: Save and continue stores name and updates header', async ({ page, request }) => {
     const email = 'profile-save@e2e.test';
-    createBlankNameUser(email);
     await loginViaUi(page, request, email);
 
     await expect(page.locator('#pm-name')).toBeVisible();
@@ -43,7 +33,6 @@ test('profile modal: Save and continue stores name and updates header', async ({
 
 test('profile modal: Skip proceeds without a name', async ({ page, request }) => {
     const email = 'profile-skip@e2e.test';
-    createBlankNameUser(email);
     await loginViaUi(page, request, email);
 
     await expect(page.locator('#pm-skip')).toBeVisible();

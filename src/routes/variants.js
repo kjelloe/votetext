@@ -7,11 +7,28 @@ const { resolveAccessLevel, meetsLevel } = require('../middleware/access');
 
 const router = Router();
 
+// Every access decision needs owner_id, status and settings — always load all
+// three so no sub-route can skip the draft rule by omitting a column.
+function getDoc(documentId) {
+    return getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [documentId]);
+}
+
 function checkDocAccess(doc, req, minLevel) {
     let settings = {};
     try { settings = JSON.parse(doc.settings || '{}'); } catch {}
     const level = resolveAccessLevel(doc, settings, req);
     return level !== null && meetsLevel(level, minLevel, req);
+}
+
+// Hidden proposals do not exist for anyone below supervisor
+function hiddenFrom(variant, doc, req) {
+    return !!variant.is_hidden && !(req.user && checkDocAccess(doc, req, 'supervisor'));
+}
+
+// When a proposal leaves the vote its children become ordinary unordered proposals
+// again — otherwise no view shows them, yet they still need a tally to resolve.
+function releaseChildren(variantId) {
+    run("UPDATE variants SET parent_variant_id = NULL, vote_order = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE parent_variant_id = ?", [variantId]);
 }
 
 function updateTallies(variantId) {
@@ -33,16 +50,16 @@ function updateTallies(variantId) {
 router.get('/:id', (req, res, next) => {
     try {
         const variant = getOne(
-            'SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.id = ?',
+            `SELECT v.*, u.display_name as proposer_name,
+                    (SELECT COUNT(*) FROM variants x WHERE x.document_id = v.document_id AND x.id <= v.id) as proposal_num
+             FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.id = ?`,
             [req.params.id]
         );
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc || (!variant.allow_anonymous_share && !checkDocAccess(doc, req))) return res.status(403).json({ error: 'Access denied' });
-        if (variant.is_hidden && !(req.user && checkDocAccess(doc, req, 'supervisor'))) {
-            return res.status(404).json({ error: 'Variant not found' });
-        }
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
         res.json({ variant });
     } catch (err) {
@@ -56,8 +73,16 @@ router.patch('/:id/share', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
         if (variant.proposed_by !== req.user.id) return res.status(403).json({ error: 'Not your variant' });
+        const doc = getDoc(variant.document_id);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!checkDocAccess(doc, req) || hiddenFrom(variant, doc, req)) return res.status(403).json({ error: 'Access denied' });
         const val = req.body.allow_anonymous_share ? 1 : 0;
-        run("UPDATE variants SET allow_anonymous_share = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [val, variant.id]);
+        if (val !== variant.allow_anonymous_share) {
+            transaction(() => {
+                run("UPDATE variants SET allow_anonymous_share = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [val, variant.id]);
+                logActivity(req.user.id, variant.document_id, variant.id, 'variant_share_changed', { allow_anonymous_share: val });
+            });
+        }
         res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
     } catch (err) { next(err); }
 });
@@ -67,12 +92,13 @@ router.post('/:id/hide', requireAuth, (req, res, next) => {
     try {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
-        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
         if (variant.is_hidden) return res.status(422).json({ error: 'Variant is already hidden' });
         transaction(() => {
             run("UPDATE variants SET is_hidden = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [variant.id]);
+            releaseChildren(variant.id);
             logActivity(req.user.id, doc.id, variant.id, 'variant_hidden', { title: variant.title });
         });
         res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
@@ -84,7 +110,7 @@ router.post('/:id/unhide', requireAuth, (req, res, next) => {
     try {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
-        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
         if (!variant.is_hidden) return res.status(422).json({ error: 'Variant is not hidden' });
@@ -101,7 +127,7 @@ router.post('/:id/fork', requireAuth, (req, res, next) => {
     try {
         const original = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!original) return res.status(404).json({ error: 'Variant not found' });
-        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [original.document_id]);
+        const doc = getDoc(original.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (!['open', 'voting', 'final_voting'].includes(doc.status)) {
             return res.status(422).json({ error: 'Forking is only allowed on open, voting, or final_voting documents' });
@@ -137,7 +163,7 @@ router.patch('/:id/threshold', requireAuth, (req, res, next) => {
     try {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
-        const doc = getOne('SELECT * FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
         if (!['voting', 'final_voting'].includes(doc.status)) {
@@ -164,8 +190,10 @@ router.patch('/:id', requireAuth, (req, res, next) => {
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
         if (variant.proposed_by !== req.user.id) return res.status(403).json({ error: 'Not your variant' });
         if (variant.status !== 'pending') return res.status(422).json({ error: 'Can only edit pending variants' });
-        const doc = getOne('SELECT status FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
-        if (doc && !['draft', 'open'].includes(doc.status)) {
+        const doc = getDoc(variant.document_id);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!checkDocAccess(doc, req) || hiddenFrom(variant, doc, req)) return res.status(403).json({ error: 'Access denied' });
+        if (!['draft', 'open'].includes(doc.status)) {
             return res.status(422).json({ error: 'Cannot edit proposals after voting has started' });
         }
 
@@ -190,8 +218,17 @@ router.delete('/:id', requireAuth, (req, res, next) => {
         if (variant.proposed_by !== req.user.id && req.user.role !== 'superadmin') {
             return res.status(403).json({ error: 'Not your variant' });
         }
-        run("UPDATE variants SET status = 'withdrawn', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [variant.id]);
-        logActivity(req.user.id, variant.document_id, variant.id, 'variant_withdrawn', {});
+        const doc = getDoc(variant.document_id);
+        if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (!checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+        if (!['draft', 'open'].includes(doc.status)) {
+            return res.status(422).json({ error: 'Proposals can only be withdrawn before voting starts' });
+        }
+        transaction(() => {
+            run("UPDATE variants SET status = 'withdrawn', vote_order = NULL, parent_variant_id = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [variant.id]);
+            releaseChildren(variant.id);
+            logActivity(req.user.id, variant.document_id, variant.id, 'variant_withdrawn', {});
+        });
         res.json({ message: 'Withdrawn' });
     } catch (err) {
         next(err);
@@ -208,7 +245,7 @@ router.patch('/:id/review-status', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (doc.status !== 'voting' && doc.status !== 'final_voting') {
             return res.status(422).json({ error: 'Document must be in voting or final_voting status' });
@@ -218,12 +255,15 @@ router.patch('/:id/review-status', requireAuth, (req, res, next) => {
 
         // Clear conflict ordering when removing a proposal from the vote
         const clearOrder = ['rejected', 'not_applicable', 'withdrawn'].includes(status);
-        run(
-            `UPDATE variants SET status = ?${clearOrder ? ', vote_order = NULL, parent_variant_id = NULL' : ''}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
-            [status, variant.id]
-        );
-        const action = status === 'withdrawn' ? 'variant_withdrawn' : 'variant_updated';
-        logActivity(req.user.id, variant.document_id, variant.id, action, status === 'withdrawn' ? {} : { review_status: status });
+        transaction(() => {
+            run(
+                `UPDATE variants SET status = ?${clearOrder ? ', vote_order = NULL, parent_variant_id = NULL' : ''}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+                [status, variant.id]
+            );
+            if (clearOrder) releaseChildren(variant.id);
+            const action = status === 'withdrawn' ? 'variant_withdrawn' : 'variant_updated';
+            logActivity(req.user.id, variant.document_id, variant.id, action, status === 'withdrawn' ? {} : { review_status: status });
+        });
         res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
     } catch (err) {
         next(err);
@@ -236,7 +276,7 @@ router.patch('/:id/conflict-order', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (doc.status !== 'voting') return res.status(422).json({ error: 'Document must be in voting status to edit conflict order' });
 
@@ -244,8 +284,16 @@ router.patch('/:id/conflict-order', requireAuth, (req, res, next) => {
 
         let { vote_order, parent_variant_id } = req.body;
 
+        if (vote_order != null && (!Number.isInteger(vote_order) || vote_order < 1)) {
+            return res.status(400).json({ error: 'vote_order must be a positive whole number or null' });
+        }
+
         if (parent_variant_id != null) {
+            if (!Number.isInteger(parent_variant_id)) return res.status(400).json({ error: 'parent_variant_id must be a variant id or null' });
             if (parent_variant_id === variant.id) return res.status(400).json({ error: 'Cannot set self as parent' });
+            if (getOne("SELECT 1 FROM variants WHERE parent_variant_id = ? AND status IN ('pending', 'conflict') AND is_hidden = 0 LIMIT 1", [variant.id])) {
+                return res.status(400).json({ error: 'Cannot nest more than two levels deep' });
+            }
             const parent = getOne('SELECT id, parent_variant_id FROM variants WHERE id = ? AND document_id = ?', [parent_variant_id, variant.document_id]);
             if (!parent) return res.status(400).json({ error: 'Parent variant not found in this document' });
             if (parent.parent_variant_id != null) return res.status(400).json({ error: 'Cannot nest more than two levels deep' });
@@ -277,7 +325,7 @@ router.patch('/:id/final-vote', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (doc.status !== 'final_voting') return res.status(422).json({ error: 'Document must be in final_voting status' });
 
@@ -293,13 +341,15 @@ router.patch('/:id/final-vote', requireAuth, (req, res, next) => {
         const newYes     = yes     !== undefined ? yes     : variant.final_yes;
         const newNo      = no      !== undefined ? no      : variant.final_no;
         const newAbstain = abstain !== undefined ? abstain : variant.final_abstain;
-        run(
-            "UPDATE variants SET final_yes = ?, final_no = ?, final_abstain = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
-            [newYes, newNo, newAbstain, variant.id]
-        );
-        run('INSERT INTO final_vote_log (variant_id, user_id, final_yes, final_no, final_abstain, recorded_at) VALUES (?, ?, ?, ?, ?, ?)',
-            [variant.id, req.user.id, newYes, newNo, newAbstain, Date.now()]);
-        logActivity(req.user.id, variant.document_id, variant.id, 'variant_updated', { final_yes: newYes, final_no: newNo, final_abstain: newAbstain });
+        transaction(() => {
+            run(
+                "UPDATE variants SET final_yes = ?, final_no = ?, final_abstain = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+                [newYes, newNo, newAbstain, variant.id]
+            );
+            run('INSERT INTO final_vote_log (variant_id, user_id, final_yes, final_no, final_abstain, recorded_at) VALUES (?, ?, ?, ?, ?, ?)',
+                [variant.id, req.user.id, newYes, newNo, newAbstain, Date.now()]);
+            logActivity(req.user.id, variant.document_id, variant.id, 'variant_updated', { final_yes: newYes, final_no: newNo, final_abstain: newAbstain });
+        });
         res.json({ variant: getOne('SELECT * FROM variants WHERE id = ?', [variant.id]) });
     } catch (err) {
         next(err);
@@ -311,7 +361,7 @@ router.get('/:id/final-vote-log', requireAuth, (req, res, next) => {
     try {
         const variant = getOne('SELECT id, document_id FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
-        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         if (!checkDocAccess(doc, req, 'supervisor')) return res.status(403).json({ error: 'Supervisor access required' });
         const logs = getAll(
@@ -325,20 +375,23 @@ router.get('/:id/final-vote-log', requireAuth, (req, res, next) => {
 // GET /api/variants/:id/relations
 router.get('/:id/relations', (req, res, next) => {
     try {
-        const variant = getOne('SELECT id, document_id FROM variants WHERE id = ?', [req.params.id]);
+        const variant = getOne('SELECT id, document_id, is_hidden FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
+        const seesHidden = !!(req.user && checkDocAccess(doc, req, 'supervisor'));
         const relations = getAll(
             `SELECT vr.*, v1.title as from_title, v2.title as to_title, u.display_name as created_by_name
              FROM variant_relations vr
              JOIN variants v1 ON v1.id = vr.from_variant_id
              JOIN variants v2 ON v2.id = vr.to_variant_id
              LEFT JOIN users u ON u.id = vr.created_by
-             WHERE vr.from_variant_id = ? OR vr.to_variant_id = ?`,
-            [variant.id, variant.id]
+             WHERE (vr.from_variant_id = ? OR vr.to_variant_id = ?)
+               AND (? = 1 OR (v1.is_hidden = 0 AND v2.is_hidden = 0))`,
+            [variant.id, variant.id, seesHidden ? 1 : 0]
         );
         res.json({ relations });
     } catch (err) {
@@ -358,17 +411,21 @@ router.post('/:id/relations', requireAuth, (req, res, next) => {
         const from = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!from) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [from.document_id]);
-        if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+        const doc = getDoc(from.document_id);
+        if (!doc || !checkDocAccess(doc, req, 'proposer')) return res.status(403).json({ error: 'Proposer access required' });
 
         const to = getOne('SELECT * FROM variants WHERE id = ?', [to_variant_id]);
         if (!to) return res.status(404).json({ error: 'Target variant not found' });
 
+        if (hiddenFrom(from, doc, req) || hiddenFrom(to, doc, req)) return res.status(404).json({ error: 'Variant not found' });
         if (from.id === to.id) return res.status(400).json({ error: 'Cannot relate a variant to itself' });
         if (from.document_id !== to.document_id) return res.status(422).json({ error: 'Both variants must be in the same document' });
 
         try {
-            run('INSERT INTO variant_relations (from_variant_id, to_variant_id, relation_type, created_by) VALUES (?, ?, ?, ?)', [from.id, to.id, relation_type, req.user.id]);
+            transaction(() => {
+                run('INSERT INTO variant_relations (from_variant_id, to_variant_id, relation_type, created_by) VALUES (?, ?, ?, ?)', [from.id, to.id, relation_type, req.user.id]);
+                logActivity(req.user.id, from.document_id, from.id, 'variant_relation_added', { to_variant_id: to.id, relation_type });
+            });
         } catch (e) {
             if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Relation already exists' });
             throw e;
@@ -382,11 +439,12 @@ router.post('/:id/relations', requireAuth, (req, res, next) => {
 // GET /api/variants/:id/comments
 router.get('/:id/comments', (req, res, next) => {
     try {
-        const variant = getOne('SELECT id, document_id FROM variants WHERE id = ?', [req.params.id]);
+        const variant = getOne('SELECT id, document_id, is_hidden FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
         const canModerate = !!(req.user && checkDocAccess(doc, req, 'supervisor'));
         const rows = getAll(
@@ -412,8 +470,9 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc || !checkDocAccess(doc, req, 'commenter')) return res.status(403).json({ error: 'Access denied' });
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
         if (process.env.NODE_ENV !== 'test') {
             const commentCooldown = parseInt(process.env.COMMENT_COOLDOWN_SECONDS || '5');
@@ -450,8 +509,9 @@ router.post('/:id/vote', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, status, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc || !checkDocAccess(doc, req, 'voter')) return res.status(403).json({ error: 'Access denied' });
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
         if (['final_voting', 'resolved', 'archived'].includes(doc.status)) {
             return res.status(422).json({ error: 'Cannot vote while document is in final_voting, resolved, or archived state' });
         }
@@ -481,13 +541,15 @@ router.delete('/:id/vote', requireAuth, (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const voteDoc = getOne('SELECT status FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
-        if (voteDoc && ['final_voting', 'resolved', 'archived'].includes(voteDoc.status)) {
+        const doc = getDoc(variant.document_id);
+        if (!doc || !checkDocAccess(doc, req, 'voter')) return res.status(403).json({ error: 'Access denied' });
+        if (['final_voting', 'resolved', 'archived'].includes(doc.status)) {
             return res.status(422).json({ error: 'Cannot retract vote while document is in final_voting, resolved, or archived state' });
         }
 
         transaction(() => {
-            run('DELETE FROM votes WHERE variant_id = ? AND user_id = ?', [variant.id, req.user.id]);
+            const r = run('DELETE FROM votes WHERE variant_id = ? AND user_id = ?', [variant.id, req.user.id]);
+            if (!r.changes) return;
             updateTallies(variant.id);
             logActivity(req.user.id, variant.document_id, variant.id, 'vote_retracted', {});
         });
@@ -503,8 +565,9 @@ router.get('/:id/votes', (req, res, next) => {
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
-        const doc = getOne('SELECT id, owner_id, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [variant.document_id]);
+        const doc = getDoc(variant.document_id);
         if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
         const votes = getAll(
             'SELECT v.vote_value, v.user_id, u.display_name, v.created_at, v.updated_at FROM votes v JOIN users u ON u.id = v.user_id WHERE v.variant_id = ? ORDER BY v.created_at',

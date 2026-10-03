@@ -1,7 +1,8 @@
 # VoteText — Test Plan
 
-> Automated: `npm test` runs three files — `tests/api.test.js` (integration, isolated SQLite DB on port 3099),
-> `tests/unit.test.js` (pure helpers in `src/lib/text.js`), and `tests/frontend.test.js` (cross-file JS contracts).
+> Automated: `npm test` runs four files — `tests/api.test.js` (integration, isolated SQLite DB on port 3099),
+> `tests/unit.test.js` (pure helpers in `src/lib/text.js`), `tests/frontend.test.js` (cross-file JS contracts) and
+> `tests/migrate.test.js` (schema migration from historical snapshots).
 > Browser: `npm run test:e2e` runs the Playwright suite (own server on port 3001).
 > Manual UI: open `http://localhost:3000` after `npm run dev` and follow the flows below.
 
@@ -130,7 +131,7 @@
 | H2 | `draft → voting` (invalid skip) | 422 |
 | H3 | `open → voting` | 200 |
 | H4 | `open → draft` (rollback) | 200 |
-| H5 | `voting → resolved` | 200 |
+| H5 | `voting → resolved` | 422 while any voteable proposal lacks a tally (resolve gate, see AA11); 200 once they are marked not voting |
 | H6 | `resolved → archived` | 200 |
 | H7 | `archived → any` | 422 (no further transitions) |
 | H8 | Vote on `resolved` document | 422 |
@@ -424,22 +425,99 @@
 
 ---
 
+## Group AA — Review fixes (2026-10-02)
+
+> Closes the gaps found in the 2026-10-02 review: the draft rule on variant
+> sub-routes and the global feed, activity redaction, access checks on vote
+> retract and relations, import limits, the withdraw guard, conflict nesting,
+> the final-voting preview, the resolve gate, OTP attempts and sign-up mode.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| AA1 | Setup: draft doc with proposal + comment; open doc with four proposals (A and B overlap); voter and viewer invited | 201s; sessions established |
+| AA2 | Draft doc, viewer record: GET `/variants/:id/comments`, `/votes`, `/relations`; POST `/comments` | 403 on all four; owner GET → 200 |
+| AA3 | GET `/activity` as a viewer-level user on a draft | no rows for the draft doc; open-doc rows present; owner still sees the draft |
+| AA4 | Activity metadata after a comment edit and invites | below supervisor: no `previous_text`, no `email`, other keys kept; owner on `/documents/:id/activity`: both present; global `/activity`: always redacted |
+| AA5 | DELETE `/variants/:id/vote` — user without access; voter with no vote; voter with a vote | 403 and no log row; 204 and no log row; 204 and one `vote_retracted` row |
+| AA6 | POST `/variants/:id/relations` — viewer, then voter | 403; 201 |
+| AA7 | POST `/documents` — 6100 lines at 30 per page; `lines_per_page` 0, −3, `abc` | 400 (`max 200 pages`); 400 each |
+| AA8 | DELETE `/variants/:id` by the proposer while the doc is `voting` | 422, status stays `pending` |
+| AA9 | `conflict-order`: make B a child of A, then A a child of C; `vote_order` 0, −1, 1.5, `'first'` | 200; 400 (three levels); 400 each |
+| AA10 | `final_voting` preview after A passes (10/1) and C fails (1/5) | text starts with A's replacement, C's text absent, A still `pending` (nothing written) |
+| AA11 | Resolve with overlapping A and B both passing; then reject B and the untallied proposal | 422 with `overlaps: [[A, B]]`, status still `final_voting`, statuses unchanged; then 200 — A `approved`, C `rejected`, exactly one `resolved` status-change log row |
+| AA12 | DELETE `/variants/:id` on the resolved doc | 422, variant stays `approved` |
+| AA13 | Five wrong codes on `verify-otp`, then the real code, then a fresh code | 401 ×4, 429 on the fifth; real code → 401; fresh code → 200 |
+| AA14 | `SIGNUP_MODE=invited`: unknown email, allowlisted email, allowlisted domain, existing user | unknown → 200 `Code sent` but no OTP row; the other three get an OTP row |
+| AA15 | GET `/api/no-such-route`; GET `/healthz` | 404 `{ error: 'Not found' }`; 200 `{ ok: true }` |
+| AA16 | POST `/documents/:id/variants` with non-integer offsets: an HTML string, `'3'`/`'5'`, 1.5, null, undefined | 400 each; no variant rows created (stored-XSS guard) |
+| AA17 | B is a child of A, then A is marked rejected; D is a child of C, then C is hidden | B and D have `parent_variant_id = null`, `vote_order = null` |
+| AA18 | `conflict-order` with `parent_variant_id` as a string equal to the variant's own id; B (whose only child is hidden) becomes a child | 400, nothing stored; 200 |
+| AA19 | Hidden proposal as a voter: GET `/comments`, `/votes`, `/relations`; POST `/comments`, `/vote`; relations of a sibling; document and global activity | 404 on all five; hidden proposal absent from the sibling's relations and from both feeds; owner still sees everything |
+| AA20 | Blocked proposer: PATCH own variant; PATCH `/share` | 403 both; share flag unchanged |
+| AA21 | Four wrong codes, request a new code, one more wrong code | 401 ×4, then 429; both codes invalidated |
+| AA22 | One address: 4 wrong codes for a victim + 16 for addresses with no code, then one more for the victim; victim verifies from another address | 401 ×20, then 429 "from this address"; victim's real code → 200 |
+| AA23 | `RATE_LIMIT_MAX=3`: four sign-in requests from one address; email of 300+ chars; numeric code; array as email | 4th → 429 on both endpoints; 400 each |
+| AA24 | Three proposals, withdraw the first, list and fetch | `proposal_num` is 2 and 3 for the remaining two — numbers are stable |
+| AA26 | `POST /status { status: 'voting', countdown_minutes: 5 }` on a `final_voting` document | 400, no `voting_scheduled_at` set; the same transition without a countdown → 200 |
+| AA25 | GET `/` | CSP with `default-src 'self'` and `frame-ancestors 'none'`, `X-Frame-Options: DENY`, nosniff, `Referrer-Policy: same-origin`, no `X-Powered-By` |
+
+---
+
+## Group AB — Activity log for previously unlogged mutations
+
+> Seven actions added to the `activity_log` CHECK list on 2026-10-02. Each is
+> written in the same transaction as the mutation and only when something changed.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| AB1 | PATCH `/variants/:id/share` on, on again, off | two `variant_share_changed` rows (1, 0) — the repeat logs nothing |
+| AB2 | POST `/variants/:id/relations`, then the same again | 201 then 409; one `variant_relation_added` row with `{ to_variant_id, relation_type }` |
+| AB3 | PATCH `/documents/:id/access/:userId` voter → supervisor, then supervisor again | one `user_access_changed` row `{ user_id, from: 'voter', to: 'supervisor' }` |
+| AB4 | DELETE `/documents/:id/access/:userId` twice | 204 both; one `user_access_removed` row with the level that was removed |
+| AB5 | Author deletes own comment twice; admin deletes another user's comment | one `comment_deleted` row; the admin delete logs `comment_hidden` instead |
+| AB5b | Moderator hides a comment, then its author tries to delete it | 422; the comment is still on the moderation page |
+| AB6 | POST `/copy-data` with nothing to copy, then with variants + comments | no row; then one `document_data_copied` row on the target with the source id and counts |
+| AB7 | DELETE `/documents/:id` | 204; one `document_deleted` row `{ title }`; the document's activity leaves the feed |
+
+---
+
 ## Unit tests (`tests/unit.test.js`)
 
-> 20 tests for the pure helpers in `src/lib/text.js` — no DB, no server. Run as
+> 30 tests for the pure helpers in `src/lib/text.js` — no DB, no server. Run as
 > part of `npm test` (which executes `tests/api.test.js`, `tests/unit.test.js`,
 > and `tests/frontend.test.js`).
 
 - `applyVariantsToText` — replace/insert/delete, offset-order application, overlap-skip (first by `char_start` wins), adjacent ranges, end-of-text spans, empty list, multi-line
 - `passesThreshold` — boundary cases: exact ⅔ **passes**, exactly half on `absolute` **fails**, abstain in the denominator for non-simple thresholds only, zero/null/undefined votes fail, unknown threshold falls back to simple
 - `importText` — contiguous char offsets across newlines, page rollover, join round-trip, import→apply offset round-trip
-- `tests/frontend.test.js` additionally asserts the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical (whitespace-normalised)
+- `decideOutcomes` — pass/fail by document threshold, per-proposal override, child `not_applicable` when the parent passes, untallied reporting (children of a passed parent excluded), overlap pairs among passing proposals only, insert-inside vs insert-at-edge
+- `applyVariantsToText` tie-break — an insert at the start of a replaced range is applied regardless of input order
+- Inserts are points — an insert proposed over a selected range keeps the selected text, and only a change spanning the insertion point overlaps it
+- `escapeHtml` — markup and quotes neutralised, null tolerated
+- `tests/frontend.test.js` (12 tests) additionally asserts: the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
+
+---
+
+## Migration tests (`tests/migrate.test.js`)
+
+> 8 tests. Each builds a database, runs `scripts/migrate.js` as a child process and
+> compares the result with a database created from the current `schema.sql`.
+> `tests/fixtures/schema-*.sql` are `schema.sql` as committed on those dates — do not edit them.
+
+| Scenario | Expected |
+|----------|----------|
+| Database from the 2026-05-23, 2026-06-07 and 2026-07-11 schema, with rows in every table | exit 0; tables, columns, defaults, CHECKs and indexes equal a fresh database; every row and value kept; new NOT NULL columns take their default; the next user id does not reuse a deleted one; every action in the CHECK list can be inserted; no foreign-key violations; a second run reports "already matches" |
+| Leftover `variants_new` table from a crashed earlier migration | exit 0, schema equals fresh |
+| Columns previously added with `ALTER TABLE` in another order | rebuilt; values follow their column names |
+| A row that violates the new schema (unknown document status) | exit 1, "nothing was changed", database byte-for-byte as before |
+| A table with a column `schema.sql` does not define | exit 0 with a warning; table and data untouched (database newer than code) |
+| Empty database file | exit 0, complete schema |
 
 ---
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (45 tests). Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (65 tests). Run with `npm run test:e2e`.
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -449,14 +527,21 @@
 | File | Story | Flows covered |
 |------|-------|---------------|
 | `crossfile.spec.js` | US-1 + smoke | Login page, full OTP login flow, profile page, unauth redirect, review/conflicts/final-vote/resolved-text render |
+| `profile.spec.js` | US-1 | Profile completion modal: Save and continue stores the name; Skip proceeds (display name blanked in the DB first — see plan Q1) |
 | `navigation.spec.js` | US-2 | Doc list → open doc → line highlights → sidebar All/On-page filter → card click → detail → back button |
 | `comment.spec.js` | US-3 | Post comment (author + "just now") → indented reply → edit own comment (edited marker asserted, UC-20) → delete own reply |
-| `proposal.spec.js` | US-4, US-5 | Programmatic text selection → propose modal → submit → card + highlight; submit disabled without selection; edit title/rationale; withdraw with confirm |
+| `proposal.spec.js` | US-4, US-5 | Programmatic text selection → propose modal → submit → card + highlight; submit disabled without selection; edit title/rationale; withdraw with confirm; Edit and Withdraw gone once voting starts |
 | `vote.spec.js` | US-6 | Cast For → change to Against → click again retracts → Abstain; sidebar tally reflects votes |
 | `share.spec.js` | US-7 | Enable anonymous share via checkbox (persists) → anonymous visitor sees read-only proposal + login button → blocked after disable |
 | `review-flow.spec.js` | US-8 | Review cards + overlap badge; CONFLICT/NOT VOTING buttons; unresolved group gates Ready (alert); ordering (via API — HTML5 DnD not automatable) turns Ready green → transitions to final_voting |
 | `final-voting.spec.js` | US-9 | Progress bar 0→1 of 3; tally save + ✓ Saved + majority label + persistence; threshold dropdown recalculates (70% simple → 64% needs ⅔); child greys when parent passes; audit trail; overall doc vote |
-| `resolved.spec.js` | US-10 | Mark as Resolved (confirm) → PASSED banner + applied text; Export Markdown download; Print HTML popup; Resolved text toolbar button |
+| `resolved.spec.js` | US-10 | Mark as Resolved (confirm) → PASSED banner + applied text; refused with the proposal named while a tally is missing; Export Markdown download; Print HTML popup; Resolved text toolbar button |
+| `supervisor.spec.js` | US-8, US-9 as a non-owner supervisor | Start voting from the document page; no-conflict path to final voting; tallies clear the blocker banner; Mark as Resolved → RESOLVED banner (no overall vote); keyboard conflict ordering (+ root, child of…); a voter sees no supervisor controls and the review page refuses |
+| `moderation.spec.js` | UC-18 | Hide a comment → placeholder → moderation page → unhide; hide a proposal → banner, gone for a voter → unhide |
+| `access.spec.js` | UC-5 | Invite by email → change level → block → remove, verified through the API |
+| `document.spec.js` | UC-1, UC-6, UC-8 | Numbered-line detection and stripping; Copy prefills the modal; countdown banner appears and cancels; delete from the settings modal |
+| `fork.spec.js` | UC-16 | Fork → "based on #1" on the fork, "forked as #2" on the original |
+| `regression.spec.js` | guard rail | Bugs that only show on the second action in one page: Reply after the thread re-rendered; Change status touching a previously opened document; a document without overlapping proposals reaching final voting; selecting text inside a highlighted line; "Use different email" on the login form |
 | `xss.spec.js` | guard rail | Hostile `<img onerror>` / `<script>` payloads in document title, variant title/rationale/text, and comments render as inert text (`esc()` regression net for template changes) |
 
 ### Known limitations
@@ -472,8 +557,7 @@
 - App boot deferred to `DOMContentLoaded` — a fast `/auth/me` response could route before `auth.js`/`review.js` had executed (`viewResolvedText is not defined`)
 - Router navigations serialized through a promise queue — two fast successive hash changes ran view handlers concurrently and the stale one clobbered the new view's DOM mid-render
 
-> UC-18 moderation is covered at the API level (Group X); it maps to no user story, so it has no
-> Playwright spec — the UI flows are on the manual checklist below.
+> UC-18 moderation: API level in Group X, browser flows in `moderation.spec.js` (2026-10-03).
 
 ---
 
@@ -484,7 +568,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] Login flow: enter email → receive code → enter code → redirected to document list
 - [ ] Create document: paste multi-page text → line numbers visible, correct page count
 - [ ] Document view: lines highlighted when a variant targets them
-- [ ] Variant sidebar: only shows variants overlapping current page
+- [ ] Variant sidebar: defaults to All; On-page shows only variants overlapping the current page
 - [ ] Propose variant: fill form → appears in sidebar on document view
 - [ ] Vote buttons: clicking For/Against/Abstain updates count immediately
 - [ ] Changing vote: count adjusts correctly
@@ -531,3 +615,8 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Hide comment (UC-18):** as supervisor, Hide on another user's comment → voter sees "Comment hidden by moderator" placeholder (no text/author); supervisor sees original text + Unhide inline
 - [ ] **Moderation page (UC-18):** document sidebar → Moderation link (supervisor+ only) → hidden proposals and moderator-hidden comments listed with working Unhide buttons; author-deleted comments do NOT appear
 - [ ] **User protection (UC-18):** set a user's `role` to `superadmin` in the DB → log in → "Users" link appears in header menu → Protect a user → that user no longer appears in access-invite search; Unprotect restores them
+- [ ] **Resolve gate — overlap:** in the final voting walkthrough record passing tallies on two overlapping proposals → Mark as Resolved shows an error naming both; mark one NOT VOTING in the review view → resolve succeeds
+- [ ] **Resolve gate — untallied:** leave one voteable proposal without a tally → Mark as Resolved shows an error naming it; record a tally or mark it NOT VOTING → resolve succeeds
+- [ ] **Resolved text preview:** during final voting, after saving a passing tally, the Resolved text preview shows that change applied
+- [ ] **Withdraw only before voting:** own pending proposal on an `open` doc shows Edit and Withdraw; once the doc is `voting` both buttons are gone
+- [ ] **OTP attempt limit:** enter a wrong code five times → "Too many incorrect codes" and the emailed code no longer works; a newly requested code does

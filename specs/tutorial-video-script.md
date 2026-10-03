@@ -45,6 +45,12 @@ cookie in a separate browser profile (or container tab):
 - Chapter 9 permanently transitions the Budget doc to final voting — record it last
   or reseed before retakes of earlier chapters.
 
+**Before recording** — record after the visual design pass so the video shows the
+final look. Every cue below matches the app as of 2026-10-03.
+
+Document text cannot be edited after creation. If a pasted draft is wrong, use **Copy**
+and correct the text in the new document.
+
 ---
 
 ## Chapter 0 — Intro *(0:30)*
@@ -104,7 +110,8 @@ pages automatically.
 [screen: click Create — the document opens in the viewer, status badge "Draft"]
 
 The new document starts as a *draft*. Drafts are private: only Anna and any editors
-she names can see it. That gives her room to fix typos before the group piles in.
+she names can see it. That gives her a chance to check the text came in right before
+the group piles in.
 
 [screen: click "Change status", choose Open]
 
@@ -122,13 +129,14 @@ per site.
 
 Anna invites Erik. The role decides what he can do: a *viewer* just reads, a
 *commenter* joins the discussion, a *proposer* can suggest changes, and a *voter*
-does all of that and votes. Erik gets an email telling him he's been invited.
+does all of that and votes. The document now shows up in Erik's list — and someone
+who has never used VoteText gets an email inviting them in.
 
 [screen: point at the Default access selector]
 
-For bigger groups there's a shortcut: *default access* gives every signed-in user a
-baseline role on this document, so you don't have to invite the whole neighbourhood
-one by one.
+For bigger groups there's a shortcut: *default access* gives every signed-in user who
+opens the document's link a baseline role — so you can share one link instead of
+inviting the whole neighbourhood one by one.
 
 ## Chapter 4 — Finding and reading a document *(1:15)* — Bjørn, Community Garden Charter
 
@@ -152,10 +160,10 @@ touch that line.
 The sidebar follows you as you read — showing proposals for the page you're on, or
 the whole document if you prefer.
 
-[screen: click a proposal card — page jumps to the line; then click the proposal title]
+[screen: hover a proposal card — click the ↗ link that appears: the page jumps to the line; then click the card itself]
 
-Click a proposal card to jump to the passage it changes — and click its title to open
-the full proposal.
+Hover a proposal card and follow the arrow to jump to the passage it changes — or
+click the card to open the full proposal.
 
 ## Chapter 5 — Joining the discussion *(1:00)* — Clara, "Raise the annual fee" proposal
 
@@ -176,28 +184,28 @@ Clara adds her view — it's visible to everyone the moment she posts it.
 
 ## Chapter 6 — Proposing a change *(1:30)* — Bjørn, Community Garden Charter
 
-[screen: document view — select the guest rule sentence with the mouse; "Propose change" button appears]
+[screen: document view — select the guest rule sentence with the mouse]
 
 Now the heart of VoteText. Bjørn thinks a sentence should change — so he selects it.
-Right there, a button appears.
 
-[screen: click "Propose change" — modal with the selected text collapsed, three fields]
+[screen: click "Propose" at the top of the proposal sidebar — modal showing the selected text, the operation selector and three fields]
 
 The proposal form asks for three things: a short title, the new wording, and — most
 importantly — *why*. A good rationale is what turns a change request into an argument
 the group can weigh.
 
-[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal"]
+[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the new proposal's page opens]
 
-[screen: the new card appears in the sidebar; the selected lines turn amber]
+Submitted. The proposal is instantly visible to every participant.
 
-Submitted. The proposal is instantly visible to every participant, attached to the
-exact lines it would change.
-
-[screen: on the new proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
+[screen: on the proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
 
 Until voting starts, Bjørn can refine the wording — or withdraw the proposal
 entirely if the discussion changes his mind.
+
+[screen: click "← Back to document" — the new card in the sidebar, the selected lines now amber]
+
+Back on the document, the proposal sits attached to the exact lines it would change.
 
 ## Chapter 7 — Voting *(0:45)* — Clara, "Clarify the dog rule" proposal
 
@@ -298,6 +306,9 @@ table.
 Need paper for the meeting, or a spreadsheet for the minutes? One click each. Every
 saved tally is also kept in an audit log — who recorded what, and when.
 
+And VoteText won't let the result be made final while a proposal is still missing its
+count, or while two proposals that can't both stand have both passed.
+
 ## Chapter 11 — Reading the result *(0:45)* — Clara, Tool Shed Rules 2026
 
 [screen: Clara's document list — open the resolved Tool Shed doc, click "Resolved text"]
@@ -360,5 +371,5 @@ Spring Planting Plan 2027
   rationale: *Requiring an escort for every adult guest is impractical — members' partners
   and neighbours visit all the time. Keeping the rule only for children's guests covers
   the actual concern.*
-- **Chapter 5 comment** — *Agree with the friendlier tone — could we also name the
-  committee as the ones to call when a dog is loose?*
+- **Chapter 5 comment** — *I support this. Could we phase the increase in over two
+  years for members on a tight budget?*

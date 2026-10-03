@@ -49,14 +49,15 @@ votetext/
 │   └── votetext.db         — SQLite database (gitignored)
 ├── scripts/
 │   ├── init-db.js          — creates DB from schema.sql
-│   ├── migrate.js          — ALTER TABLE migrations for existing databases
+│   ├── migrate.js          — brings an existing database in line with schema.sql (schema-driven, one transaction)
 │   ├── seed.js             — seeds sample data for development
 │   └── seed-demo.js        — tutorial-video demo data (four personas, docs at all four lifecycle stages)
 ├── src/
 │   ├── server.js           — Express app; only calls listen() when run directly
 │   ├── db.js               — single better-sqlite3 connection + query helpers
 │   ├── lib/
-│   │   └── text.js         — pure helpers: applyVariantsToText, passesThreshold, importText (unit-tested)
+│   │   ├── text.js         — pure helpers: applyVariantsToText, passesThreshold, decideOutcomes, escapeHtml, importText (unit-tested)
+│   │   └── mail.js         — sendMail(): single Resend entry point, client created on first send
 │   ├── middleware/
 │   │   ├── auth.js         — optionalAuth / requireAuth / requireRole
 │   │   ├── access.js       — resolveAccessLevel + meetsLevel (THE access decision) + requireDocumentAccess(minLevel)
@@ -116,7 +117,11 @@ activity_log ── references users, documents, variants
 
 **JSON settings blob** — `documents.settings` stores configurable options (`allow_anonymous_view`, `lines_per_page`, `default_access`, etc.) without schema migrations.
 
-**Soft delete** — `documents.deleted_at TEXT` (NULL = active). All queries filter `AND deleted_at IS NULL`. Existing DBs need `npm run migrate` to add the column.
+**Soft delete** — `documents.deleted_at TEXT` (NULL = active). All queries filter `AND deleted_at IS NULL`.
+
+**Migrations** — `schema.sql` is the only description of the schema. `scripts/migrate.js` loads it into an in-memory database and compares every table and index with the live database, ignoring names, comments and whitespace. A missing table or index is created. A table whose definition differs is rebuilt the SQLite-recommended way: create `<table>_new` from `schema.sql`, copy rows **by column name**, drop the old table, rename, restore the `AUTOINCREMENT` sequence, recreate the indexes. Foreign keys are off during the rebuild and `PRAGMA foreign_key_check` must not get worse. The whole run is one transaction, so a failure (for example a row that violates a new CHECK) changes nothing and exits non-zero. A table that has columns `schema.sql` does not define is left untouched with a warning — that is the signature of a database newer than the code, i.e. a rollback. `tests/migrate.test.js` upgrades databases built from three historical schema snapshots in `tests/fixtures/` and checks structure, data, sequences and idempotency. The script replaced a hand-written list of `ALTER TABLE` and table-recreate blocks (2026-10-02) that copied rows positionally and failed on databases created from early schemas.
+
+**Activity actions** — the `activity_log.action` CHECK list in `schema.sql` is authoritative. Besides the content actions (`document_*`, `variant_*`, `vote_*`, `comment_*`), it records access and moderation: `user_invited`, `user_access_changed` (`{ user_id, from, to }`), `user_access_removed`, `user_blocked`/`user_unblocked`, `variant_share_changed`, `variant_relation_added`, `document_data_copied` (logged on the target document), `document_deleted`, `comment_deleted` (author delete; a moderator's delete logs `comment_hidden`), plus the hide/unhide and protect/unprotect pairs. Adding one: `/vt-new-action`.
 
 **Voting countdown** — `documents.voting_scheduled_at TEXT` stores the ISO-8601 UTC timestamp when an `open` document should auto-transition to `voting`. Checked lazily via `applyVotingSchedules()` (see below). NULL = not scheduled.
 
@@ -160,7 +165,9 @@ Client                          Server                       DB
 
 Session tokens are 32-byte random hex strings stored as plain values in the `sessions` table. The cookie carries `sessionId.signature` where the signature is HMAC-SHA256 over the session id, keyed by `SESSION_SECRET` (`signSessionId`/`unwrapSessionId` in `middleware/auth.js`). `optionalAuth` verifies the signature with a timing-safe compare before any DB lookup, so forged or tampered cookies never touch the sessions table. HttpOnly + SameSite=Lax cookies. Secure flag is set when `NODE_ENV=production`, and the server refuses to start in production without `SESSION_SECRET`.
 
-OTP codes are rate-limited at 5 per email per 15 minutes using an in-memory Map (resets on server restart, acceptable for this scale). In production, OTP expiry is 10 minutes.
+OTP codes are generated with `crypto.randomInt` and rate-limited at `OTP_MAX_ATTEMPTS` (default 5) requests per email per 15 minutes using an in-memory Map (resets on server restart, acceptable for this scale). Wrong codes are counted per email while a code is outstanding (requesting a new code does not reset the count); at `OTP_MAX_ATTEMPTS` every outstanding code for that email is marked used and the response is 429, so a code cannot be brute-forced — the user requests a new one. Two limits per client address (`req.ip`, real behind nginx because of `trust proxy 1`) bound what one machine can do: `RATE_LIMIT_MAX` sign-in requests per `RATE_LIMIT_WINDOW_MS` across both endpoints, and 20 wrong codes per 15 minutes — beyond that the address gets 429 and its attempts no longer count against anyone's email, so a single attacker cannot keep invalidating a victim's code. Email and code are type- and length-checked before anything is stored or counted. In production, OTP expiry is 10 minutes. Expired OTPs and sessions are deleted at startup and once a day (`purgeExpired()` in `db.js`).
+
+**Sign-up mode** — `SIGNUP_MODE=open` (default) lets any email sign in. With `SIGNUP_MODE=invited`, `request-otp` only issues a code when the email already has a `users` row (created by an invite) or matches `SIGNUP_ALLOWLIST` (comma-separated emails or `@domains`); everyone else gets the same `Code sent` response and no code, so accounts cannot be enumerated.
 
 ---
 
@@ -210,7 +217,7 @@ History: before 2026-07-11 this logic existed in five divergent copies; `/lines`
 
 ### Invite email
 
-When an invited email has no existing account, `POST /api/documents/:id/access` sends a fire-and-forget invitation email via Resend (same SDK as OTP). The email names the inviter, the document, the role, and the app URL (`VOTETEXT_URL` env var). Email failure does not roll back the access grant.
+When an invited email has no existing account, `POST /api/documents/:id/access` sends a fire-and-forget invitation email through `sendMail()` in `src/lib/mail.js` (same path as OTP). The email names the inviter, the document, the role, and the app URL (`VOTETEXT_URL` env var); all user-supplied values are passed through `escapeHtml()`. Email failure does not roll back the access grant. Each inviter is limited to 20 invitations to new addresses per hour (in-memory, 429 beyond that).
 
 ### Global roles
 
@@ -246,7 +253,12 @@ Routes are grouped by resource and mounted in `server.js`:
 /api/comments/*    → src/routes/comments.js   (PATCH edit — author, window + reply-grace, sets edited_at; DELETE; POST /:id/hide, /:id/unhide — moderation, supervisor+)
 /api/activity      → src/routes/activity.js
 /api/users/*       → src/routes/users.js      (superadmin only: GET / list, PATCH /:id/protection)
+/healthz           → src/server.js            (200 { ok: true } after a DB round-trip; used by ssh-deploy.sh)
 ```
+
+Unknown `/api/*` paths return a JSON 404 rather than the SPA shell.
+
+Activity metadata is redacted for readers below supervisor: `previous_text` (comment edits) and `email` (invites) are stripped by `redactActivity()` in `middleware/access.js`. `GET /api/documents/:id/activity` returns the full metadata to supervisor+; the cross-document `GET /api/activity` is always redacted. Both feeds and the document list use the same visibility rule (`VISIBLE_DOCUMENT_IDS_SQL`), so drafts never surface for users below editor.
 
 All write endpoints (except logout) require a valid session cookie. Read endpoints on documents with `allow_anonymous_view = true` (and status ≠ `draft`) permit unauthenticated access. `GET /api/variants/:id` additionally allows anonymous access when `allow_anonymous_share = 1` on the variant — unless the variant is hidden by a moderator, in which case non-supervisors get 404.
 
@@ -410,6 +422,18 @@ The resolved `{ char_start, char_end, text }` is stored in `pendingSelection` an
 
 See `specs/use-cases.md` for full user-facing flows.
 
+### Role gating in the browser
+
+`hasLevel(doc, minLevel)` in `app.js` compares `doc.my_access_level` (returned by `GET /documents/:id`) with the same `ACCESS_LEVELS` order the server uses. Every control that triggers a write is shown only when the server would accept it: Change status (supervisor+, voting-cycle transitions only below admin), Mark as Resolved (supervisor+), Settings and Delete (editor+ / owner), Propose (proposer+, not resolved/archived), vote buttons (voter+, voting open — otherwise disabled with a note), comment form (commenter+), Fork (proposer+ on open, supervisor+ during voting), Manage access and Moderation (supervisor+, edits admin-only). The review, conflict and final-voting views call `_requireSupervisor(doc)` first.
+
+### Session and modal hygiene
+
+`api()` clears `state.user` and routes to `#/login` on any 401, so an expired session cannot leave the app looking signed in. `startSession()` (config, unread badge, 30-second activity polling) runs at boot and again after an in-tab login. `openModal()` replaces `#modal-content` with a fresh node, so listeners from a previous modal never fire for the next one; cancel buttons use the `.modal-cancel` class instead of inline handlers (the CSP forbids them). Text selection is captured on `selectionchange` (works for touch and for releases outside the text panel); element-anchored selections (triple-click) resolve to line boundaries.
+
+### Security headers
+
+`server.js` sets `Content-Security-Policy` (`default-src 'self'`, inline styles allowed, no inline scripts, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, HSTS in production, and disables `X-Powered-By`. The print views open `about:blank` and inherit the policy, which is why they use inline `<style>` only.
+
 ### XSS prevention
 
 All interpolated user values go through `esc()` before entering any innerHTML string. Trusted static HTML (from template literals with only escaped values) is safe. DOM node creation via `el()` never touches innerHTML.
@@ -472,6 +496,16 @@ draft → open → voting → final_voting → resolved → archived
 ```
 
 `final_voting` is the stage after all conflicts have been ordered. The document transitions there via the **Ready for final voting** button in the conflict resolution view. From `final_voting`, an owner can roll back to `voting` (via the Change Status flow) or proceed to `resolved`.
+
+**Resolve gate** — any transition to `resolved` first runs `decideOutcomes()` (`src/lib/text.js`) over the voteable proposals (`pending`/`conflict`, not hidden). The transition is refused with 422 and nothing is written when (a) two proposals that both pass have overlapping character ranges (`{ error, overlaps: [[idA, idB]] }`) or (b) a voteable proposal has no recorded tally (`{ error, untallied: [ids] }`); a child whose parent passed needs no tally. The supervisor clears a blocker by marking a proposal not voting (`review-status`, allowed in `final_voting`) or by rolling back to `voting` and making one proposal a child of the other. Once the gate passes, the status change, the activity entry, the variant outcomes and the stored resolved text are written in one transaction. The `final_voting` preview (`GET /:id/resolved-text`) uses the same function without writing, so it shows the text as the current tallies would produce it.
+
+Proposers can withdraw their own proposal only while the document is `draft` or `open`; from `voting` onward removal is a supervisor decision through `review-status`.
+
+**Insert proposals are points.** The propose dialog always sends the selected range, but an `insert` adds its text at `char_start` and removes nothing — `consumedEnd()` in `src/lib/text.js` is the single definition, used by `applyVariantsToText()` and by the overlap check in `decideOutcomes()`. (Until 2026-10-02 the merge treated an insert like a replace and dropped the selected text.) Character offsets are validated as integers on `POST /documents/:id/variants`.
+
+**Leaving the vote releases children.** When a proposal is withdrawn, hidden, or marked rejected / not applicable / withdrawn in review, `releaseChildren()` in `variants.js` clears `parent_variant_id` and `vote_order` on its children in the same transaction, so they reappear as ordinary unordered proposals instead of vanishing from the conflict and final-voting views while still blocking the resolve gate.
+
+**Hidden proposals** return 404 below supervisor on every variant route (`hiddenFrom()` in `variants.js`), are left out of other proposals' relation lists, and their activity rows are filtered from both feeds.
 
 ### Review view
 
@@ -645,12 +679,12 @@ All files share globals: `app.js` loads first and defines the helpers (`esc`, `e
 ## Testing
 
 ```bash
-npm test          # api + unit + frontend-contract tests (node:test)
+npm test          # api + unit + frontend-contract + migration tests (node:test)
 npm run test:e2e  # Playwright browser tests (Firefox, own server on port 3001)
 npm run init-db   # (re)create database from schema
 npm run seed      # seed dev data + print session cookie for browser login
 ```
 
-`npm test` runs three files under Node's built-in `node:test` runner (each in its own process, no extra framework): `tests/api.test.js` (integration — spins up Express on port 3099 against an ephemeral `data/test_votetext.db`, deleted after each run; OTPs read directly from the test DB to avoid SMTP), `tests/unit.test.js` (pure helpers in `src/lib/text.js` — resolve-merge and threshold boundary maths), and `tests/frontend.test.js` (cross-file JS contracts: script load order, duplicate/missing function declarations, router dispatch targets, `passesThreshold` backend↔frontend sync). Note the frontend contract scanner is regex-based: it only recognises `function` declarations (not const arrows) and flags `word(`-shaped text even inside comments.
+`npm test` runs four files under Node's built-in `node:test` runner (each in its own process, no extra framework): `tests/api.test.js` (integration — spins up Express on port 3099 against an ephemeral `data/test_votetext.db`, deleted after each run; OTPs read directly from the test DB to avoid SMTP), `tests/unit.test.js` (pure helpers in `src/lib/text.js` — resolve-merge and threshold boundary maths), `tests/frontend.test.js` (cross-file JS contracts: script load order, duplicate/missing function declarations, router dispatch targets, `passesThreshold` backend↔frontend sync), and `tests/migrate.test.js` (runs `scripts/migrate.js` against databases built from historical schema snapshots — see Migrations above). Note the frontend contract scanner is regex-based: it only recognises `function` declarations (not const arrows) and flags `word(`-shaped text even inside comments.
 
 E2E tests (`tests/e2e/*.spec.js`) run under `@playwright/test` (the only extra dev dependency) against Firefox. `global-setup.js` owns the server lifecycle: it creates `data/e2e_votetext.db` from `schema.sql` **before** spawning `src/server.js` on port 3001 (db.js opens the SQLite file at module load, so Playwright's built-in `webServer` cannot be used), logs in the fixture users via the OTP flow, and stores their session cookies as Playwright `storageState` files under `tests/e2e/.auth/`. `global-teardown.js` kills the server via its PID file and deletes the DB. Specs create their own documents through the API (`tests/e2e/helpers.js`), so files stay order-independent. A test-only endpoint `GET /api/auth/test-otp` (registered only when `NODE_ENV === 'test'`) exposes the latest OTP for browser-driven login flows. Coverage maps to the user stories in `specs/user-stories.md` — see the Playwright section of `specs/test-plan.md`.

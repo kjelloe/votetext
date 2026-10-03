@@ -5,7 +5,7 @@
 
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { createDoc, createVariant, AUTH_DIR } = require('./helpers');
+const { createDoc, createVariant, setStatus, AUTH_DIR } = require('./helpers');
 
 test.use({ storageState: path.join(AUTH_DIR, 'alice.json') });
 
@@ -81,4 +81,17 @@ test('US-5: withdraw own proposal — confirms and disappears from sidebar', asy
     await expect(page).toHaveURL(new RegExp(`#/documents/${docId}`));
     await expect(page.locator('#doc-lines-container')).toBeVisible();
     await expect(page.locator('.variant-card', { hasText: 'US-5 withdraw me' })).toHaveCount(0);
+});
+
+test('US-5: Edit and Withdraw are gone once voting has started', async ({ page }) => {
+    const votingDoc = await createDoc('US-5 voting doc', 'A line that someone wants to change.');
+    const varId = await createVariant(votingDoc, { char_start: 2, char_end: 6, new_text: 'row', title: 'US-5 locked proposal' });
+    await page.goto(`/#/variants/${varId}`);
+    await expect(page.locator('#withdraw-variant-btn')).toBeVisible();
+
+    await setStatus(votingDoc, 'voting');
+    await page.reload();
+    await expect(page.getByText('US-5 locked proposal').first()).toBeVisible();
+    await expect(page.locator('#withdraw-variant-btn')).toHaveCount(0);
+    await expect(page.locator('#edit-variant-btn')).toHaveCount(0);
 });

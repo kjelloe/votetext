@@ -152,5 +152,10 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
+# Test artifacts
+playwright-report/
+test-results/
+tests/e2e/.auth/
+
 # Extras
 archive/

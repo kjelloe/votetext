@@ -12,12 +12,17 @@
 #        <YOUR_EMAIL>           — Let's Encrypt registration email
 #   3. Paste into the Hetzner console when creating the server
 #
-# After first login (ssh -p 2222 <DEPLOY_USER>@<ip>):
-#   1. Copy your code:  scp -P 2222 -r . <DEPLOY_USER>@<ip>:/opt/votetext/
-#   2. Copy your .env:  scp -P 2222 .env <DEPLOY_USER>@<ip>:/opt/votetext/.env
-#      → Remove NODE_ENV from the server .env — the systemd service sets it to production
-#   3. Point DNS:       A record for <YOUR_DOMAIN> → <ip>
-#   4. Run:             ~/first-deploy.sh
+# After the server has rebooted:
+#   1. Point DNS:       A record for <YOUR_DOMAIN> → <ip>
+#   2. From your laptop, in the repo:   ./ssh-deploy.sh --env
+#      → uploads the committed code and .env.prod (as .env), installs
+#        dependencies, creates the database and starts the service
+#      → .env.prod must contain SESSION_SECRET (openssl rand -hex 32) and must
+#        not contain NODE_ENV — the systemd service sets it to production
+#   3. On the server (ssh -p 2222 <DEPLOY_USER>@<ip>):   ~/first-deploy.sh
+#      → enables the service at boot and obtains the TLS certificate
+#
+# Every later update is just:  ./ssh-deploy.sh
 # =============================================================================
 
 users:
@@ -62,6 +67,9 @@ write_files:
           listen 80;
           server_name <YOUR_DOMAIN>;
 
+          # matches express.json({ limit: '2mb' }) — nginx defaults to 1m
+          client_max_body_size 2m;
+
           location / {
               proxy_pass         http://127.0.0.1:3000;
               proxy_http_version 1.1;
@@ -94,7 +102,7 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-  # ── first-deploy helper — run once after uploading code ─────────────────
+  # ── first-deploy helper — run once after the first ./ssh-deploy.sh --env ──
   - path: /home/<DEPLOY_USER>/first-deploy.sh
     owner: <DEPLOY_USER>:<DEPLOY_USER>
     permissions: '0755'
@@ -104,20 +112,12 @@ write_files:
 
       APP=/opt/votetext
 
-      echo "==> Installing dependencies"
-      cd "$APP"
-      npm install --omit=dev
-
-      echo "==> Initialising database"
-      npm run init-db
-
-      echo "==> Ensuring SESSION_SECRET is set"
-      if ! grep -q "SESSION_SECRET=" "$APP/.env" 2>/dev/null; then
-          echo "SESSION_SECRET=$(openssl rand -hex 32)" >> "$APP/.env"
-          echo "    (generated new SESSION_SECRET — back it up for disaster recovery)"
+      if [ ! -f "$APP/.deployed-version" ]; then
+          echo "Nothing deployed yet — run ./ssh-deploy.sh --env from your laptop first"
+          exit 1
       fi
 
-      echo "==> Starting service"
+      echo "==> Enabling service at boot"
       sudo systemctl daemon-reload
       sudo systemctl enable --now votetext
 

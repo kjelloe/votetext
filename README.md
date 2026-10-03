@@ -92,6 +92,13 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Configurable anonymous/read-only viewing
 - User blocking per document
 - Document owner controls all settings
+- Every button in the browser is gated on the user's access level, so what you see is what the server allows (supervisors run the vote without owning the document; viewers get read-only pages)
+- Access modal: change a level, block/unblock or remove a participant (admin), read-only for supervisors
+
+#### Security and accessibility
+- Content-Security-Policy with no inline scripts, `X-Frame-Options: DENY`, nosniff, referrer policy, HSTS in production
+- Sign-in rate limits per email and per client address; sign-up can be restricted to invited addresses
+- Keyboard: proposal cards are focusable, conflict ordering has button controls as well as drag-and-drop; text selection works on touch screens; usable at phone widths
 
 #### User Activity Feed
 - Default view: all activity on documents you own or have access to
@@ -103,7 +110,8 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 #### Authentication
 - Passwordless email OTP login
 - Session-based auth with secure cookies; session IDs HMAC-signed with `SESSION_SECRET`, verified before any DB lookup
-- OTP rate limiting and lockout protection
+- Sign-in rate limiting per email and per client address; a code is invalidated after 5 wrong attempts
+- Optional invite-only sign-in (`SIGNUP_MODE=invited` with an allowlist)
 - **Non-searchable profile** — users can opt out of appearing in user search results (profile toggle)
 - **Profile completion** — new users without a display name are prompted to fill in their name and organisation in a modal overlay immediately after their first login
 
@@ -169,7 +177,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Variants
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`    | `/api/documents/:id/variants` | List all variants for a document |
+| `GET`    | `/api/documents/:id/variants` | List all variants for a document (each carries `proposal_num`, its stable creation-order number) |
 | `POST`   | `/api/documents/:id/variants` | Propose a new variant |
 | `GET`    | `/api/variants/:id` | Get variant details |
 | `PATCH`  | `/api/variants/:id` | Update variant (author only, while pending) |
@@ -229,6 +237,11 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `GET`   | `/api/users` | List all users with protection status (superadmin only; `?q=` filter) |
 | `PATCH` | `/api/users/:id/protection` | Toggle `is_protected` — excludes user from invite search (superadmin only) |
 
+#### Operations
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/healthz` | `{ ok: true }` after a database round-trip — used by the deploy script |
+
 ---
 
 ### Setup
@@ -248,9 +261,8 @@ cd votetext
 # Install dependencies
 npm install
 
-# Configure environment — fill in RESEND_API_KEY (see Configuration below)
-# cp .env.prod .env   ← for production
-# (dev .env is already present with safe defaults)
+# Configure environment (every value is optional in development)
+cp .env.example .env
 
 # Initialize the database
 npm run init-db
@@ -263,7 +275,7 @@ The application will be available at `http://localhost:3000`.
 
 #### Configuration (environment variables)
 
-All variables are optional except `RESEND_API_KEY` (production email). Defaults shown.
+All variables are optional in development. Production requires `SESSION_SECRET` and `RESEND_API_KEY`. Defaults shown; `.env.example` lists them all.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -274,13 +286,18 @@ All variables are optional except `RESEND_API_KEY` (production email). Defaults 
 | `SESSION_SECRET` | — | HMAC key for signing session cookies (`sessionId.hmac`). Required in production (server refuses to start without it); dev/test fall back to a built-in dev secret. Rotating it invalidates all sessions |
 | `OTP_LENGTH` | `6` | OTP code digits |
 | `OTP_EXPIRY_MINUTES` | `10` | OTP validity window |
-| `OTP_MAX_ATTEMPTS` | `5` | OTP requests per email per 15 min |
-| `RESEND_API_KEY` | — | Resend API key for OTP + invite email |
+| `OTP_MAX_ATTEMPTS` | `5` | OTP requests per email per 15 min, and wrong codes before the outstanding code is invalidated |
+| `RATE_LIMIT_MAX` | `100` | Sign-in requests (code requests and code checks) per client address per window |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Length of that window in milliseconds |
+| `SIGNUP_MODE` | `open` | `invited` = only existing accounts and `SIGNUP_ALLOWLIST` entries receive a code |
+| `SIGNUP_ALLOWLIST` | — | Comma-separated emails or `@domains` allowed to sign in when `SIGNUP_MODE=invited` |
+| `RESEND_API_KEY` | — | Resend API key for OTP + invite email. Required in production; without it in development, codes are printed to the console |
 | `MAIL_FROM_ADDRESS` | — | Sender address (verified domain in Resend) |
 | `MAIL_FROM_NAME` | `VoteText` | Sender display name |
 | `VOTETEXT_URL` | request origin | Absolute app URL used in invite emails |
 | `CORS_ORIGINS` | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
 | `MAX_DOCUMENT_CHARS` | `1000000` | Maximum document size on import |
+| `MAX_PAGES` | `200` | Maximum pages per document (hard cap 200) |
 | `DEFAULT_LINES_PER_PAGE` | `30` | Lines per page when not specified |
 | `COMMENT_EDIT_WINDOW_MINUTES` | `30` | How long authors can edit their comments |
 | `COMMENT_COOLDOWN_SECONDS` | `5` | Minimum interval between comments per user |
@@ -297,6 +314,7 @@ All variables are optional except `RESEND_API_KEY` (production email). Defaults 
 votetext/
 ├── schema.sql              # Database schema definition
 ├── package.json            # Dependencies and scripts
+├── .env.example            # Environment template — copy to .env
 ├── .env                    # Dev environment (gitignored)
 ├── .env.prod               # Production environment template (gitignored)
 ├── .gitignore
@@ -305,14 +323,15 @@ votetext/
 │   └── votetext.db
 ├── scripts/
 │   ├── init-db.js          # Create database from schema.sql
-│   ├── migrate.js          # Add columns to existing databases (idempotent)
+│   ├── migrate.js          # Bring an existing database in line with schema.sql (idempotent, one transaction)
 │   ├── seed.js             # Optional: seed with sample data
 │   └── seed-demo.js        # Tutorial-video demo data (four personas, four lifecycle stages)
 ├── src/
 │   ├── server.js           # Express app entry point
 │   ├── db.js               # Database connection + helpers
 │   ├── lib/
-│   │   └── text.js         # Pure helpers: text import, variant merge, thresholds (unit-tested)
+│   │   ├── text.js         # Pure helpers: text import, variant merge, thresholds, resolve outcomes (unit-tested)
+│   │   └── mail.js         # sendMail() — single Resend entry point
 │   ├── middleware/
 │   │   ├── auth.js         # Session validation middleware
 │   │   ├── access.js       # Document access control (resolveAccessLevel — the single access decision)
@@ -332,11 +351,12 @@ votetext/
 │   ├── api.test.js         # Integration tests (node:test, isolated DB)
 │   ├── unit.test.js        # Unit tests for src/lib/text.js
 │   ├── frontend.test.js    # Cross-file JS contracts + threshold sync check
+│   ├── migrate.test.js     # Upgrades databases built from historical schemas (tests/fixtures/)
 │   └── e2e/                # Playwright browser tests (own server + isolated DB)
 └── public/
     ├── index.html          # Single-page application shell
     ├── app.js              # Client-side logic (vanilla JS, < 2000 lines)
-    ├── review.js           # Supervisor/editor/admin views: review, conflicts, final voting, resolved text, moderation, user admin
+    ├── review.js           # Supervisor/editor/admin views: review, conflicts, final voting, resolved text, moderation, user admin, manage-access modal
     └── style.css           # Styles
 ```
 
@@ -349,7 +369,7 @@ votetext/
 npm run dev
 
 # Run tests
-npm test              # API integration + unit + frontend-contract tests (isolated DB, no email needed)
+npm test              # API integration + unit + frontend-contract + migration tests (isolated DBs, no email needed)
 npm run test:e2e      # Playwright browser tests (first time: sudo npx playwright install-deps)
 
 # Reset database
@@ -372,23 +392,29 @@ The application is designed to run on a single Hetzner CX23 VPS (2 vCPU, 4 GB RA
 
 Server provisioning is templated in [`cloud-init-example.yaml`](./cloud-init-example.yaml) — copy it to `cloud-init.yaml` (gitignored), fill in the `<PLACEHOLDER>` values (deploy user, SSH key, domain, email), and paste it into the Hetzner console when creating the server. It installs Node.js 22 LTS, nginx, certbot, fail2ban, ufw, and configures the systemd service automatically.
 
+#### Deploying
+
+Deploys are done with `ssh-deploy.sh` (gitignored — it holds the host name). It ships only committed files (`src/`, `public/`, `scripts/`, `schema.sql`, `package*.json`) and never touches `data/`.
+
+```bash
+./ssh-deploy.sh              # run tests, then deploy HEAD
+./ssh-deploy.sh --dry-run    # show what would be deployed and what is live now
+./ssh-deploy.sh <ref>        # deploy another commit or tag — also how you roll back
+./ssh-deploy.sh --env        # also upload .env.prod as the server .env
+```
+
+On the server it installs dependencies (only when `package-lock.json` changed), stops the service, backs up the database to `~/backups/votetext-predeploy-*.db`, swaps the code, runs `scripts/migrate.js` (or `init-db.js` on an empty server), starts the service and polls `GET /healthz`. If that health check fails, the previous code, `.env` and database are restored and the old version is started again.
+
 #### First deploy (after server boot)
 
 ```bash
-# 1. Copy code (excluding node_modules, data, and env files)
-rsync -av --exclude node_modules --exclude data --exclude .env --exclude .env.prod \
-  -e "ssh -p 2222" \
-  . <DEPLOY_USER>@<YOUR_DOMAIN>:/opt/votetext/
-
-# 2. Copy production env
-scp -P 2222 .env.prod <DEPLOY_USER>@<YOUR_DOMAIN>:/opt/votetext/.env
-
-# 3. Point DNS A record to the server IP, then on the server:
+# 1. Point the DNS A record to the server IP
+# 2. From your laptop — .env.prod must contain SESSION_SECRET and no NODE_ENV
+./ssh-deploy.sh --env
+# 3. On the server: enable the service at boot and obtain the TLS certificate
 ssh -p 2222 <DEPLOY_USER>@<YOUR_DOMAIN>
 ~/first-deploy.sh
 ```
-
-`first-deploy.sh` runs `npm install --omit=dev`, initialises the database, starts the systemd service, and obtains a Let's Encrypt certificate via certbot.
 
 #### Backups
 
@@ -447,11 +473,14 @@ sqlite3 /opt/votetext/data/votetext.db ".backup ~/backups/votetext-$(date +%F).d
 - [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
-- [x] Playwright e2e suite (`npm run test:e2e`) — 44 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Playwright e2e suite (`npm run test:e2e`) — 65 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
 - [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
 - [x] Tutorial video script (EN + NO) + reproducible demo data — `specs/tutorial-video-script.md`, `specs/tutorial-video-script.no.md`, `npm run seed-demo` (four personas, four documents frozen at each lifecycle stage)
 - [x] Moderation dashboard (UC-18) — supervisor+ hide/unhide for proposals and comments (moderator hides reversible via `hidden_by`, author deletes permanent), per-document moderation page, superadmin user-protection management
+- [x] Review fixes, phase 1 (2026-10-02) — draft rule on variant sub-routes and the global feed, resolve gate (overlapping winners and untallied proposals block resolution), working final-voting preview, withdraw only before voting, OTP attempt limit with `crypto.randomInt`, invite-only sign-in switch, activity metadata redaction, escaped invite email, `/healthz`, JSON 404 for unknown API routes — see `plan-update.md` for the remaining phases
+- [x] Review fixes, phase 2 (2026-10-02) — `scripts/migrate.js` rewritten to be driven by `schema.sql` (the old script crashed on databases created from early schemas), with a migration test over three historical schema snapshots; seven previously unlogged mutations now write activity entries; second review round fixed a stored XSS via non-numeric proposal offsets, modal handlers acting on a previously opened document, the dead end for documents without overlapping proposals, insert proposals deleting the selected text at resolve, and sign-in limits per client address
+- [x] Phase 3 (2026-10-03) — every browser control gated on the user's access level (supervisors run the voting cycle without owning the document; viewers no longer see buttons the server refuses); profile completion modal for new accounts; access modal with level change and block; "based on" links on forks; delete document; stable proposal numbers; neutral RESOLVED label without an overall vote; resolve-blocker banner in the walkthrough; keyboard conflict ordering and focusable proposal cards; phone navigation and stacked review layout; text selection via `selectionchange` (works on touch); session expiry returns to login; security headers (CSP, nosniff, frame-ancestors) — 13 new browser tests
 - [ ] Export resolved document (further polish)
 - [ ] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log), giving them version history and offsite backup instead of manual zip copies

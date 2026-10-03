@@ -3,55 +3,73 @@
 const { Router } = require('express');
 const { db, getOne, getAll, run, transaction, logActivity, applyVotingSchedules } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { requireDocumentAccess, resolveAccessLevel, ACCESS_LEVELS } = require('../middleware/access');
-const { Resend } = require('resend');
-const resend = new Resend(process.env.RESEND_API_KEY);
+const { requireDocumentAccess, resolveAccessLevel, meetsLevel, redactActivity, ACCESS_LEVELS, VISIBLE_DOCUMENT_IDS_SQL } = require('../middleware/access');
+const { applyVariantsToText, decideOutcomes, escapeHtml, VALID_THRESHOLDS, importText } = require('../lib/text');
+const { sendMail } = require('../lib/mail');
 
 const router = Router();
 
-const { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, importText } = require('../lib/text');
+// In-memory invite-email rate limiting: inviter id → [timestamps]
+const inviteLog = new Map();
+const INVITE_EMAILS_PER_HOUR = 20;
 
-function resolveVariants(documentId) {
-    const docRow = getOne('SELECT settings FROM documents WHERE id = ?', [documentId]);
-    let docSettings = {};
-    try { docSettings = JSON.parse(docRow?.settings || '{}'); } catch {}
-    const docDefaultThreshold = docSettings.majority_threshold || 'simple';
+function inviteLimited(userId) {
+    const now = Date.now();
+    const sent = (inviteLog.get(userId) || []).filter(t => now - t < 3600000);
+    if (sent.length >= INVITE_EMAILS_PER_HOUR) return true;
+    sent.push(now);
+    inviteLog.set(userId, sent);
+    return false;
+}
 
+function originalText(documentId) {
+    return getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [documentId])
+        .map(l => l.original_text).join('\n');
+}
+
+function loadOutcomes(doc) {
+    let settings = {};
+    try { settings = JSON.parse(doc.settings || '{}'); } catch {}
     const voteable = getAll(
         "SELECT * FROM variants WHERE document_id = ? AND status IN ('pending', 'conflict') AND is_hidden = 0",
-        [documentId]
+        [doc.id]
     );
-    const roots    = voteable.filter(v => v.parent_variant_id == null);
-    const children = voteable.filter(v => v.parent_variant_id != null);
-    const approvedIds = new Set();
+    return { voteable, ...decideOutcomes(voteable, settings.majority_threshold || 'simple') };
+}
 
-    for (const v of roots) {
-        if (v.final_yes == null && v.final_no == null) continue;
-        const threshold = v.majority_threshold || docDefaultThreshold;
-        const passed = passesThreshold(v.final_yes, v.final_no, v.final_abstain, threshold);
-        run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
-            [passed ? 'approved' : 'rejected', v.id]);
-        if (passed) approvedIds.add(v.id);
+// A document cannot be resolved while passing proposals overlap or voteable
+// proposals lack a tally. Returns the 422 body, or null when resolving is fine.
+function resolveBlocker(doc) {
+    const { voteable, untallied, overlaps } = loadOutcomes(doc);
+    const label = id => { const v = voteable.find(x => x.id === id); return `"${v.title || v.operation}"`; };
+    if (overlaps.length) {
+        const [a, b] = overlaps[0];
+        return {
+            error: `Cannot resolve: ${label(a)} and ${label(b)} overlap and both passed. Mark one as not voting, or go back to voting and make it a child of the other.`,
+            overlaps,
+        };
     }
-    for (const v of children) {
-        if (approvedIds.has(v.parent_variant_id)) {
-            run("UPDATE variants SET status = 'not_applicable', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [v.id]);
-        } else if (v.final_yes != null || v.final_no != null) {
-            const threshold = v.majority_threshold || docDefaultThreshold;
-            const passed = passesThreshold(v.final_yes, v.final_no, v.final_abstain, threshold);
-            run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
-                [passed ? 'approved' : 'rejected', v.id]);
-            if (passed) approvedIds.add(v.id);
-        }
+    if (untallied.length) {
+        const names = untallied.slice(0, 3).map(label).join(', ') + (untallied.length > 3 ? ', …' : '');
+        const fix = doc.status === 'voting'
+            ? 'Move the document to final voting to record tallies, or mark the proposals as not voting.'
+            : 'Record a tally or mark as not voting.';
+        return {
+            error: `Cannot resolve: ${untallied.length} proposal${untallied.length !== 1 ? 's have' : ' has'} no recorded tally (${names}). ${fix}`,
+            untallied,
+        };
     }
+    return null;
+}
 
-    const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [documentId]);
-    const originalText = lines.map(l => l.original_text).join('\n');
-    const approved = getAll("SELECT * FROM variants WHERE document_id = ? AND status = 'approved'", [documentId]);
-    const resolvedText = applyVariantsToText(originalText, approved);
-    const resolvedAt = new Date().toISOString();
+function resolveVariants(doc) {
+    const { outcomes } = loadOutcomes(doc);
+    for (const [id, status] of Object.entries(outcomes)) {
+        run("UPDATE variants SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, Number(id)]);
+    }
+    const approved = getAll("SELECT * FROM variants WHERE document_id = ? AND status = 'approved'", [doc.id]);
     run("UPDATE documents SET resolved_text = ?, resolved_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
-        [resolvedText, resolvedAt, documentId]);
+        [applyVariantsToText(originalText(doc.id), approved), new Date().toISOString(), doc.id]);
 }
 
 const VALID_TRANSITIONS = {
@@ -76,12 +94,9 @@ router.get('/', (req, res, next) => {
              FROM documents d
              JOIN users u ON u.id = d.owner_id
              LEFT JOIN user_document_access uda ON uda.document_id = d.id AND uda.user_id = ?
-             WHERE d.deleted_at IS NULL AND (
-                 d.owner_id = ?
-                 OR (uda.user_id IS NOT NULL AND uda.blocked = 0 AND (d.status != 'draft' OR uda.access_level IN ('editor', 'admin')))
-             )
+             WHERE d.id IN (${VISIBLE_DOCUMENT_IDS_SQL})
              ORDER BY d.updated_at DESC`,
-            [req.user.id, req.user.id, req.user.id]
+            [req.user.id, req.user.id, req.user.id, req.user.id]
         );
         res.json({ documents: docs });
     } catch (err) {
@@ -100,10 +115,15 @@ router.post('/', requireAuth, (req, res, next) => {
         if (text.length > maxChars) return res.status(400).json({ error: `Document too large (max ${maxChars} chars)` });
 
         const parsedSettings = (settings && typeof settings === 'object') ? settings : {};
-        const linesPerPage = parseInt(parsedSettings.lines_per_page || process.env.DEFAULT_LINES_PER_PAGE || '30');
+        const linesPerPage = Number(parsedSettings.lines_per_page ?? (process.env.DEFAULT_LINES_PER_PAGE || '30'));
+        if (!Number.isInteger(linesPerPage) || linesPerPage < 1) return res.status(400).json({ error: 'lines_per_page must be a positive whole number' });
         const lineItems = importText(text, linesPerPage);
         const totalLines = lineItems.length;
         const totalPages = Math.max(1, Math.ceil(totalLines / linesPerPage));
+        const maxPages = Math.min(parseInt(process.env.MAX_PAGES || '200'), 200);
+        if (totalPages > maxPages) {
+            return res.status(400).json({ error: `Document too long: ${totalPages} pages at ${linesPerPage} lines per page (max ${maxPages} pages)` });
+        }
 
         const insertLine = db.prepare(
             'INSERT INTO document_lines (document_id, page_num, line_num, original_text, char_offset_start, char_offset_end) VALUES (?, ?, ?, ?, ?, ?)'
@@ -225,6 +245,7 @@ router.post('/:id/status', requireAuth, requireDocumentAccess('supervisor'), (re
         }
 
         if (status === 'voting' && countdown_minutes !== undefined && parseInt(countdown_minutes) > 0) {
+            if (doc.status !== 'open') return res.status(400).json({ error: 'A voting countdown can only be scheduled on an open document' });
             const mins = parseInt(countdown_minutes);
             if (mins > 10080) return res.status(400).json({ error: 'Countdown cannot exceed 10080 minutes (14 days)' });
             const scheduledAt = new Date(Date.now() + mins * 60000).toISOString();
@@ -233,9 +254,16 @@ router.post('/:id/status', requireAuth, requireDocumentAccess('supervisor'), (re
             return res.json({ document: fullDoc() });
         }
 
-        run("UPDATE documents SET status = ?, voting_scheduled_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, doc.id]);
-        logActivity(req.user.id, doc.id, null, 'document_status_changed', { from: doc.status, to: status });
-        if (status === 'resolved') resolveVariants(doc.id);
+        if (status === 'resolved') {
+            const blocker = resolveBlocker(doc);
+            if (blocker) return res.status(422).json(blocker);
+        }
+
+        transaction(() => {
+            run("UPDATE documents SET status = ?, voting_scheduled_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [status, doc.id]);
+            logActivity(req.user.id, doc.id, null, 'document_status_changed', { from: doc.status, to: status });
+            if (status === 'resolved') resolveVariants(doc);
+        });
         res.json({ document: getOne('SELECT * FROM documents WHERE id = ?', [doc.id]) });
     } catch (err) {
         next(err);
@@ -250,7 +278,10 @@ router.delete('/:id', requireAuth, (req, res, next) => {
         if (doc.owner_id !== req.user.id && req.user.role !== 'superadmin') {
             return res.status(403).json({ error: 'Only the owner can delete this document' });
         }
-        run("UPDATE documents SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [doc.id]);
+        transaction(() => {
+            run("UPDATE documents SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [doc.id]);
+            logActivity(req.user.id, doc.id, null, 'document_deleted', { title: doc.title });
+        });
         res.status(204).send();
     } catch (err) {
         next(err);
@@ -284,8 +315,7 @@ router.get('/:id/text', (req, res, next) => {
         let settings = {};
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
         if (resolveAccessLevel(doc, settings, req) === null) return res.status(403).json({ error: 'Access denied' });
-        const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
-        res.json({ text: lines.map(l => l.original_text).join('\n') });
+        res.json({ text: originalText(doc.id) });
     } catch (err) {
         next(err);
     }
@@ -304,10 +334,9 @@ router.get('/:id/resolved-text', requireAuth, requireDocumentAccess('viewer'), (
             if (ACCESS_LEVELS.indexOf(req.userAccessLevel) < ACCESS_LEVELS.indexOf('supervisor')) {
                 return res.status(403).json({ error: 'Supervisor access required until the document is resolved' });
             }
-            const lines = getAll('SELECT original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
-            const originalText = lines.map(l => l.original_text).join('\n');
-            const approved = getAll("SELECT * FROM variants WHERE document_id = ? AND status = 'approved' AND is_hidden = 0", [doc.id]);
-            return res.json({ text: applyVariantsToText(originalText, approved), resolved_at: null, doc_vote_passed: null });
+            const { voteable, outcomes } = loadOutcomes(doc);
+            const approved = voteable.filter(v => outcomes[v.id] === 'approved');
+            return res.json({ text: applyVariantsToText(originalText(doc.id), approved), resolved_at: null, doc_vote_passed: null });
         }
         const docVotePassed = (doc.doc_vote_yes != null || doc.doc_vote_no != null)
             ? (doc.doc_vote_yes || 0) > (doc.doc_vote_no || 0)
@@ -391,6 +420,8 @@ router.post('/:id/copy-data', requireAuth, requireDocumentAccess('admin'), (req,
                     counts.comments++;
                 }
             }
+
+            logActivity(req.user.id, targetDoc.id, null, 'document_data_copied', { source_document_id: sourceDoc.id, ...counts });
         });
 
         res.json({ copied: counts });
@@ -413,7 +444,8 @@ router.get('/:id/variants', (req, res, next) => {
             `SELECT v.*, u.display_name as proposer_name, u.organization as proposer_org,
                 (SELECT MIN(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_start,
                 (SELECT MAX(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_end,
-                (SELECT COUNT(*) FROM comments c WHERE c.variant_id = v.id AND c.is_hidden = 0) as comment_count
+                (SELECT COUNT(*) FROM comments c WHERE c.variant_id = v.id AND c.is_hidden = 0) as comment_count,
+                (SELECT COUNT(*) FROM variants x WHERE x.document_id = v.document_id AND x.id <= v.id) as proposal_num
              FROM variants v JOIN users u ON u.id = v.proposed_by
              WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn'
              ORDER BY v.char_start ASC, v.created_at ASC`,
@@ -452,7 +484,7 @@ router.post('/:id/variants', requireAuth, requireDocumentAccess('proposer'), (re
             }
         }
 
-        if (char_start === undefined || char_end === undefined) return res.status(400).json({ error: 'char_start and char_end required' });
+        if (!Number.isInteger(char_start) || !Number.isInteger(char_end)) return res.status(400).json({ error: 'char_start and char_end must be whole numbers' });
         if (char_start < 0 || char_end < char_start) return res.status(400).json({ error: 'Invalid character range' });
         if (char_end > doc.total_chars) return res.status(400).json({ error: 'Range exceeds document length' });
 
@@ -490,7 +522,7 @@ router.post('/:id/variants', requireAuth, requireDocumentAccess('proposer'), (re
 router.get('/:id/moderation', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
     try {
         const hiddenVariants = getAll(
-            'SELECT v.*, u.display_name as proposer_name FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.document_id = ? AND v.is_hidden = 1 ORDER BY v.id',
+            'SELECT v.*, u.display_name as proposer_name, (SELECT COUNT(*) FROM variants x WHERE x.document_id = v.document_id AND x.id <= v.id) as proposal_num FROM variants v JOIN users u ON u.id = v.proposed_by WHERE v.document_id = ? AND v.is_hidden = 1 ORDER BY v.id',
             [req.params.id]
         );
         const hiddenComments = getAll(
@@ -514,11 +546,16 @@ router.get('/:id/activity', requireAuth, requireDocumentAccess('viewer'), (req, 
     try {
         const page = Math.max(1, parseInt(req.query.page || '1'));
         const limit = 20;
+        const full = meetsLevel(req.userAccessLevel, 'supervisor', req);
         const activity = getAll(
-            'SELECT al.*, u.display_name as user_name FROM activity_log al JOIN users u ON u.id = al.user_id WHERE al.document_id = ? ORDER BY al.created_at DESC LIMIT ? OFFSET ?',
-            [req.params.id, limit, (page - 1) * limit]
+            `SELECT al.*, u.display_name as user_name FROM activity_log al
+             JOIN users u ON u.id = al.user_id
+             LEFT JOIN variants hv ON hv.id = al.variant_id
+             WHERE al.document_id = ? AND (? = 1 OR hv.id IS NULL OR hv.is_hidden = 0)
+             ORDER BY al.created_at DESC LIMIT ? OFFSET ?`,
+            [req.params.id, full ? 1 : 0, limit, (page - 1) * limit]
         );
-        res.json({ activity, page });
+        res.json({ activity: full ? activity : redactActivity(activity), page });
     } catch (err) {
         next(err);
     }
@@ -555,6 +592,9 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (re
             const existing = getOne('SELECT id FROM user_document_access WHERE user_id = ? AND document_id = ?', [user.id, req.params.id]);
             if (existing) return res.status(403).json({ error: 'Admin access required to change existing access' });
         }
+        if (isNewUser && process.env.NODE_ENV !== 'test' && inviteLimited(req.user.id)) {
+            return res.status(429).json({ error: 'Too many invitations to new addresses. Try again in an hour.' });
+        }
         if (!user) {
             const r = run('INSERT INTO users (email, display_name) VALUES (?, ?)', [normalizedEmail, normalizedEmail.split('@')[0]]);
             user = getOne('SELECT * FROM users WHERE id = ?', [r.lastInsertRowid]);
@@ -571,15 +611,14 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (re
             const appUrl = process.env.VOTETEXT_URL || `${req.protocol}://${req.get('host')}`;
             const inviterName = req.user.display_name || req.user.email;
             const docTitle = req.document.title;
-            const from = `${process.env.MAIL_FROM_NAME || 'VoteText'} <${process.env.MAIL_FROM_ADDRESS || 'votetext@kjell.solutions'}>`;
-            const subject = `You have been invited to "${docTitle}" on VoteText`;
+            const subject = `You have been invited to "${docTitle.replace(/[\r\n]+/g, ' ')}" on VoteText`;
             const plainText =
                 `${inviterName} has invited you to participate in "${docTitle}" as a ${access_level}.\n\n` +
                 `Sign in with this email address (${normalizedEmail}) at:\n${appUrl}\n\n` +
                 `If you were not expecting this, you can safely ignore this email.`;
             const htmlBody =
-                `<p>${inviterName} has invited you to participate in <strong>${docTitle}</strong> as a <strong>${access_level}</strong>.</p>` +
-                `<p>Sign in with this email address (${normalizedEmail}) at:<br><a href="${appUrl}">${appUrl}</a></p>` +
+                `<p>${escapeHtml(inviterName)} has invited you to participate in <strong>${escapeHtml(docTitle)}</strong> as a <strong>${escapeHtml(access_level)}</strong>.</p>` +
+                `<p>Sign in with this email address (${escapeHtml(normalizedEmail)}) at:<br><a href="${escapeHtml(appUrl)}">${escapeHtml(appUrl)}</a></p>` +
                 `<p style="color:#6b7280;font-size:0.875em">If you were not expecting this, you can safely ignore this email.</p>`;
             if (process.env.NODE_ENV === 'test') {
                 console.warn(`[test] Invite email skipped — to=${normalizedEmail} role=${access_level}`);
@@ -587,18 +626,8 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (re
                 if (process.env.NODE_ENV !== 'production') {
                     console.debug(`[dev] Invite to=${normalizedEmail} role=${access_level} doc="${docTitle}"`);
                 }
-                console.log(`[invite] Sending to=${normalizedEmail} from="${from}" subject="${subject}" key=${process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.slice(0, 8) + '…' : 'MISSING'}`);
-                resend.emails.send({ from, to: normalizedEmail, subject, text: plainText, html: htmlBody })
-                    .then(({ data, error: sendError }) => {
-                        if (sendError) {
-                            console.warn('[invite] Resend error:', JSON.stringify(sendError));
-                        } else {
-                            console.log('[invite] Sent OK — id:', data && data.id);
-                        }
-                    })
-                    .catch(err => {
-                        console.warn('[invite] Send threw:', err.message || err);
-                    });
+                sendMail({ to: normalizedEmail, subject, text: plainText, html: htmlBody })
+                    .catch(err => console.warn('[invite] Send failed:', err.message || JSON.stringify(err)));
             }
         }
 
@@ -618,13 +647,18 @@ router.patch('/:id/access/:userId', requireAuth, requireDocumentAccess('admin'),
         const existing = getOne('SELECT * FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.params.userId, req.params.id]);
         if (!existing) return res.status(404).json({ error: 'Access record not found' });
 
-        run(
-            "UPDATE user_document_access SET access_level = ?, blocked = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE user_id = ? AND document_id = ?",
-            [access_level || existing.access_level, blocked !== undefined ? (blocked ? 1 : 0) : existing.blocked, req.params.userId, req.params.id]
-        );
+        transaction(() => {
+            run(
+                "UPDATE user_document_access SET access_level = ?, blocked = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE user_id = ? AND document_id = ?",
+                [access_level || existing.access_level, blocked !== undefined ? (blocked ? 1 : 0) : existing.blocked, req.params.userId, req.params.id]
+            );
 
-        if (blocked === true) logActivity(req.user.id, req.params.id, null, 'user_blocked', { user_id: req.params.userId });
-        else if (blocked === false) logActivity(req.user.id, req.params.id, null, 'user_unblocked', { user_id: req.params.userId });
+            if (access_level && access_level !== existing.access_level) {
+                logActivity(req.user.id, req.params.id, null, 'user_access_changed', { user_id: existing.user_id, from: existing.access_level, to: access_level });
+            }
+            if (blocked === true) logActivity(req.user.id, req.params.id, null, 'user_blocked', { user_id: req.params.userId });
+            else if (blocked === false) logActivity(req.user.id, req.params.id, null, 'user_unblocked', { user_id: req.params.userId });
+        });
 
         res.json({ message: 'Access updated' });
     } catch (err) {
@@ -662,7 +696,13 @@ router.patch('/:id/doc-vote', requireAuth, requireDocumentAccess('supervisor'), 
 // DELETE /api/documents/:id/access/:userId
 router.delete('/:id/access/:userId', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
     try {
-        run('DELETE FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.params.userId, req.params.id]);
+        const existing = getOne('SELECT user_id, access_level FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.params.userId, req.params.id]);
+        if (existing) {
+            transaction(() => {
+                run('DELETE FROM user_document_access WHERE user_id = ? AND document_id = ?', [existing.user_id, req.params.id]);
+                logActivity(req.user.id, req.params.id, null, 'user_access_removed', { user_id: existing.user_id, access_level: existing.access_level });
+            });
+        }
         res.status(204).send();
     } catch (err) {
         next(err);

@@ -71,8 +71,11 @@ async function viewLogin() {
             const data = await api('POST', '/auth/verify-otp', { email: document.getElementById('otp-email').textContent, code });
             state.user = data.user;
             updateHeader();
-            if (!state.user.display_name) { showProfileModal(() => { location.hash = '#/documents'; }); return; }
+            startSession();
+            // New accounts get the email prefix as their name — treat that as "not chosen yet"
+            const unset = !state.user.display_name || state.user.display_name === state.user.email.split('@')[0];
             location.hash = '#/documents';
+            if (unset) showProfileModal(() => {});
         } catch (err) {
             otpErr.textContent = err.message; otpErr.style.display = '';
             verifyBtn.disabled = false; verifyBtn.textContent = 'Verify';
@@ -82,6 +85,9 @@ async function viewLogin() {
     document.getElementById('back-btn').addEventListener('click', () => {
         document.getElementById('step-otp').style.display = 'none';
         document.getElementById('step-email').style.display = '';
+        sendBtn.disabled = false; sendBtn.textContent = 'Send code';
+        otpInput.value = ''; otpErr.style.display = 'none';
+        verifyBtn.disabled = false; verifyBtn.textContent = 'Verify';
         emailInput.focus();
     });
 }
