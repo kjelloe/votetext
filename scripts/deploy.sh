@@ -322,7 +322,7 @@ trap restore ERR
 if as_svc test -f "$DB"; then
     as_svc mkdir -p "$BACKUP_DIR"
     BACKUP="$BACKUP_DIR/votetext-predeploy-$(date +%Y%m%d-%H%M%S).db"
-    as_svc sqlite3 "$DB" ".backup '$BACKUP'"
+    as_svc sqlite3 "$DB" "VACUUM INTO '$BACKUP'"
     say "Database backed up to $BACKUP"
 fi
 

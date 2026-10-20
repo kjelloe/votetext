@@ -235,7 +235,7 @@ write_files:
   # ── nightly SQLite backup as the service user (03:00), 30-day retention ──
   - path: /etc/cron.d/votetext-backup
     content: |
-      0 3 * * * votetext sqlite3 /opt/votetext/data/votetext.db ".backup /opt/votetext/backups/votetext-$(date +\%F).db" && find /opt/votetext/backups -name 'votetext-20*.db' -mtime +30 -delete
+      0 3 * * * votetext sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/opt/votetext/backups/votetext-$(date +\%F).db'" && find /opt/votetext/backups -name 'votetext-20*.db' -mtime +30 -delete
 
   # ── offsite copy of the backups (04:00) — fill in and remove the leading # ──
   #   Hetzner Storage Box: enable SSH on the box, add the votetext user's public key

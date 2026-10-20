@@ -55,7 +55,7 @@ EOS
 if ! command -v sqlite3 >/dev/null; then
 cat > "$T/bin/sqlite3" <<EOS
 #!/usr/bin/env bash
-DEST=\$(printf '%s' "\$2" | sed -E "s/^\\.backup '(.*)'\$/\\1/")
+DEST=\$(printf '%s' "\$2" | sed -E "s/^VACUUM INTO '(.*)'\$/\\1/")
 exec node -e "const D=require('$ROOT/node_modules/better-sqlite3');const d=new D(process.argv[1]);d.backup(process.argv[2]).then(()=>d.close()).catch(e=>{console.error(e.message);process.exit(1)})" "\$1" "\$DEST"
 EOS
 fi

@@ -165,6 +165,18 @@ order. "You" = things only the owner can do; the rest can be prepared by Claude.
 
 ### A. Ship phases 1–3 (you)
 
+**Done 2026-10-20:** `efc032c` (main) deployed with `./scripts/deploy.sh --env`; fresh database
+(no earlier production data); certificate obtained; `client_max_body_size` set; `--check`:
+all public checks OK. Open from the audit: no backup cron on the VM (add
+`/etc/cron.d/votetext-backup` from the template and take one backup by hand), pending
+reboot, and the known simple-layout warnings (B.1, B.2). Browser smoke test (A.6) still to do.
+Server-side gotcha met: `~/.npm` was root-owned from old sudo installs — `chown` fixed it.
+Second gotcha: sqlite3 3.46.1's `.backup` dot-command fails with "cannot open" under
+`/home/kjelloe` (root-owned home, `/tmp` works); `VACUUM INTO` works. Deploy script, both
+templates and docs now use `VACUUM INTO` (2026-10-20) — the live cron line must be replaced
+to match, and the first manual backup was taken with it.
+
+
 1. Phases 1–3 are committed (f0e80c5, f4f7b5d). Still untracked and needed (2026-10-20):
    `.env.example`, `scripts/deploy.sh`, `.github/workflows/ci.yml`, `data/.gitkeep` —
    `git add` them with the staged changes; `tests/deploy.test.js` and CI fail without

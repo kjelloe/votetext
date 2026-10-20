@@ -137,7 +137,7 @@ write_files:
   # ── daily SQLite backup (runs at 03:00) ──────────────────────────────────
   - path: /etc/cron.d/votetext-backup
     content: |
-      0 3 * * * <DEPLOY_USER> mkdir -p /home/<DEPLOY_USER>/backups && sqlite3 /opt/votetext/data/votetext.db ".backup /home/<DEPLOY_USER>/backups/votetext-$(date +\%F).db" && find /home/<DEPLOY_USER>/backups -name '*.db' -mtime +30 -delete
+      0 3 * * * <DEPLOY_USER> mkdir -p /home/<DEPLOY_USER>/backups && sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups/votetext-$(date +\%F).db'" && find /home/<DEPLOY_USER>/backups -name '*.db' -mtime +30 -delete
 
 runcmd:
   # Node.js 22 LTS via NodeSource

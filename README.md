@@ -441,7 +441,7 @@ A daily cron job at 03:00 backs up the SQLite database to `~/backups/` on the se
 
 ```bash
 # Manual backup
-sqlite3 /opt/votetext/data/votetext.db ".backup ~/backups/votetext-$(date +%F).db"
+sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups/votetext-$(date +%F).db'"
 ```
 
 ---

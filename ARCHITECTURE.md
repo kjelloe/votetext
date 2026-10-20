@@ -450,7 +450,7 @@ nginx   → reverse proxy to 127.0.0.1:3000 (in production the app listens on lo
 certbot → TLS via Let's Encrypt
 ```
 
-SQLite backups via `sqlite3 data/votetext.db ".backup /backup/votetext-$(date +%F).db"` — safe with WAL mode active.
+SQLite backups via `sqlite3 data/votetext.db "VACUUM INTO '/backup/votetext-$(date +%F).db'"` — a consistent copy, safe with WAL mode active (the CLI's `.backup` dot-command failed on the production VM; `VACUUM INTO` is plain SQL). Restore with `.restore`.
 
 Two cloud-init templates exist: `cloud-init-example.yaml` (one account) and `cloud-init-hardened-example.yaml` (dedicated `votetext` service user with a locked-down unit, limited sudoers for the deploy account, admin account, unattended upgrades, nginx rate limit on `/api/auth/`, backups as the service user, offsite rsync stub). `scripts/deploy.sh` (settings from the gitignored `deploy.env`, see `deploy.env.example`) detects the service user from the unit and runs migrations and backups as that user; `./scripts/deploy.sh --check` audits the server (service user, sudo breadth, unit hardening, `.env` permissions and contents, data dir mode, backups and their age, nginx limits, certbot timer, unattended upgrades, pending reboot, ufw, fail2ban, SSH port, loopback bind, disk) and the public URL (health, security headers, TLS expiry, HTTP→HTTPS redirect).
 
