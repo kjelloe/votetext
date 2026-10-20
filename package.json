@@ -11,8 +11,9 @@
     "seed-demo": "node scripts/seed-demo.js",
     "clean-db": "rm -f data/votetext.db data/votetext.db-shm data/votetext.db-wal && npm run init-db",
     "migrate": "node scripts/migrate.js",
-    "test": "node --test tests/api.test.js tests/unit.test.js tests/frontend.test.js tests/migrate.test.js",
-    "test:e2e": "playwright test"
+    "test": "node --test tests/api.test.js tests/unit.test.js tests/frontend.test.js tests/migrate.test.js tests/deploy.test.js",
+    "test:e2e": "playwright test",
+    "test:deploy": "bash tests/deploy/run-local.sh"
   },
   "keywords": [
     "voting",

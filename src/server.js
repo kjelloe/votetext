@@ -80,9 +80,9 @@ if (require.main === module) {
     }
     purgeExpired();
     setInterval(() => { try { purgeExpired(); } catch (err) { console.error('purgeExpired failed:', err); } }, 24 * 3600000).unref();
-    app.listen(PORT, () => {
-        console.log(`VoteText running on http://localhost:${PORT}`);
-    });
+    const onListen = () => console.log(`VoteText running on http://localhost:${PORT}`);
+    if (process.env.NODE_ENV === 'production') app.listen(PORT, '127.0.0.1', onListen);
+    else app.listen(PORT, onListen);
 }
 
 module.exports = app;

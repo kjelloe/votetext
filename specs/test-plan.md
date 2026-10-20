@@ -515,6 +515,21 @@
 
 ---
 
+## Deploy tests
+
+> `tests/deploy.test.js` (6 tests, part of `npm test`) and `tests/deploy/run-local.sh` (`npm run test:deploy`, needs network, ~1 minute).
+
+| Scenario | Expected |
+|----------|----------|
+| `scripts/deploy.sh`, the wrapper and both templates' embedded `first-deploy.sh` | parse with `bash -n` (placeholders filled) |
+| Every `sudo …` the script runs | matches a `Cmnd_Alias` in the hardened sudoers; the deploy user may act as the service user |
+| Hardened unit | `User=votetext`, `ProtectSystem=strict`, `ReadWritePaths` = data + backups, `NoNewPrivileges`, no `MemoryDenyWriteExecute` |
+| Placeholders | every `<X>` in a template is explained in its header; `first-deploy.sh` no longer installs or creates the database |
+| `deploy.env.example` | lists every `DEPLOY_*` variable the script reads; `deploy.env` is gitignored |
+| Local run (`test:deploy`) | refused without `.env`; first deploy with `--env` healthy, `.env` 600; redeploy keeps data; forced start failure restores code and database; older ref deploys without migration; dry run changes nothing; `--check` runs; separate service user → `.env` 640 and backups under the app dir |
+
+---
+
 ## Playwright E2E Suite
 
 > Tests live in `tests/e2e/*.spec.js` (65 tests). Run with `npm run test:e2e`.

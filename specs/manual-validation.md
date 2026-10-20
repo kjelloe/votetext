@@ -116,12 +116,13 @@ Two browsers: the document owner and an invited voter.
 - [ ] Log in in the same tab → the unread badge and voting toasts work without a reload
 - [ ] An insert proposal: the final-voting card says "Inserted at character N — nothing removed"
 
-## Deploy (`ssh-deploy.sh`)
+## Deploy (`scripts/deploy.sh`)
 
-- [ ] `./ssh-deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing
-- [ ] `./ssh-deploy.sh` → tests run, confirmation prompt, service back within seconds, `https://<domain>/healthz` returns `{"ok":true}`
+- [ ] `./scripts/deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing
+- [ ] `./scripts/deploy.sh` → tests run, confirmation prompt, service back within seconds, `https://<domain>/healthz` returns `{"ok":true}`
 - [ ] `~/backups/votetext-predeploy-*.db` exists on the server after the deploy
 - [ ] Data created before the deploy is still there afterwards
+- [ ] After `~/first-deploy.sh`: `./scripts/deploy.sh --check` shows `nginx client_max_body_size set` (add `client_max_body_size 2m;` to the HTTPS server block and reload nginx if not); a 1.5 MB document imports without a 413
 - [ ] With `SIGNUP_MODE=invited`: an unknown address gets "Code sent" but no email; an invited address and an allowlisted address get a code
 
 ---

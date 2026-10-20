@@ -16,6 +16,7 @@ const path = require('path');
 // Initialise a fresh test database before loading any project module
 const Database = require('better-sqlite3');
 const DB_PATH = path.resolve('./data/test_votetext.db');
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
 const schema = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
 const initDb = new Database(DB_PATH);

@@ -1,6 +1,7 @@
 # Basic
 node_modules/*
 data/*
+!data/.gitkeep
 
 # Logs
 logs
@@ -74,9 +75,13 @@ web_modules/
 .env.*
 !.env.example
 
-# Private ops files — sanitised template is cloud-init-example.yaml
+# Private ops files — sanitised templates: cloud-init-example.yaml, cloud-init-hardened-example.yaml, deploy.env.example
 cloud-init.yaml
 ssh-*.sh
+deploy.env
+# symlink to the private ops repo (game-ops/votetext-ops) — the real files live there
+ops
+tests/deploy/.tmp/
 dev-prompts.md
 *.zip
 

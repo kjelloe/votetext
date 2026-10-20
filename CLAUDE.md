@@ -17,10 +17,12 @@ npm run seed      # seed sample users + document (prints browser session cookie)
 npm run seed-demo # tutorial-video demo data (four personas, four documents)
 npm run dev       # start with nodemon auto-reload → http://localhost:3000
 npm start         # production start
-npm test          # integration + unit + frontend-contract + migration tests (isolated DBs, no email needed)
+npm test          # integration + unit + frontend-contract + migration + deploy-contract tests (isolated DBs, no email needed)
 npm run test:e2e  # Playwright browser tests (Firefox, own server on port 3001)
+npm run test:deploy # scripts/deploy.sh against a local stand-in server (never touches the real server)
 npm run clean-db  # drop and reinitialise the database
-./ssh-deploy.sh   # deploy the committed HEAD to production — only when the owner asks
+./scripts/deploy.sh   # deploy the committed HEAD to production — only when the owner asks (settings in deploy.env)
+./scripts/deploy.sh --check  # read-only hardening audit of the server — also only when asked (it connects to production)
 ```
 
 Open work, decisions and their order live in `plan-update.md`.
@@ -142,7 +144,7 @@ Any transition to `resolved` goes through `resolveBlocker()` in `documents.js`: 
 
 ## Testing
 
-`npm test` runs four files under `node:test` (no extra deps): `tests/api.test.js` (integration, groups A–AB — see `specs/test-plan.md`), `tests/unit.test.js` (pure helpers in `src/lib/text.js`), `tests/frontend.test.js` (cross-file contracts in `public/`) and `tests/migrate.test.js` (upgrades databases built from the historical schemas in `tests/fixtures/` — never edit those). Browser tests are in `tests/e2e/` (`npm run test:e2e`). Key conventions:
+`npm test` runs five files under `node:test` (no extra deps): `tests/api.test.js` (integration, groups A–AB — see `specs/test-plan.md`), `tests/unit.test.js` (pure helpers in `src/lib/text.js`), `tests/frontend.test.js` (cross-file contracts in `public/`) `tests/migrate.test.js` (upgrades databases built from the historical schemas in `tests/fixtures/` — never edit those) and `tests/deploy.test.js` (every `sudo` in `scripts/deploy.sh` must be allowed by the hardened sudoers; the cloud-init templates' embedded scripts must parse). Browser tests are in `tests/e2e/` (`npm run test:e2e`). Key conventions:
 
 - **Never mock the database** — tests run against a real (ephemeral) SQLite file.
 - OTPs are retrieved directly from the test DB (`db.prepare(...).get()`), so SMTP is not required.

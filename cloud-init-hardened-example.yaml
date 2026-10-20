@@ -1,0 +1,277 @@
+#cloud-config
+
+# =============================================================================
+# VoteText — Hetzner cloud-init, HARDENED variant (CX23 or similar)
+# =============================================================================
+# Same bring-up as cloud-init-example.yaml, with these differences:
+#
+#   • The app runs as a dedicated system user `votetext` (nologin, no sudo) under a
+#     locked-down systemd unit (read-only filesystem except data/ and backups/,
+#     no new privileges, private /tmp, loopback bind only).
+#   • <DEPLOY_USER> has NO general sudo: only `sudo -u votetext …` (for database
+#     work and backups) and the exact systemctl / journalctl / nginx / certbot
+#     commands the deploy script and first-deploy.sh need (/etc/sudoers.d/votetext).
+#   • <ADMIN_USER> is a separate account with full sudo for administering the VM.
+#     Give it its own SSH key; if the deploy key ever leaks, the box is not root.
+#   • Unattended security upgrades with an automatic reboot window at 04:30.
+#   • nginx: 2 MB body limit (matches the app), a rate limit on /api/auth/ as a
+#     second layer in front of the app's own limits.
+#   • Nightly SQLite backup as the service user into /opt/votetext/backups, plus a
+#     commented-out offsite rsync to a Hetzner Storage Box (fill in and enable).
+#
+# To use it:
+#   1. Copy to cloud-init.yaml (gitignored — keep your filled-in copy private)
+#   2. Replace every <PLACEHOLDER>:
+#        <DEPLOY_USER>             — account the deploy script logs in as
+#        <DEPLOY_PUBLIC_SSH_KEY>   — its key: cat ~/.ssh/id_ed25519_deploy.pub
+#        <ADMIN_USER>              — your admin account (full sudo)
+#        <ADMIN_PUBLIC_SSH_KEY>    — its key (a different one, ideally)
+#        <YOUR_DOMAIN>             — e.g. votetext.example.com
+#        <YOUR_EMAIL>              — Let's Encrypt registration email
+#   3. Paste into the Hetzner console when creating the server
+#
+# After the server has rebooted:
+#   1. Point DNS:       A record for <YOUR_DOMAIN> → <ip>
+#   2. From your laptop, in the repo:   ./scripts/deploy.sh --env
+#      → uploads the committed code and .env.prod (as .env, mode 640 deploy:votetext),
+#        installs dependencies, creates the database as `votetext`, starts the service
+#      → .env.prod must contain SESSION_SECRET and RESEND_API_KEY and no NODE_ENV
+#   3. On the server (ssh -p 2222 <DEPLOY_USER>@<ip>):   ~/first-deploy.sh
+#      → enables the service at boot and obtains the TLS certificate
+#   4. ./scripts/deploy.sh --check   — the audit should be all OK except the offsite
+#      backup until you enable it
+#
+# Every later update is just:  ./scripts/deploy.sh
+# =============================================================================
+
+users:
+  # Service account — owns the database, runs the app, cannot log in
+  - name: votetext
+    system: true
+    shell: /usr/sbin/nologin
+    lock_passwd: true
+    no_create_home: true
+    homedir: /opt/votetext
+
+  # Deploy account — limited sudo (see /etc/sudoers.d/votetext below), member of the service group
+  - name: <DEPLOY_USER>
+    groups: users, votetext
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - <DEPLOY_PUBLIC_SSH_KEY>
+
+  # Admin account — full sudo for running the VM
+  - name: <ADMIN_USER>
+    groups: users, admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - <ADMIN_PUBLIC_SSH_KEY>
+
+packages:
+  - fail2ban
+  - ufw
+  - nginx
+  - certbot
+  - python3-certbot-nginx
+  - sqlite3
+  - unattended-upgrades
+  - rsync
+package_update: true
+package_upgrade: true
+
+write_files:
+
+  # ── SSH hardening ────────────────────────────────────────────────────────
+  - path: /etc/ssh/sshd_config.d/ssh-hardening.conf
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      Port 2222
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      MaxAuthTries 2
+      AllowTcpForwarding no
+      X11Forwarding no
+      AllowAgentForwarding no
+      AuthorizedKeysFile .ssh/authorized_keys
+      AllowUsers <DEPLOY_USER> <ADMIN_USER>
+
+  # ── sudo for the deploy account: exactly what the deploy script needs ────
+  - path: /etc/sudoers.d/votetext
+    permissions: '0440'
+    content: |
+      Cmnd_Alias VOTETEXT_SVC = /usr/bin/systemctl start votetext, /usr/bin/systemctl stop votetext, /usr/bin/systemctl restart votetext, /usr/bin/systemctl enable --now votetext, /usr/bin/systemctl daemon-reload, /usr/bin/journalctl -u votetext *
+      Cmnd_Alias VOTETEXT_WEB = /usr/sbin/nginx -t, /usr/bin/systemctl reload nginx, /usr/bin/certbot *, /usr/sbin/ufw status
+      <DEPLOY_USER> ALL=(root) NOPASSWD: VOTETEXT_SVC, VOTETEXT_WEB
+      <DEPLOY_USER> ALL=(votetext) NOPASSWD: ALL
+
+  # ── unattended security upgrades, reboot at 04:30 if needed ─────────────
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+  - path: /etc/apt/apt.conf.d/52votetext-unattended
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+  # ── nginx — rate-limit zone (http context) ───────────────────────────────
+  - path: /etc/nginx/conf.d/votetext-ratelimit.conf
+    content: |
+      limit_req_zone $binary_remote_addr zone=votetext_auth:1m rate=30r/m;
+
+  # ── nginx site — HTTP only; certbot adds the HTTPS block ─────────────────
+  - path: /etc/nginx/sites-available/votetext
+    content: |
+      server {
+          listen 80;
+          server_name <YOUR_DOMAIN>;
+          server_tokens off;
+
+          # matches express.json({ limit: '2mb' }) — nginx defaults to 1m
+          client_max_body_size 2m;
+
+          # second layer in front of the app's own per-address sign-in limits
+          location /api/auth/ {
+              limit_req zone=votetext_auth burst=20 nodelay;
+              proxy_pass         http://127.0.0.1:3000;
+              proxy_http_version 1.1;
+              proxy_set_header   Host              $host;
+              proxy_set_header   X-Real-IP         $remote_addr;
+              proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+              proxy_set_header   X-Forwarded-Proto $scheme;
+          }
+
+          location / {
+              proxy_pass         http://127.0.0.1:3000;
+              proxy_http_version 1.1;
+              proxy_set_header   Host              $host;
+              proxy_set_header   X-Real-IP         $remote_addr;
+              proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+              proxy_set_header   X-Forwarded-Proto $scheme;
+          }
+      }
+
+  # ── systemd unit — dedicated user, locked down ───────────────────────────
+  - path: /etc/systemd/system/votetext.service
+    content: |
+      [Unit]
+      Description=VoteText
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=votetext
+      Group=votetext
+      WorkingDirectory=/opt/votetext
+      Environment=NODE_ENV=production
+      EnvironmentFile=/opt/votetext/.env
+      ExecStart=/usr/bin/node src/server.js
+      Restart=on-failure
+      RestartSec=5
+      StandardOutput=journal
+      StandardError=journal
+      UMask=0027
+
+      # Hardening: the process may only write under data/ and backups/
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ReadWritePaths=/opt/votetext/data /opt/votetext/backups
+      ProtectHome=true
+      PrivateTmp=true
+      PrivateDevices=true
+      ProtectKernelTunables=true
+      ProtectKernelModules=true
+      ProtectControlGroups=true
+      RestrictSUIDSGID=true
+      RestrictRealtime=true
+      LockPersonality=true
+      RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+      SystemCallArchitectures=native
+      CapabilityBoundingSet=
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # ── first-deploy helper — run once after the first ./scripts/deploy.sh --env ──
+  - path: /home/<DEPLOY_USER>/first-deploy.sh
+    owner: <DEPLOY_USER>:<DEPLOY_USER>
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+
+      APP=/opt/votetext
+
+      if [ ! -f "$APP/.deployed-version" ]; then
+          echo "Nothing deployed yet — run ./scripts/deploy.sh --env from your laptop first"
+          exit 1
+      fi
+
+      echo "==> Enabling service at boot"
+      sudo /usr/bin/systemctl daemon-reload
+      sudo /usr/bin/systemctl enable --now votetext
+
+      echo "==> Obtaining TLS certificate"
+      sudo /usr/bin/certbot --nginx \
+        -d <YOUR_DOMAIN> \
+        --non-interactive \
+        --agree-tos \
+        --redirect \
+        -m <YOUR_EMAIL>
+
+      sudo /usr/sbin/nginx -t && sudo /usr/bin/systemctl reload nginx
+
+      echo ""
+      echo "VoteText is live at https://<YOUR_DOMAIN>"
+      echo "Logs: sudo journalctl -u votetext -f"
+      echo "Audit from your laptop: ./scripts/deploy.sh --check"
+
+  # ── nightly SQLite backup as the service user (03:00), 30-day retention ──
+  - path: /etc/cron.d/votetext-backup
+    content: |
+      0 3 * * * votetext sqlite3 /opt/votetext/data/votetext.db ".backup /opt/votetext/backups/votetext-$(date +\%F).db" && find /opt/votetext/backups -name 'votetext-20*.db' -mtime +30 -delete
+
+  # ── offsite copy of the backups (04:00) — fill in and remove the leading # ──
+  #   Hetzner Storage Box: enable SSH on the box, add the votetext user's public key
+  #   (sudo -u votetext ssh-keygen -t ed25519; home is /opt/votetext) to the box.
+  - path: /etc/cron.d/votetext-offsite
+    content: |
+      # 0 4 * * * votetext rsync -a --delete -e 'ssh -p 23 -o StrictHostKeyChecking=accept-new' /opt/votetext/backups/ <STORAGE_BOX_USER>@<STORAGE_BOX_USER>.your-storagebox.de:votetext-backups/
+
+runcmd:
+  # Node.js 22 LTS via NodeSource
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+
+  # App directory: code is owned by the deploy account and readable by the service;
+  # data/ and backups/ are owned by the service account (setgid so the group sticks)
+  - install -d -o <DEPLOY_USER> -g votetext -m 2755 /opt/votetext
+  - install -d -o votetext -g votetext -m 2770 /opt/votetext/data /opt/votetext/backups
+
+  # fail2ban — SSH brute-force protection
+  - printf "[sshd]\nenabled = true\nport = ssh, 2222\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local
+  - systemctl enable fail2ban
+
+  # Firewall
+  - ufw allow 2222/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+
+  # nginx — activate votetext site, remove default placeholder
+  - ln -s /etc/nginx/sites-available/votetext /etc/nginx/sites-enabled/votetext
+  - rm -f /etc/nginx/sites-enabled/default
+  - systemctl enable nginx
+
+  # Unattended upgrades on, new systemd unit registered
+  - systemctl enable unattended-upgrades
+  - systemctl daemon-reload
+
+  # Reboot: applies kernel updates, new SSH config, starts fail2ban
+  - reboot

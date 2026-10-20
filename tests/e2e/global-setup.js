@@ -79,6 +79,7 @@ module.exports = async function globalSetup() {
     db.close();
 
     fs.mkdirSync(AUTH_DIR, { recursive: true });
+    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
     // 2. Start server with the e2e DB
     const server = spawn('node', ['src/server.js'], {

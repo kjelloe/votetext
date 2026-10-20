@@ -253,7 +253,7 @@ Routes are grouped by resource and mounted in `server.js`:
 /api/comments/*    → src/routes/comments.js   (PATCH edit — author, window + reply-grace, sets edited_at; DELETE; POST /:id/hide, /:id/unhide — moderation, supervisor+)
 /api/activity      → src/routes/activity.js
 /api/users/*       → src/routes/users.js      (superadmin only: GET / list, PATCH /:id/protection)
-/healthz           → src/server.js            (200 { ok: true } after a DB round-trip; used by ssh-deploy.sh)
+/healthz           → src/server.js            (200 { ok: true } after a DB round-trip; used by scripts/deploy.sh)
 ```
 
 Unknown `/api/*` paths return a JSON 404 rather than the SPA shell.
@@ -446,11 +446,13 @@ Designed for a single Hetzner cx23 (2 vCPU, 4 GB RAM, €4.51/month).
 
 ```
 systemd → node src/server.js
-nginx   → reverse proxy to 127.0.0.1:3000
+nginx   → reverse proxy to 127.0.0.1:3000 (in production the app listens on loopback only)
 certbot → TLS via Let's Encrypt
 ```
 
 SQLite backups via `sqlite3 data/votetext.db ".backup /backup/votetext-$(date +%F).db"` — safe with WAL mode active.
+
+Two cloud-init templates exist: `cloud-init-example.yaml` (one account) and `cloud-init-hardened-example.yaml` (dedicated `votetext` service user with a locked-down unit, limited sudoers for the deploy account, admin account, unattended upgrades, nginx rate limit on `/api/auth/`, backups as the service user, offsite rsync stub). `scripts/deploy.sh` (settings from the gitignored `deploy.env`, see `deploy.env.example`) detects the service user from the unit and runs migrations and backups as that user; `./scripts/deploy.sh --check` audits the server (service user, sudo breadth, unit hardening, `.env` permissions and contents, data dir mode, backups and their age, nginx limits, certbot timer, unattended upgrades, pending reboot, ufw, fail2ban, SSH port, loopback bind, disk) and the public URL (health, security headers, TLS expiry, HTTP→HTTPS redirect).
 
 Email is sent via the **Resend SDK** (`resend` npm package, CJS-compatible — loaded with `require('resend')`). Configure `RESEND_API_KEY`, `MAIL_FROM_ADDRESS`, and `MAIL_FROM_NAME` in `.env`. Domain `kjell.solutions` is verified in Resend (eu-west-1).
 
@@ -685,6 +687,6 @@ npm run init-db   # (re)create database from schema
 npm run seed      # seed dev data + print session cookie for browser login
 ```
 
-`npm test` runs four files under Node's built-in `node:test` runner (each in its own process, no extra framework): `tests/api.test.js` (integration — spins up Express on port 3099 against an ephemeral `data/test_votetext.db`, deleted after each run; OTPs read directly from the test DB to avoid SMTP), `tests/unit.test.js` (pure helpers in `src/lib/text.js` — resolve-merge and threshold boundary maths), `tests/frontend.test.js` (cross-file JS contracts: script load order, duplicate/missing function declarations, router dispatch targets, `passesThreshold` backend↔frontend sync), and `tests/migrate.test.js` (runs `scripts/migrate.js` against databases built from historical schema snapshots — see Migrations above). Note the frontend contract scanner is regex-based: it only recognises `function` declarations (not const arrows) and flags `word(`-shaped text even inside comments.
+`npm test` runs four files under Node's built-in `node:test` runner (each in its own process, no extra framework): `tests/api.test.js` (integration — spins up Express on port 3099 against an ephemeral `data/test_votetext.db`, deleted after each run; OTPs read directly from the test DB to avoid SMTP), `tests/unit.test.js` (pure helpers in `src/lib/text.js` — resolve-merge and threshold boundary maths), `tests/frontend.test.js` (cross-file JS contracts: script load order, duplicate/missing function declarations, router dispatch targets, `passesThreshold` backend↔frontend sync), and `tests/migrate.test.js` (runs `scripts/migrate.js` against databases built from historical schema snapshots — see Migrations above), and `tests/deploy.test.js` (contracts between `scripts/deploy.sh` and the cloud-init templates). `npm run test:deploy` runs the deploy script end to end against a local stand-in server (stand-in `ssh`/`sudo`/`systemctl` on `PATH`, app really started and stopped) — it needs network for `npm ci` and is not part of `npm test`. `.github/workflows/ci.yml` runs `npm test` and then the Playwright suite on every push. Note the frontend contract scanner is regex-based: it only recognises `function` declarations (not const arrows) and flags `word(`-shaped text even inside comments.
 
 E2E tests (`tests/e2e/*.spec.js`) run under `@playwright/test` (the only extra dev dependency) against Firefox. `global-setup.js` owns the server lifecycle: it creates `data/e2e_votetext.db` from `schema.sql` **before** spawning `src/server.js` on port 3001 (db.js opens the SQLite file at module load, so Playwright's built-in `webServer` cannot be used), logs in the fixture users via the OTP flow, and stores their session cookies as Playwright `storageState` files under `tests/e2e/.auth/`. `global-teardown.js` kills the server via its PID file and deletes the DB. Specs create their own documents through the API (`tests/e2e/helpers.js`), so files stay order-independent. A test-only endpoint `GET /api/auth/test-otp` (registered only when `NODE_ENV === 'test'`) exposes the latest OTP for browser-driven login flows. Coverage maps to the user stories in `specs/user-stories.md` — see the Playwright section of `specs/test-plan.md`.

@@ -279,7 +279,7 @@ All variables are optional in development. Production requires `SESSION_SECRET` 
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORT` | `3000` | HTTP listen port |
+| `PORT` | `3000` | HTTP listen port (bound to 127.0.0.1 when `NODE_ENV=production`; nginx proxies to it) |
 | `NODE_ENV` | `development` | `production` / `development` / `test` — controls email behaviour and cookie flags |
 | `DATABASE_PATH` | `./data/votetext.db` | SQLite file location |
 | `SESSION_LIFETIME_HOURS` | `72` | Session cookie/token lifetime |
@@ -318,12 +318,16 @@ votetext/
 ├── .env                    # Dev environment (gitignored)
 ├── .env.prod               # Production environment template (gitignored)
 ├── .gitignore
-├── cloud-init-example.yaml # Hetzner provisioning template (copy to cloud-init.yaml, gitignored)
+├── cloud-init-example.yaml          # Hetzner provisioning template, simple layout (copy to cloud-init.yaml, gitignored)
+├── cloud-init-hardened-example.yaml # Hetzner provisioning template, hardened layout (recommended)
+├── deploy.env.example      # Server settings for scripts/deploy.sh (copy to deploy.env, gitignored)
+├── .github/workflows/ci.yml # GitHub Actions: npm test, then Playwright
 ├── data/                   # SQLite database (gitignored)
 │   └── votetext.db
 ├── scripts/
 │   ├── init-db.js          # Create database from schema.sql
 │   ├── migrate.js          # Bring an existing database in line with schema.sql (idempotent, one transaction)
+│   ├── deploy.sh           # Deploy over SSH: tests, upload, backup, migrate, health check, restore; --check audits the server
 │   ├── seed.js             # Optional: seed with sample data
 │   └── seed-demo.js        # Tutorial-video demo data (four personas, four lifecycle stages)
 ├── src/
@@ -352,6 +356,8 @@ votetext/
 │   ├── unit.test.js        # Unit tests for src/lib/text.js
 │   ├── frontend.test.js    # Cross-file JS contracts + threshold sync check
 │   ├── migrate.test.js     # Upgrades databases built from historical schemas (tests/fixtures/)
+│   ├── deploy.test.js      # Contracts between deploy.sh and the cloud-init templates (sudoers, unit, placeholders)
+│   ├── deploy/run-local.sh # End-to-end run of deploy.sh against a stand-in server (npm run test:deploy)
 │   └── e2e/                # Playwright browser tests (own server + isolated DB)
 └── public/
     ├── index.html          # Single-page application shell
@@ -369,8 +375,9 @@ votetext/
 npm run dev
 
 # Run tests
-npm test              # API integration + unit + frontend-contract + migration tests (isolated DBs, no email needed)
+npm test              # API integration + unit + frontend-contract + migration + deploy-contract tests (isolated DBs, no email needed)
 npm run test:e2e      # Playwright browser tests (first time: sudo npx playwright install-deps)
+npm run test:deploy   # deploy script against a local stand-in server (tests/deploy/run-local.sh)
 
 # Reset database
 npm run clean-db
@@ -390,30 +397,42 @@ No email account is needed for local development. In `development` mode, the OTP
 
 The application is designed to run on a single Hetzner CX23 VPS (2 vCPU, 4 GB RAM, ~€4.5/month).
 
-Server provisioning is templated in [`cloud-init-example.yaml`](./cloud-init-example.yaml) — copy it to `cloud-init.yaml` (gitignored), fill in the `<PLACEHOLDER>` values (deploy user, SSH key, domain, email), and paste it into the Hetzner console when creating the server. It installs Node.js 22 LTS, nginx, certbot, fail2ban, ufw, and configures the systemd service automatically.
+Server provisioning is templated in two variants — copy one to `cloud-init.yaml` (gitignored), fill in the `<PLACEHOLDER>` values, and paste it into the Hetzner console when creating the server. Both install Node.js 22 LTS, nginx, certbot, fail2ban and ufw and configure the systemd service.
+
+- [`cloud-init-example.yaml`](./cloud-init-example.yaml) — the simple layout: one account deploys and runs the app.
+- [`cloud-init-hardened-example.yaml`](./cloud-init-hardened-example.yaml) — recommended for a public server: the app runs as a dedicated `votetext` system user under a locked-down unit (read-only filesystem except `data/` and `backups/`, no new privileges), the deploy account has sudo only for the exact service commands, a separate admin account holds full sudo, unattended security upgrades, an nginx rate limit on `/api/auth/`, nightly backups as the service user and a ready-to-enable offsite rsync.
+
+`scripts/deploy.sh` works with either layout: it reads the service user from the systemd unit and runs database work and backups as that user.
 
 #### Deploying
 
-Deploys are done with `ssh-deploy.sh` (gitignored — it holds the host name). It ships only committed files (`src/`, `public/`, `scripts/`, `schema.sql`, `package*.json`) and never touches `data/`.
+Deploys are done with `scripts/deploy.sh`; the server settings live in `deploy.env` (gitignored — copy `deploy.env.example`). `ssh-deploy.sh` in the repo root is an optional gitignored one-line wrapper. It ships only committed files (`src/`, `public/`, `scripts/`, `schema.sql`, `package*.json`) and never touches `data/`.
 
 ```bash
-./ssh-deploy.sh              # run tests, then deploy HEAD
-./ssh-deploy.sh --dry-run    # show what would be deployed and what is live now
-./ssh-deploy.sh <ref>        # deploy another commit or tag — also how you roll back
-./ssh-deploy.sh --env        # also upload .env.prod as the server .env
+./scripts/deploy.sh              # run tests, then deploy HEAD
+./scripts/deploy.sh --dry-run    # show what would be deployed and what is live now
+./scripts/deploy.sh <ref>        # deploy another commit or tag — also how you roll back
+./scripts/deploy.sh --env        # also upload .env.prod as the server .env
+./scripts/deploy.sh --check      # hardening audit: service user, sudo, permissions, backups, TLS, updates, firewall
+npm run test:deploy          # exercises the script end to end against a local stand-in server (needs network)
 ```
 
-On the server it installs dependencies (only when `package-lock.json` changed), stops the service, backs up the database to `~/backups/votetext-predeploy-*.db`, swaps the code, runs `scripts/migrate.js` (or `init-db.js` on an empty server), starts the service and polls `GET /healthz`. If that health check fails, the previous code, `.env` and database are restored and the old version is started again.
+On the server it installs dependencies (only when `package-lock.json` changed), stops the service, backs up the database to `~/backups/votetext-predeploy-*.db` (`/opt/votetext/backups/` with a service user), swaps the code, runs `scripts/migrate.js` (or `init-db.js` on an empty server), starts the service and polls `GET /healthz`. If that health check fails, the previous code, `.env` and database are restored and the old version is started again.
 
 #### First deploy (after server boot)
 
 ```bash
 # 1. Point the DNS A record to the server IP
 # 2. From your laptop — .env.prod must contain SESSION_SECRET and no NODE_ENV
-./ssh-deploy.sh --env
+./scripts/deploy.sh --env
 # 3. On the server: enable the service at boot and obtain the TLS certificate
 ssh -p 2222 <DEPLOY_USER>@<YOUR_DOMAIN>
 ~/first-deploy.sh
+# 4. Servers created before the templates carried it: add `client_max_body_size 2m;` to the
+#    HTTPS server block in /etc/nginx/sites-available/votetext, then
+sudo nginx -t && sudo systemctl reload nginx
+# 5. From your laptop: audit — every line should be OK
+./scripts/deploy.sh --check
 ```
 
 #### Backups

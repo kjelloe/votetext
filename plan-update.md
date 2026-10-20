@@ -7,8 +7,8 @@ with no UI, and a tutorial script describing behaviour the app does not have. Ph
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status: **323 node tests** green (273 API + 30 unit + 12 frontend contract +
-8 migration) and **65 Playwright e2e tests** green, run on the final state.
+Test status: **329 node tests** green (273 API + 30 unit + 12 frontend contract +
+8 migration + 6 deploy contract) and **65 Playwright e2e tests** green, run on the final state.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
 **L** a day or more.
@@ -129,9 +129,25 @@ resolve test is now self-contained and asserts the status response.
 Noted, not changed: Delete, Copy and Withdraw are owner-only in the UI although the API
 also allows superadmin / any document admin.
 
+### Deploy tooling round (2026-10-03)
+
+- `scripts/deploy.sh` tracked (Q9), settings in gitignored `deploy.env` with a tracked
+  `deploy.env.example`; `ssh-deploy.sh` is a one-line wrapper. `--check` hardening audit.
+  Service-user support for the hardened layout.
+- `cloud-init-hardened-example.yaml` next to the simple template.
+- `tests/deploy.test.js` (6 contract tests in `npm test`): every `sudo` in the script is
+  allowed by the hardened sudoers, embedded scripts parse, placeholders documented,
+  unit hardening lines present, `deploy.env.example` complete.
+- `npm run test:deploy`: the local stand-in harness, now in the repo
+  (`tests/deploy/run-local.sh`, eight scenarios, all passing).
+- `.github/workflows/ci.yml` (B.3): `npm test`, then Playwright.
+- Omission found and fixed: `data/` is gitignored, so on a fresh checkout (CI) the test
+  suites could not open their databases — tests now create the directory and
+  `data/.gitkeep` is tracked.
+
 ### Deploy and docs
 
-- `ssh-deploy.sh`: committed files only, tests first, refuses a dirty tree, backup,
+- `scripts/deploy.sh`: committed files only, tests first, refuses a dirty tree, backup,
   migrate, `/healthz` check, automatic restore; deploying a commit older than the live
   one skips the migration; `--no-migrate` flag. Exercised end to end against a local
   stand-in server; **never run against the live server**.
@@ -142,38 +158,79 @@ also allows superadmin / any document admin.
 
 ---
 
-## To ship phases 1–3
+## Before launch
 
-1. Review and commit. Before committing, untrack the test artifacts (they are now in
-   `.gitignore`): `git rm -r --cached playwright-report tests/e2e/.auth`.
-2. `./ssh-deploy.sh --dry-run`, then `./ssh-deploy.sh`. This deploy rebuilds several
+Everything that must happen between now and declaring the public server open, in
+order. "You" = things only the owner can do; the rest can be prepared by Claude.
+
+### A. Ship phases 1–3 (you)
+
+1. Phases 1–3 are committed (f0e80c5, f4f7b5d). Still untracked and needed (2026-10-20):
+   `.env.example`, `scripts/deploy.sh`, `.github/workflows/ci.yml`, `data/.gitkeep` —
+   `git add` them with the staged changes; `tests/deploy.test.js` and CI fail without
+   `scripts/deploy.sh`. Also commit `src/server.js` (loopback bind). `npm audit fix` is done (0 vulnerabilities). Readiness check
+   2026-10-20: 329 node tests, 8 harness scenarios, 65 e2e all green (local Node is now 22 —
+   `npm rebuild better-sqlite3` was needed once). Deploy from `main` after merging `dev`
+   so the SHA in `.deployed-version` is on the main branch.
+2. `./scripts/deploy.sh --dry-run`, then `./scripts/deploy.sh --env`. The first deploy rebuilds several
    tables on the live database to match `schema.sql`; the script backs the database up
-   first and restores it if the health check fails. The script lists files earlier
-   rsync deploys left in `/opt/votetext` — review and remove them by hand.
-3. On the server, add `client_max_body_size 2m;` to the nginx site by hand (certbot has
-   edited that file), `nginx -t`, reload.
-4. To restrict sign-in, add `SIGNUP_MODE=invited` and
-   `SIGNUP_ALLOWLIST=<your email or @domain>` to `.env.prod` and deploy with `--env`.
-5. `RATE_LIMIT_MAX` and `RATE_LIMIT_WINDOW_MS` in `.env` / `.env.prod` are now read
-   (100 sign-in requests per minute per address with your current values). Remove
-   `LOG_LEVEL`, `ACTIVITY_REFRESH_INTERVAL` and `OTP_LOCKOUT_MINUTES` — nothing reads them.
+   to `~/backups/votetext-predeploy-*.db` first and restores it if the health check fails.
+   There is no production data to preserve (owner, 2026-10-20): whatever database is on
+   the server is migrated or, if none, created with `init-db.js` — either way nothing to
+   rehearse.
+3. Remove the files the script lists as left over from earlier rsync deploys in
+   `/opt/votetext` (`.git`, `archive/` with its key files, the zip, tests).
+4. **After `~/first-deploy.sh`, on the server** (only if the VM predates the current template —
+   both templates now ship the line): add `client_max_body_size 2m;` inside the `server {}`
+   block of `/etc/nginx/sites-available/votetext` (certbot has split it into an HTTPS and a
+   redirect block by then — put it in the HTTPS one), then `sudo nginx -t && sudo systemctl
+   reload nginx`. Without it nginx rejects uploads above 1 MB with 413 before the app sees
+   them. `./scripts/deploy.sh --check` reports `nginx client_max_body_size set` once done.
+5. `.env.prod` — done 2026-10-20: unread keys removed, header points at
+   `./scripts/deploy.sh --env`, `SIGNUP_MODE=open` (C.3 decided), `RATE_LIMIT_MAX=100` /
+   `RATE_LIMIT_WINDOW_MS=60000` kept. The first deploy must therefore use `--env`.
+   Optional, both default sensibly: `VOTING_COUNTDOWN_DEFAULT_MINUTES`, `TOAST_DISMISS_SECONDS`.
+   Also done 2026-10-20: the app binds to 127.0.0.1 in production (`src/server.js`), so the
+   audit's loopback line is OK without relying on ufw; `game-ops/.gitignore` now keeps
+   `votetext-ops/server/deploy.env`.
+6. Smoke test on the live domain: request a code, receive the email, sign in, open a
+   document, `https://votetext.kjell.solutions/healthz` → `{"ok":true}`.
+
+### B. Hardening that should not wait for the design pass
+
+| # | Item | Who | Effort | Why before launch |
+|---|---|---|---|---|
+| B.1 | **Offsite backup.** Nightly `rsync` of `~/backups` to a Hetzner Storage Box (or a pull from your machine); one restore rehearsed end to end (`sqlite3 … .restore`, restart, log in) | you + Claude (cron line, README) | S–M | Both backups live on the VM today |
+| B.2 | **Dedicated service user.** Prepared 2026-10-03: `cloud-init-hardened-example.yaml` (service user, locked-down unit, limited sudoers, admin account, unattended upgrades, nginx rate limit, backups + offsite stub) and `scripts/deploy.sh` support for it. **To apply on the live VM** either rebuild from the hardened template (cleanest: new server, `./scripts/deploy.sh --env` with `DEPLOY_HOST` pointing at it, restore the latest backup into `data/`, switch DNS) or convert in place as `<ADMIN_USER>`: `useradd -r -s /usr/sbin/nologin -d /opt/votetext votetext`, `usermod -aG votetext <DEPLOY_USER>`, `install -d -o votetext -g votetext -m 2770 /opt/votetext/data /opt/votetext/backups` after moving the database in, `chown votetext:votetext data/*`, `chgrp votetext .env && chmod 640 .env`, drop the unit and sudoers files from the template in place, `daemon-reload`, restart, then `./scripts/deploy.sh --check` | you | M | The app runs as a passwordless-sudo user today |
+| B.3 | **CI.** Done 2026-10-03: `.github/workflows/ci.yml` runs `npm test`, then Playwright (Firefox) with the report uploaded on failure. Check the first run on GitHub after pushing | you (push, watch) | S | Tests only run when someone remembers |
+| B.4 | **Tracked deploy script** (Q9). Done 2026-10-03: `scripts/deploy.sh` is tracked, settings in the gitignored `deploy.env` (`deploy.env.example` tracked), `ssh-deploy.sh` is a one-line wrapper. Private files (`cloud-init.yaml`, `.env.prod`, `deploy.env`, `ssh-connect.sh`, `dev-prompts.md`) now live in the private `game-ops` repo under `votetext-ops/`, symlinked back via `ops/` (gitignored). Open: `game-ops/.gitignore` has `*.env`, which would drop `deploy.env` — add `!votetext-ops/server/deploy.env` | you | S | Private ops files have no history or backup |
+| B.5 | **Private `cloud-init.yaml`**: re-derive it from the hardened template (fill the placeholders) rather than patching the old copy | you | S | A rebuild would otherwise diverge |
+| B.6 | **Run `./scripts/deploy.sh --check`** after the first live deploy and after B.1–B.5; every line should be OK | you | S | The audit is the control that the above actually happened |
+
+### C. Operational checks (you, on the live VM)
+
+- [ ] C.1 `sudo certbot renew --dry-run` succeeds; `systemctl list-timers` shows the certbot timer
+- [ ] C.2 `ls ~/backups` shows a file from last night (the 03:00 cron)
+- [x] C.3 `SIGNUP_MODE` decided 2026-10-20: `open` (anyone can sign up); switch to `invited`
+      + `SIGNUP_ALLOWLIST` later if the group should be closed
+- [ ] C.4 Unattended security upgrades on (`unattended-upgrades` package, `apt` auto-reboot
+      window outside meeting hours)
+- [ ] C.5 `journalctl -u votetext` shows no `[otp] Email send failed` lines after the smoke test
+- [ ] C.6 `.env.prod` is backed up somewhere other than the VM (it holds `SESSION_SECRET`)
+
+### D. Product gates
+
+- [ ] D.1 Visual design pass done and the full e2e suite green afterwards (phase 4)
+- [ ] D.2 Manual validation signed off — every row of `specs/manual-validation.md` (phase 5)
+- [ ] D.3 Tutorial recorded, or decided it is not a launch blocker (phase 6)
+- [ ] D.4 `npm run seed-demo` data removed from the production database if it was ever used
+      there (check `SELECT email FROM users WHERE email LIKE '%@demo.votetext'`)
+
+A and B can run in parallel with the design pass; C after the first live deploy; D last.
 
 ---
 
 ## Remaining work packages
-
-### Left as they are, with the reason
-
-- `decideOutcomes` on three-level chains depends on row order — only reachable with
-  data created before the nesting guard; produces a blocker, never a wrong text.
-- The invite link falls back to the request's Host header when `VOTETEXT_URL` is unset
-  — it is set in production.
-- A distributed attacker can still invalidate a victim's sign-in code; one address
-  cannot. Acceptable for this scale.
-- The conflict view groups an insert by its selected range although it only occupies a
-  point — conservative, never wrong.
-- Integer values from the server are interpolated without `esc()` in a few places
-  (line numbers, counts) — server-computed, not user input.
 
 ### Phase 4 — Visual design pass
 
@@ -191,40 +248,197 @@ for the review fixes, phase 3 and the deploy.
 
 Both scripts match the app as of 2026-10-03. Record after the design pass.
 
-### Phase 7 — Launch checklist
+### Phase 7 — Launch
 
-- [ ] Real Resend key and verified sender in `.env.prod`; OTP email smoke test on the
-      live domain
-- [ ] `SESSION_SECRET` and `RESEND_API_KEY` present in `.env.prod` (the server will not
-      start without them)
-- [ ] `SIGNUP_MODE` decided for the public server
-- [ ] Offsite backup in place and one restore rehearsed
-- [ ] `certbot renew --dry-run`; the 03:00 backup cron produces files; unattended
-      security upgrades on
+The consolidated list is **Before launch** above (A–D). Nothing else.
 
 ### Any time, in parallel
 
 | ID | Item | Effort |
 |---|---|---|
-| T4 | GitHub Actions: `npm ci && npm test` on every push; Playwright as a second job with the report uploaded on failure | S |
-| O3 | Mirror the template changes into the private `cloud-init.yaml` | S |
-| O4 | Offsite backup: Hetzner Storage Box via `rsync` in the cron job, a pull from your own machine, or `restic` to object storage | S–M |
-| O5 | Run the app as a dedicated service user; narrow the deploy user's sudo to the `votetext` unit | M |
-| O6 | Q9: tracked `scripts/deploy.sh` + gitignored `deploy.env`; `votetext-ops` for `cloud-init.yaml` and `.env.prod` | S |
-| D1 | Rename `howot-host-service.md` and decide whether it belongs in the repo | S |
+| D1 | Rename `howot-host-service.md` and decide whether it belongs in the repo; drop `resume.txt` | S |
+| D2 | Major dependency bumps when convenient: express 5, better-sqlite3 12, resend 6, dotenv 18 — none required, each needs the suite run | M |
 
-### Later, unscheduled
+### Later — analysed, not implemented
 
-"Export resolved document (further polish)" from the README roadmap; draft text editing
-(Q3); auto-join for default-access documents (Q4); restore or purge of soft-deleted
-documents; pagination for the document and user lists; a way to deactivate a user
-(`is_active` has no setter); transaction around invite upsert + log.
+Design notes for the items previously listed as "noted, not planned" and "later, if
+wanted" (2026-10-03). Each has a verdict; none is scheduled.
 
-```
-Phases 1–3 (done, to ship) ──► Phase 4 design pass
-                                      │
-                   Phase 5 validation ◄┤
-                   Phase 6 video      ◄┘
-                          │
-                   Phase 7 launch checklist
-```
+#### L1 — UI stricter than the API: Delete, Copy, Withdraw
+
+*Today.* Delete document and Copy are shown to the owner only; the API allows
+`DELETE /documents/:id` for owner or superadmin, and `copy-data` for any document admin.
+Withdraw is shown to the proposer only; the API also lets a superadmin withdraw anyone's
+proposal.
+
+*Options.* (a) Align the UI with the API: Delete for owner + superadmin, Copy for
+`hasLevel(doc, 'admin')`, Withdraw for proposer + superadmin. (b) Tighten the API to the
+UI. (c) Leave.
+
+*Verdict.* **(a), S, whenever a superadmin actually needs it.** The API behaviour is the
+documented one (ARCHITECTURE § Global roles) and superadmin is a manual DB grant. Three
+one-line condition changes plus three assertions in `supervisor.spec.js`'s pattern. Risk:
+none — the server already enforces it.
+
+#### L2 — `decideOutcomes` on legacy three-level chains
+
+*Today.* A child whose parent is itself a child (only possible with data created before
+the nesting guard of phase 1) is decided by row order: if it is listed after its parent
+it is skipped correctly, otherwise both can pass and produce an overlap blocker. Never a
+wrong resolved text, only a confusing message.
+
+*Options.* (a) Normalise the data once: `UPDATE variants SET parent_variant_id = NULL,
+vote_order = NULL WHERE parent_variant_id IN (SELECT id FROM variants WHERE
+parent_variant_id IS NOT NULL)` — releases grandchildren to unordered roots. (b) Make
+`decideOutcomes` order-independent: decide roots, then repeat over children until no
+outcome changes (at most depth passes), treating a child whose parent is undecided as a
+root. (c) Leave.
+
+*Verdict.* **(a) as a one-off SQL in the first live deploy's notes, plus (b) as a
+5-line change with a unit test — S.** (a) removes the only data that can trigger it;
+(b) costs nothing and closes the class. Not urgent: the production database predates
+conflict ordering entirely, so it most likely has no chains at all — check with
+`SELECT COUNT(*) FROM variants c JOIN variants p ON p.id = c.parent_variant_id WHERE
+p.parent_variant_id IS NOT NULL` before doing anything.
+
+#### L3 — Distributed invalidation of a victim's sign-in code
+
+*Today.* Five wrong codes for an address invalidate its outstanding code. One client
+address is capped (20 wrong codes / 15 min) so a single machine cannot keep a victim out;
+twenty machines could. The victim just requests a new code, so the effect is annoyance,
+not lockout, and it requires the attacker to know the address and keep going.
+
+*Options.* (a) Accept. (b) Bind each code to the browser that requested it: a random
+`request_token` stored on the `otp_codes` row (schema change) and set as an HttpOnly
+cookie on `request-otp`; `verify-otp` matches email + code + token, and wrong attempts
+count per token. An attacker never holds the victim's token, so their attempts touch a
+code the victim never sees. Cost: requesting on one device and verifying on another stops
+working (rare; the error can say "request the code on this device"). (c) Magic link in
+the email instead of a code — bigger change, same device-binding issue. (d) Backoff
+instead of invalidation (1 s, 2 s, 4 s … per email) — keeps the code valid but a
+distributed attacker still slows the victim down.
+
+*Verdict.* **(a) now; (b) is the right fix if it ever matters — M, needs a `schema.sql`
+change (ask first), AA13/AA21/AA22 rewritten, and one e2e login test.** The threat needs
+a motivated attacker with many addresses against a small committee tool; the cost of (b)
+is a real usability edge case. Revisit if a lockout is ever reported.
+
+#### L4 — Draft text editing (Q3 b)
+
+*Today.* Document text is immutable after creation; a wrong draft is fixed by **Copy**
+→ correct → create, which also orphans the draft (there is no delete-and-replace flow).
+
+*Design.* `PATCH /documents/:id` accepts `text` **only** when `status = 'draft'` and the
+document has no variants at all (not even withdrawn ones — offsets would be meaningless):
+in one transaction delete `document_lines`, re-run `importText` with the current
+`lines_per_page`, update `total_lines/pages/chars`, log `document_updated
+{ text_replaced: true, from_lines, to_lines }`. 422 otherwise. UI: a "Replace text"
+textarea in the settings modal, shown only for drafts without proposals, prefilled from
+`GET /:id/text`. Tests: replace succeeds on an empty draft; 422 on open, on a draft with
+one variant, on a draft with a withdrawn variant; page count updates; activity row.
+
+*Verdict.* **Worth doing — M — after the design pass, before the tutorial is recorded**
+(chapter 2 then regains "room to fix typos" and the Copy workaround note goes away). No
+schema change. Risk: low; the guard "no variants" keeps offsets safe.
+
+#### L5 — Documents reached through default access (Q4 b)
+
+*Today.* A document with `default_access` set is reachable by link only; it never
+appears in that user's document list or activity feed. The tutorial says "share the link".
+
+*Options.* (a) Auto-join: on the first `GET /documents/:id` by a user without a record,
+insert a `user_document_access` row at the default level (`invited_by NULL`). Pros: the
+document then behaves exactly like an invitation everywhere. Cons: a GET writes; a
+later change of the default no longer affects users who already joined; the access list
+fills with everyone who ever opened the link. (b) Query-time inclusion: `GET /documents`
+and the feed's visibility SQL also match `d.status != 'draft' AND
+json_extract(d.settings, '$.default_access') IS NOT NULL` for any signed-in user, with
+`access_level` = that default. Pros: no writes, follows the current default, no new
+rows. Cons: on a multi-group instance every signed-in user sees every default-access
+document in their list — which is exactly what the setting means ("any signed-in user").
+(c) Leave link-only.
+
+*Verdict.* **(b) — S — if asked for; (c) until then.** It is one `OR` clause in
+`VISIBLE_DOCUMENT_IDS_SQL` (shared by the list and the feed) plus `access_level` in the
+list query, Y7-style tests, and a two-line change to UC-5 and the tutorial. Avoid (a):
+hidden state created by a read request is the kind of thing that surprises later. Note
+that (b) makes default-access documents visible to *all* accounts on the instance; with
+`SIGNUP_MODE=invited` that is the invited circle, with `open` it is the public.
+
+#### L6 — Restore or purge of soft-deleted documents
+
+*Today.* `DELETE /documents/:id` sets `deleted_at`; the row and everything under it stay
+forever, invisible, and cannot be brought back without SQL.
+
+*Design.* Restore: `POST /documents/:id/restore` (owner or superadmin), clears
+`deleted_at`, logs `document_restored` (schema change: one new action — ask first).
+Listing: `GET /documents?deleted=1` returns the caller's own deleted documents; the
+document list gets a "Deleted" filter with a Restore button. Purge: the daily
+`purgeExpired()` job also hard-deletes documents with `deleted_at` older than
+`DELETED_RETENTION_DAYS` (default 30, new env var); `ON DELETE CASCADE` already removes
+lines, variants, votes, comments, access rows and activity. Tests: restore round trip;
+restore by a non-owner → 403; purge removes a 31-day-old document and its children and
+leaves a 29-day-old one; `document_deleted` activity survives as long as the document.
+
+*Verdict.* **Worth doing, M, after launch.** Restore is the user-facing half and is cheap;
+purge is what keeps the database from growing with ghosts and is what makes "delete"
+honest for GDPR-style requests. Needs one activity action and one env var — both to be
+approved.
+
+#### L7 — Pagination for the document and user lists
+
+*Today.* `GET /documents` and `GET /users` return everything; the document grid renders
+all cards. Fine up to a few hundred documents.
+
+*Design.* Server: `?page=&limit=` (limit default 50, max 200) with `ORDER BY updated_at
+DESC` already in place; response gains `page` and `has_more`. Client: a "Load more"
+button under the grid that appends the next page (no page numbers — the list is sorted
+by activity). Users page: the same plus the existing `?q=` filter box exposed in the UI.
+Tests: two pages of three documents each with `limit=3`; `limit` clamped; the e2e
+document list still finds a document created in the test.
+
+*Verdict.* **Not needed for launch — S–M when an instance passes ~200 documents.** The
+real cost today is the `GET /documents` payload on every list view, not correctness.
+Add a `COUNT` check to the health-check skill instead so it is noticed.
+
+#### L8 — Deactivating a user
+
+*Today.* `users.is_active` exists and is honoured (an inactive user cannot sign in and
+existing sessions stop working at the next request), but nothing sets it except SQL.
+
+*Design.* `PATCH /users/:id/active { is_active }` (superadmin, `requireRole`), refusing
+to deactivate yourself or another superadmin; on deactivation delete the user's sessions
+and mark their outstanding OTP codes used; log `user_deactivated` /
+`user_reactivated` (two new actions — ask first). The Users page gets a Deactivate /
+Reactivate button next to Protect; the user list already shows "inactive". Their
+proposals, votes and comments stay (authorship is history). Tests: X-group style —
+non-superadmin 403; deactivate → their session 401 and `verify-otp` 403; reactivate →
+sign-in works; self-deactivation 400.
+
+*Verdict.* **Worth doing before the first real multi-group use, S.** It is the only
+moderation action that currently requires the database shell, and the first thing an
+operator will need when someone leaves a committee. Two activity actions to approve.
+
+#### L9 — "Export resolved document (further polish)"
+
+*Today.* Markdown and print-HTML exports of the resolved text with the
+PASSED/FAILED/RESOLVED line and the timestamp. The README roadmap item has no spec.
+
+*Options.* (a) An appendix in both exports listing every proposal with its outcome:
+`#N · title · proposer · yes/no/abstain · approved/rejected/not applicable`, so the
+exported document carries its own decision record. (b) A side-by-side "original vs
+resolved" diff export. (c) `.docx`/PDF generation — needs a dependency or a headless
+browser; against the minimal-dependency rule. (d) Include the overall document vote
+figures in the header line.
+
+*Verdict.* **(a) + (d), S–M, after launch — it is what a secretary attaches to the
+minutes.** The data is already on the page (`GET /documents/:id/variants` carries
+status and tallies). (b) is nice but the per-proposal diffs already exist on each
+proposal page; (c) stays out unless a group insists — "Print HTML → Save as PDF" covers
+it.
+
+### Order, if all of them were wanted
+
+L4 (draft editing) and L8 (deactivate user) first — both small, both close a visible
+hole; then L6 (restore/purge) and L9 (export appendix); L1, L2, L5 on demand; L7 when
+the numbers call for it; L3 only if a lockout is ever reported.

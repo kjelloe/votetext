@@ -14,7 +14,7 @@
 #
 # After the server has rebooted:
 #   1. Point DNS:       A record for <YOUR_DOMAIN> → <ip>
-#   2. From your laptop, in the repo:   ./ssh-deploy.sh --env
+#   2. From your laptop, in the repo:   ./scripts/deploy.sh --env
 #      → uploads the committed code and .env.prod (as .env), installs
 #        dependencies, creates the database and starts the service
 #      → .env.prod must contain SESSION_SECRET (openssl rand -hex 32) and must
@@ -22,7 +22,7 @@
 #   3. On the server (ssh -p 2222 <DEPLOY_USER>@<ip>):   ~/first-deploy.sh
 #      → enables the service at boot and obtains the TLS certificate
 #
-# Every later update is just:  ./ssh-deploy.sh
+# Every later update is just:  ./scripts/deploy.sh
 # =============================================================================
 
 users:
@@ -102,7 +102,7 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-  # ── first-deploy helper — run once after the first ./ssh-deploy.sh --env ──
+  # ── first-deploy helper — run once after the first ./scripts/deploy.sh --env ──
   - path: /home/<DEPLOY_USER>/first-deploy.sh
     owner: <DEPLOY_USER>:<DEPLOY_USER>
     permissions: '0755'
@@ -113,7 +113,7 @@ write_files:
       APP=/opt/votetext
 
       if [ ! -f "$APP/.deployed-version" ]; then
-          echo "Nothing deployed yet — run ./ssh-deploy.sh --env from your laptop first"
+          echo "Nothing deployed yet — run ./scripts/deploy.sh --env from your laptop first"
           exit 1
       fi
 
