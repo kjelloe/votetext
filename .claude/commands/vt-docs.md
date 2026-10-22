@@ -37,6 +37,7 @@ Update all documentation artifacts after a VoteText feature is completed. Work t
 - `.env.example` and the README configuration table — for every new or removed `process.env` variable
 - `.claude/commands/vt-*.md` — if the feature changes what a skill tells you to do
 - `cloud-init-example.yaml`, `cloud-init-hardened-example.yaml`, `deploy.env.example` and `scripts/deploy.sh` — for anything that changes how the server is provisioned or deployed; keep the two templates' headers in step and run `npm run test:deploy`
+- `ops/notes/*.md` (private, outside the repo) — the server-hardening and offsite-backup guide must still match the templates and `scripts/deploy.sh --check` after any change to them
 
 ## 4. memory/project-votetext.md
 - Update the test counts (run `grep -c "^test(" tests/*.test.js tests/e2e/*.spec.js` to get the real numbers)

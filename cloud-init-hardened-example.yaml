@@ -238,8 +238,11 @@ write_files:
       0 3 * * * votetext sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/opt/votetext/backups/votetext-$(date +\%F).db'" && find /opt/votetext/backups -name 'votetext-20*.db' -mtime +30 -delete
 
   # ── offsite copy of the backups (04:00) — fill in and remove the leading # ──
-  #   Hetzner Storage Box: enable SSH on the box, add the votetext user's public key
-  #   (sudo -u votetext ssh-keygen -t ed25519; home is /opt/votetext) to the box.
+  #   Hetzner Storage Box: enable SSH on the box, then as <ADMIN_USER>:
+  #     install -d -m 700 -o votetext -g votetext /opt/votetext/.ssh
+  #     sudo -H -u votetext ssh-keygen -t ed25519 -N '' -f /opt/votetext/.ssh/id_ed25519
+  #     sudo -H -u votetext bash -c 'cat /opt/votetext/.ssh/id_ed25519.pub | ssh -p 23 <STORAGE_BOX_USER>@<STORAGE_BOX_USER>.your-storagebox.de install-ssh-key'
+  #   (the audit allow-lists .ssh under the app directory; ProtectSystem=strict keeps the app out of it)
   - path: /etc/cron.d/votetext-offsite
     content: |
       # 0 4 * * * votetext rsync -a --delete -e 'ssh -p 23 -o StrictHostKeyChecking=accept-new' /opt/votetext/backups/ <STORAGE_BOX_USER>@<STORAGE_BOX_USER>.your-storagebox.de:votetext-backups/

@@ -18,6 +18,20 @@ jobs:
         env:
           RESEND_API_KEY: re_ci_dummy
 
+  deploy-harness:
+    runs-on: ubuntu-latest
+    needs: node-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:deploy
+
   browser-tests:
     runs-on: ubuntu-latest
     needs: node-tests

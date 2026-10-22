@@ -414,7 +414,7 @@ Server provisioning is templated in two variants — copy one to `cloud-init.yam
 - [`cloud-init-example.yaml`](./cloud-init-example.yaml) — the simple layout: one account deploys and runs the app.
 - [`cloud-init-hardened-example.yaml`](./cloud-init-hardened-example.yaml) — recommended for a public server: the app runs as a dedicated `votetext` system user under a locked-down unit (read-only filesystem except `data/` and `backups/`, no new privileges), the deploy account has sudo only for the exact service commands, a separate admin account holds full sudo, unattended security upgrades, an nginx rate limit on `/api/auth/`, nightly backups as the service user and a ready-to-enable offsite rsync.
 
-`scripts/deploy.sh` works with either layout: it reads the service user from the systemd unit and runs database work and backups as that user.
+`scripts/deploy.sh` works with either layout: it reads the service user from the systemd unit and runs database work and backups as that user. A server already running the simple layout can be converted in place rather than rebuilt: create the admin account and verify its login first, then add the `votetext` user, hand it `data/` and `backups/`, install the hardened unit, sudoers and cron from the template, restart, and finally remove the deploy user's full sudo. `./scripts/deploy.sh --check` confirms each step.
 
 #### Deploying
 
@@ -449,7 +449,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 #### Backups
 
-A daily cron job at 03:00 backs up the SQLite database to `~/backups/` on the server with 30-day retention (configured in the cloud-init template).
+A daily cron job at 03:00 backs up the SQLite database with 30-day retention (configured in the cloud-init template): to `~/backups/` of the deploy user in the simple layout, to `/opt/votetext/backups/` as the service user in the hardened one. The hardened template also carries a ready-to-enable 04:00 rsync of that directory to a Hetzner Storage Box; the audit warns until `/etc/cron.d/votetext-offsite` exists.
 
 ```bash
 # Manual backup
@@ -504,7 +504,7 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
-- [x] Playwright e2e suite (`npm run test:e2e`) — 65 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Playwright e2e suite (`npm run test:e2e`) — 68 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
 - [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
@@ -514,4 +514,7 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Review fixes, phase 2 (2026-10-02) — `scripts/migrate.js` rewritten to be driven by `schema.sql` (the old script crashed on databases created from early schemas), with a migration test over three historical schema snapshots; seven previously unlogged mutations now write activity entries; second review round fixed a stored XSS via non-numeric proposal offsets, modal handlers acting on a previously opened document, the dead end for documents without overlapping proposals, insert proposals deleting the selected text at resolve, and sign-in limits per client address
 - [x] Phase 3 (2026-10-03) — every browser control gated on the user's access level (supervisors run the voting cycle without owning the document; viewers no longer see buttons the server refuses); profile completion modal for new accounts; access modal with level change and block; "based on" links on forks; delete document; stable proposal numbers; neutral RESOLVED label without an overall vote; resolve-blocker banner in the walkthrough; keyboard conflict ordering and focusable proposal cards; phone navigation and stacked review layout; text selection via `selectionchange` (works on touch); session expiry returns to login; security headers (CSP, nosniff, frame-ancestors) — 13 new browser tests
 - [ ] Export resolved document (further polish)
-- [ ] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log), giving them version history and offsite backup instead of manual zip copies
+- [x] Launch (2026-10-20) — first production deploy with `scripts/deploy.sh` (app on loopback in production, `VACUUM INTO` backups, nightly cron, `--check` audit)
+- [x] Security hardening (2026-10-21, live 2026-10-22) — site roles `user`/`creator`/`superadmin` (creating documents is a granted role), text caps and hourly quotas, proposal/fork/comment cooldowns, one live sign-in code per address with a per-address request limit and a mail budget, hidden proposals invisible to fork/withdraw/share, generic 500 text, nginx rate limit on `/api/auth/`
+- [x] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log, server-hardening guide)
+- [ ] Hardened server layout and offsite backups on the live VM (in-place conversion, guide in the ops repository)

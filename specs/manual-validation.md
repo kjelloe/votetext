@@ -119,8 +119,8 @@ Two browsers: the document owner and an invited voter.
 ## Security hardening (2026-10-21) — site roles and limits
 
 - [ ] Sign in with a brand-new address → documents list shows the notice and no **New document** button; `#/admin/users` is not in the menu
-- [ ] As superadmin, **Users** → set that account to **creator** → after a reload it sees **New document** and can create; set it back to **user** → button gone
-- [ ] As superadmin, the dropdown is absent on your own row
+- [x] As superadmin, **Users** → set that account to **creator** → after a reload it sees **New document** and can create; set it back to **user** → button gone *(covered by `roles.spec.js` since 2026-10-22)*
+- [x] As superadmin, the dropdown is absent on your own row *(covered by `roles.spec.js`)*
 - [ ] On the server, `node scripts/grant-role.js <email> creator` prints the change and the Users page reflects it
 - [ ] Manage access as a non-owner supervisor: the invite search still returns results (it passes the document id)
 - [ ] Paste a 60 000-character proposal text → "new_text is too long (max 50000 characters)" and nothing saved
@@ -131,10 +131,19 @@ Two browsers: the document owner and an invited voter.
 
 - [ ] `./scripts/deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing
 - [ ] `./scripts/deploy.sh` → tests run, confirmation prompt, service back within seconds, `https://<domain>/healthz` returns `{"ok":true}`
-- [ ] `~/backups/votetext-predeploy-*.db` exists on the server after the deploy
+- [ ] `~/backups/votetext-predeploy-*.db` (simple layout) or `/opt/votetext/backups/votetext-predeploy-*.db` (service user) exists on the server after the deploy
 - [ ] Data created before the deploy is still there afterwards
 - [ ] After `~/first-deploy.sh`: `./scripts/deploy.sh --check` shows `nginx client_max_body_size set` (add `client_max_body_size 2m;` to the HTTPS server block and reload nginx if not); a 1.5 MB document imports without a 413
 - [ ] With `SIGNUP_MODE=invited`: an unknown address gets "Code sent" but no email; an invited address and an allowlisted address get a code
+
+## Server hardening in place (2026-10-22 guide, private ops notes)
+
+- [ ] Admin account logs in with its own key (`IdentitiesOnly=yes`) and `sudo -n true` succeeds before anything else changes
+- [ ] After the restart under the hardened unit: `systemctl status votetext` active, `/healthz` OK, `ps` shows `node src/server.js` running as `votetext`, sign-in works in the browser
+- [ ] Deploy user: `sudo -n -l` lists only the service commands and `(votetext) ALL`; `sudo -n apt-get update` is refused
+- [ ] `./scripts/deploy.sh` on the same commit: "Dependencies unchanged", backup written under `/opt/votetext/backups/`, healthy
+- [ ] `./scripts/deploy.sh --check`: service user, limited sudo and the three unit options OK; no "unmanaged files" warning for `.ssh`
+- [ ] Offsite: the Storage Box lists `votetext-<date>.db` the morning after the cron was installed; a copy pulled to the laptop opens in `sqlite3` with sane row counts
 
 ---
 

@@ -60,7 +60,7 @@ exec node -e "const D=require('$ROOT/node_modules/better-sqlite3');const d=new D
 EOS
 fi
 chmod +x "$T"/bin/*
-printf 'PORT=%s\nDATABASE_PATH=./data/votetext.db\nSESSION_SECRET=local-harness\nRESEND_API_KEY=re_dummy\nCORS_ORIGINS=http://localhost:%s\n' "$PORT" "$PORT" > "$T/envfile"
+printf 'PORT=%s\nDATABASE_PATH=./data/votetext.db\nSESSION_SECRET=local-harness\nRESEND_API_KEY=re_dummy\nVOTETEXT_URL=http://localhost:%s\nCORS_ORIGINS=http://localhost:%s\n' "$PORT" "$PORT" "$PORT" > "$T/envfile"
 
 export PATH="$T/bin:$PATH" FAKE_HOME="$T/home" FAKE_APP="$T/opt" FAKE_SVC_USER=
 export DEPLOY_HOST=fake@localhost.invalid DEPLOY_SSH_PORT=22 DEPLOY_SSH_KEY= DEPLOY_APP_DIR="$T/opt" DEPLOY_SERVICE=votetext DEPLOY_PUBLIC_URL= DEPLOY_ENV_FILE="$T/envfile"

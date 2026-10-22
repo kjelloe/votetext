@@ -110,7 +110,7 @@ if [ -f "$DB" ]; then
 else
     warn "no database at $DB"
 fi
-LEFT=$(ls -A "$APP" 2>/dev/null | grep -vxE 'src|public|scripts|node_modules|data|backups|package\.json|package-lock\.json|schema\.sql|\.env|\.previous|\.deployed-version' | tr '\n' ' ')
+LEFT=$(ls -A "$APP" 2>/dev/null | grep -vxE 'src|public|scripts|node_modules|data|backups|package\.json|package-lock\.json|schema\.sql|\.env|\.ssh|\.previous|\.deployed-version' | tr '\n' ' ')
 [ -z "$LEFT" ] && ok "no unmanaged files in $APP" || warn "unmanaged files in $APP: $LEFT"
 
 NEWEST=$(ls -t "$HOME"/backups/*.db "$APP"/backups/*.db /var/backups/votetext/*.db 2>/dev/null | head -1)
@@ -375,7 +375,7 @@ for old in $({ as_svc ls -1t "$BACKUP_DIR"/votetext-predeploy-*.db 2>/dev/null |
 
 say "Deployed $SHA — service is healthy on port $PORT"
 
-LEFTOVERS=$(ls -A "$APP" | grep -vxE 'src|public|scripts|node_modules|data|backups|package\.json|package-lock\.json|schema\.sql|\.env|\.previous|\.deployed-version' || true)
+LEFTOVERS=$(ls -A "$APP" | grep -vxE 'src|public|scripts|node_modules|data|backups|package\.json|package-lock\.json|schema\.sql|\.env|\.ssh|\.previous|\.deployed-version' || true)
 if [ -n "$LEFTOVERS" ]; then
     echo "Note: $APP also contains files this script does not manage (left by earlier rsync deploys):"
     echo "$LEFTOVERS" | sed 's/^/    /'

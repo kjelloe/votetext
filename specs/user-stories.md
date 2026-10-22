@@ -20,6 +20,7 @@ The stories assume a document has already been created and is in **Open** status
 | **Proposer** | Propose text changes; also vote |
 | **Voter** | Cast and change votes |
 | **Supervisor** | Manage the voting process — resolve conflicts, record tallies, finalise the result |
+| **Creator** | Site role granted by the superadmin — may also start documents and copy data between them; every other role above is per document (UC-22) |
 
 ---
 
@@ -179,7 +180,7 @@ The stories assume a document has already been created and is in **Open** status
 
 ## Coverage map
 
-> All 10 stories have Playwright coverage as of 2026-07-10 (65 tests in `tests/e2e/`, incl. an XSS guard-rail spec) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
+> All 10 stories have Playwright coverage as of 2026-10-22 (68 tests in `tests/e2e/`, incl. XSS and regression guard-rail specs and the site-role flows of UC-22) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
 
 | Story | Playwright priority | Video segment |
 |-------|--------------------|-|

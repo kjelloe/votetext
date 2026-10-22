@@ -212,8 +212,8 @@ to match, and the first manual backup was taken with it.
 
 | # | Item | Who | Effort | Why before launch |
 |---|---|---|---|---|
-| B.1 | **Offsite backup.** Nightly `rsync` of `~/backups` to a Hetzner Storage Box (or a pull from your machine); one restore rehearsed end to end (`sqlite3 … .restore`, restart, log in) | you + Claude (cron line, README) | S–M | Both backups live on the VM today |
-| B.2 | **Dedicated service user.** Prepared 2026-10-03: `cloud-init-hardened-example.yaml` (service user, locked-down unit, limited sudoers, admin account, unattended upgrades, nginx rate limit, backups + offsite stub) and `scripts/deploy.sh` support for it. **To apply on the live VM** either rebuild from the hardened template (cleanest: new server, `./scripts/deploy.sh --env` with `DEPLOY_HOST` pointing at it, restore the latest backup into `data/`, switch DNS) or convert in place as `<ADMIN_USER>`: `useradd -r -s /usr/sbin/nologin -d /opt/votetext votetext`, `usermod -aG votetext <DEPLOY_USER>`, `install -d -o votetext -g votetext -m 2770 /opt/votetext/data /opt/votetext/backups` after moving the database in, `chown votetext:votetext data/*`, `chgrp votetext .env && chmod 640 .env`, drop the unit and sudoers files from the template in place, `daemon-reload`, restart, then `./scripts/deploy.sh --check` | you | M | The app runs as a passwordless-sudo user today |
+| B.1 | **Offsite backup.** Nightly `rsync` of the backups to a Hetzner Storage Box; one restore rehearsed end to end. Step-by-step guide written 2026-10-22: `ops/notes/harden-live-vm.md` Part 4 | you | S–M | Both backups live on the VM today |
+| B.2 | **Dedicated service user.** Prepared 2026-10-03: `cloud-init-hardened-example.yaml` + `scripts/deploy.sh` support. Decision 2026-10-22: convert the live VM in place (two-day-old box, tiny DB, no DNS/cert churn) — step-by-step guide in `ops/notes/harden-live-vm.md` Parts 1–3 (admin account first, then service user + locked unit + limited sudoers, then drop the deploy user's full sudo) | you | M | The app runs as a passwordless-sudo user today |
 | B.3 | **CI.** Done 2026-10-03: `.github/workflows/ci.yml` runs `npm test`, then Playwright (Firefox) with the report uploaded on failure. Check the first run on GitHub after pushing | you (push, watch) | S | Tests only run when someone remembers |
 | B.4 | **Tracked deploy script** (Q9). Done 2026-10-03: `scripts/deploy.sh` is tracked, settings in the gitignored `deploy.env` (`deploy.env.example` tracked), `ssh-deploy.sh` is a one-line wrapper. Private files (`cloud-init.yaml`, `.env.prod`, `deploy.env`, `ssh-connect.sh`, `dev-prompts.md`) now live in the private `game-ops` repo under `votetext-ops/`, symlinked back via `ops/` (gitignored). Open: `game-ops/.gitignore` has `*.env`, which would drop `deploy.env` — add `!votetext-ops/server/deploy.env` | you | S | Private ops files have no history or backup |
 | B.5 | **Private `cloud-init.yaml`**: re-derive it from the hardened template (fill the placeholders) rather than patching the old copy | you | S | A rebuild would otherwise diverge |
@@ -286,7 +286,7 @@ Effort: S1 ≈ M (one limits helper + rate-limit helper + nginx line), S2 ≈ S 
 
 ---
 
-## Phase S — Security hardening (designed and implemented 2026-10-21, uncommitted, undeployed)
+## Phase S — Security hardening (designed and implemented 2026-10-21, deployed 2026-10-22 as 4485389)
 
 **Done 2026-10-21 (Q14–Q18 as recommended):** S.A role `creator` (schema, `tests/fixtures/schema-2026-10-03.sql`,
 `requireRole` on create + copy-data, `PATCH /api/users/:id/role`, `scripts/grant-role.js`, role dropdown
@@ -300,9 +300,12 @@ identities voter+ only), S.F docs/specs/skills. Tests: 346 node (group AC = 16),
 Review round (independent agent) fixed: Copy / Fork-as-new-document buttons now hidden for non-creators, fork and
 vote buttons match the server's status rules, quotas no longer burn a slot on a refused request, invites refuse
 with 503 before writing when the mail budget is gone, `seed.js` re-runs grant alice `creator`.
-**Open for you:** C3 nginx `limit_req` on the live VM; G2–G4 (commit, merge, push, deploy, then
-`node scripts/grant-role.js kjell@kjell.solutions superadmin` on the server, grant creators in Users, `--check`).
-Note: after the migration every existing account — including yours — is `user` until that grant.
+**Shipped 2026-10-22:** G2–G4 done — commit 4485389 deployed, `users` migrated with pre-deploy backup, superadmin
+granted, C3 nginx rate limit added by hand, `--check` clean apart from the simple-layout and offsite-backup
+warnings. Those are B.1/B.2 — guide in `ops/notes/harden-live-vm.md`. Same day: audit allow-lists `.ssh` under
+the app dir (the template's offsite key lives there), the deploy harness env gained `VOTETEXT_URL` (it had been
+failing since Phase S — CI never ran it; a `deploy-harness` CI job now does), and `roles.spec.js` gained the superadmin
+Users-page flow (e2e accounts `root@e2e.test` superadmin and `carol@e2e.test`): 68 e2e.
 
 
 Goal: a fresh sign-up can only *take part* in documents it is invited to (or that open
@@ -351,7 +354,7 @@ owner's approval.
 |---|---|---|
 | C1 | `request-otp`: own per-IP window — 10 code requests per IP per 15 min (existing `ipLimit` stays for `verify-otp`); process-wide send budget 300 mails/hour across OTP + invites (`src/lib/mail.js` counts, returns a 503 "Try again later" when exhausted, logs once) | Claude |
 | C2 | New code request marks that address's earlier unused codes as used (one live code per address) | Claude |
-| C3 | nginx on the live VM: `limit_req_zone … votetext_auth … 30r/m` + `limit_req` on `/api/auth/` (the hardened template's two blocks) — done by hand now, or arrives with the hardened rebuild (B.2) | **You** |
+| C3 | nginx on the live VM: `limit_req_zone … votetext_auth … 30r/m` + `limit_req` on `/api/auth/` — **done 2026-10-22**, audit OK | **You** |
 
 ### S.D — Access companions (S2.1–S2.6, S3.6, S3.7)
 
@@ -385,7 +388,7 @@ ARCHITECTURE (§ Global roles rewritten, § Limits new), README (API table: role
 | G1 Review round with independent agents on the diff (the pattern that found all of the above) | Claude |
 | G2 `npm test`, `npm run test:e2e`, `npm run test:deploy` green; commit; merge to main; push; CI green | **You** (commit/push) |
 | G3 `./scripts/deploy.sh --dry-run` → `./scripts/deploy.sh` (migrates `users`; pre-deploy backup automatic) | **You** |
-| G4 A8 (grant superadmin + creators), C3 (nginx), `./scripts/deploy.sh --check`, browser check: sign in as a plain user → no "New document" | **You** |
+| G4 A8 (grant superadmin + creators), C3 (nginx), `./scripts/deploy.sh --check`, browser check: sign in as a plain user → no "New document" | **You** — done 2026-10-22 except C3 (audit still warns) |
 
 ### Omissions checked after the first draft
 
@@ -409,7 +412,7 @@ Effort: S.A M, S.B M, S.C S, S.D S, S.E S, S.F S, S.G S — about two working se
 ### Phase 4 — Visual design pass
 
 Now the next step. Agree direction first (palette, typography, density, light/dark),
-then tokens → components → responsive, with the full e2e suite (65 tests, incl. the XSS
+then tokens → components → responsive, with the full e2e suite (68 tests, incl. the XSS
 and regression specs) as the gate. The phone layout fixes from phase 3 are functional
 only; the design pass should revisit them.
 

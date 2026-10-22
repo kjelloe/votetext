@@ -119,6 +119,19 @@ module.exports = async function globalSetup() {
     const bobSession = await login('bob@e2e.test');
     fs.writeFileSync(path.join(AUTH_DIR, 'bob.json'), JSON.stringify(storageState(bobSession)));
 
+    // Create root (site superadmin, role via SQL) and carol (plain user whose role the Users page changes)
+    const rootSession = await login('root@e2e.test');
+    {
+        const dbw = new Database(DB_PATH);
+        dbw.prepare("UPDATE users SET role = 'superadmin' WHERE email = 'root@e2e.test'").run();
+        dbw.close();
+    }
+    fs.writeFileSync(path.join(AUTH_DIR, 'root.json'), JSON.stringify(storageState(rootSession)));
+    await apireq('PATCH', '/auth/profile', { body: { display_name: 'Root E2E', organization: 'Test Org' }, cookie: `session_id=${rootSession}` });
+    const carolSession = await login('carol@e2e.test');
+    fs.writeFileSync(path.join(AUTH_DIR, 'carol.json'), JSON.stringify(storageState(carolSession)));
+    await apireq('PATCH', '/auth/profile', { body: { display_name: 'Carol E2E', organization: 'Test Org' }, cookie: `session_id=${carolSession}` });
+
     // 4. Create an 'open' document with a variant
     const docR = await apireq('POST', '/documents', {
         body: { title: 'E2E Test Document', text: 'Line one text.\nLine two text.\nLine three text.' },

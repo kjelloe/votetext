@@ -553,13 +553,14 @@ ownership test grants bob `creator` first.
 | Hardened unit | `User=votetext`, `ProtectSystem=strict`, `ReadWritePaths` = data + backups, `NoNewPrivileges`, no `MemoryDenyWriteExecute` |
 | Placeholders | every `<X>` in a template is explained in its header; `first-deploy.sh` no longer installs or creates the database |
 | `deploy.env.example` | lists every `DEPLOY_*` variable the script reads; `deploy.env` is gitignored |
-| Local run (`test:deploy`) | refused without `.env`; first deploy with `--env` healthy, `.env` 600; redeploy keeps data; forced start failure restores code and database; older ref deploys without migration; dry run changes nothing; `--check` runs; separate service user → `.env` 640 and backups under the app dir |
+| Local run (`test:deploy`) | refused without `.env`; first deploy with `--env` healthy (the stand-in `.env` carries `VOTETEXT_URL`, mandatory in production), `.env` 600; redeploy keeps data; forced start failure restores code and database; older ref deploys without migration; dry run changes nothing; `--check` runs; separate service user → `.env` 640 and backups under the app dir. Runs in CI as the `deploy-harness` job |
+| Audit allow-list | `.ssh` under the app directory (offsite rsync key of the service user) is not reported as an unmanaged file |
 
 ---
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (67 tests). Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (68 tests). Run with `npm run test:e2e`.
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -581,7 +582,7 @@ ownership test grants bob `creator` first.
 | `supervisor.spec.js` | US-8, US-9 as a non-owner supervisor | Start voting from the document page; no-conflict path to final voting; tallies clear the blocker banner; Mark as Resolved → RESOLVED banner (no overall vote); keyboard conflict ordering (+ root, child of…); a voter sees no supervisor controls and the review page refuses |
 | `moderation.spec.js` | UC-18 | Hide a comment → placeholder → moderation page → unhide; hide a proposal → banner, gone for a voter → unhide |
 | `access.spec.js` | UC-5 | Invite by email → change level → block → remove, verified through the API |
-| `roles.spec.js` | UC-22 | A plain user (bob) sees the participation notice and no **New document** button; a creator (alice) sees the button and no notice |
+| `roles.spec.js` | UC-22 | A plain user (bob) sees the participation notice and no **New document** button; a creator (alice) sees the button and no notice; the superadmin (root) sets carol to creator from the Users page dropdown (absent on the superadmin's own row) → carol sees the button; back to user → notice again |
 | `document.spec.js` | UC-1, UC-6, UC-8 | Numbered-line detection and stripping; Copy prefills the modal; countdown banner appears and cancels; delete from the settings modal |
 | `fork.spec.js` | UC-16 | Fork → "based on #1" on the fork, "forked as #2" on the original |
 | `regression.spec.js` | guard rail | Bugs that only show on the second action in one page: Reply after the thread re-rendered; Change status touching a previously opened document; a document without overlapping proposals reaching final voting; selecting text inside a highlighted line; "Use different email" on the login form |
