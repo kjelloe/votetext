@@ -15,7 +15,7 @@ const Database = require('better-sqlite3');
 const ROOT = path.join(__dirname, '..');
 const MIGRATE = path.join(ROOT, 'scripts', 'migrate.js');
 const SCHEMA = fs.readFileSync(path.join(ROOT, 'schema.sql'), 'utf8');
-const FIXTURES = ['schema-2026-05-23.sql', 'schema-2026-06-07.sql', 'schema-2026-07-11.sql'];
+const FIXTURES = ['schema-2026-05-23.sql', 'schema-2026-06-07.sql', 'schema-2026-07-11.sql', 'schema-2026-10-03.sql'];
 const fixture = name => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf8');
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'votetext-migrate-'));

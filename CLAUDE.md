@@ -85,6 +85,10 @@ const newId = transaction(() => {
 // Log every significant mutation
 logActivity(userId, documentId, variantId, 'variant_proposed', { title });
 
+// Every stored text goes through the caps in src/lib/limits.js; cooldowns through src/lib/cooldown.js
+const bad = checkText(title, 'title'); if (bad) return res.status(400).json({ error: bad });
+const wait = proposalCooldown(req.user.id); if (wait) return res.status(429).json(wait);
+
 // Throw structured errors for the error handler to catch
 const err = new Error('Not found'); err.status = 404; throw err;
 // — or just — 
@@ -121,6 +125,8 @@ ${hasLevel(doc, 'supervisor') ? '<button id="doc-status-btn">Change status</butt
 ```
 viewer < commenter < proposer < voter < supervisor < editor < admin
 ```
+
+Site roles (`users.role`): `user` (default, takes part in documents it is invited to), `creator` (may also create documents and copy data — `requireRole('creator', 'superadmin')` on those two routes), `superadmin`. Granted via `PATCH /api/users/:id/role` or `scripts/grant-role.js`; tests grant `creator` to the owner account with a direct `UPDATE users` after login.
 
 Owner of a document always has `admin`. Check `requireDocumentAccess('proposer')` etc. as route middleware. `supervisor` manages the voting process (review, conflicts, tallies, voting-cycle status transitions, new invites up to own level) and moderation (hide/unhide variants and comments — UC-18) but cannot edit the document, see drafts, or modify existing access records — see ARCHITECTURE.md § Access Control.
 

@@ -35,7 +35,7 @@
 #   2. From your laptop, in the repo:   ./scripts/deploy.sh --env
 #      → uploads the committed code and .env.prod (as .env, mode 640 deploy:votetext),
 #        installs dependencies, creates the database as `votetext`, starts the service
-#      → .env.prod must contain SESSION_SECRET and RESEND_API_KEY and no NODE_ENV
+#      → .env.prod must contain SESSION_SECRET, RESEND_API_KEY and VOTETEXT_URL, and no NODE_ENV
 #   3. On the server (ssh -p 2222 <DEPLOY_USER>@<ip>):   ~/first-deploy.sh
 #      → enables the service at boot and obtains the TLS certificate
 #   4. ./scripts/deploy.sh --check   — the audit should be all OK except the offsite

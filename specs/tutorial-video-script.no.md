@@ -54,6 +54,8 @@ noen inviterer deg, og det er akkurat det som skjer om et øyeblikk.
 
 [screen: Anna's document list, click "New document"]
 
+> Merk: Anna har nettstedrollen *creator* (gitt av superadmin), derfor ser hun **New document**; deltakere som Bjørn og Clara gjør det ikke.
+
 Nå den andre siden av historien. Anna leder hagekomiteen, og hun har en tekst gruppen
 må bli enige om.
 

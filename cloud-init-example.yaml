@@ -17,8 +17,8 @@
 #   2. From your laptop, in the repo:   ./scripts/deploy.sh --env
 #      → uploads the committed code and .env.prod (as .env), installs
 #        dependencies, creates the database and starts the service
-#      → .env.prod must contain SESSION_SECRET (openssl rand -hex 32) and must
-#        not contain NODE_ENV — the systemd service sets it to production
+#      → .env.prod must contain SESSION_SECRET (openssl rand -hex 32), RESEND_API_KEY
+#        and VOTETEXT_URL, and must not contain NODE_ENV — the systemd service sets it
 #   3. On the server (ssh -p 2222 <DEPLOY_USER>@<ip>):   ~/first-deploy.sh
 #      → enables the service at boot and obtains the TLS certificate
 #

@@ -481,6 +481,33 @@
 
 ---
 
+## Group AC — Security hardening 2026-10-21 (site roles, caps, companions)
+
+> Fixtures: alice (creator, owner of "AC doc", open), acuser (voter), acsup (supervisor),
+> acblocked (commenter, later blocked), acsuper (superadmin via direct `UPDATE users`).
+
+| # | Test | Expected |
+|---|------|----------|
+| AC1 | Setup | open doc, three invited users logged in, one proposal |
+| AC2 | Plain user creates / copies | `POST /documents` 403, `copy-data` 403; superadmin creates 201 |
+| AC3 | `PATCH /users/:id/role` | plain user 403; invalid role 400; own role 422; grant `creator` → 200, `user_role_changed` row with `{ target_user_id, role, previous_role }`; the user then creates 201; revoked → 403 again |
+| AC4 | `scripts/grant-role.js` | invalid role exits 1; `creator` exits 0 and the row changes |
+| AC5 | Text caps | 400 for title 201, description 2001, new_text 50001 (create, edit, fork), rationale 5001, comment 5001 (create, edit), display_name 101 / null, organization number; 200 for a normal name |
+| AC6 | Settings | create with `default_access: admin` or bogus threshold → 400; unknown keys dropped on create and update |
+| AC7 | `copy-data` onto itself | 422 |
+| AC8 | Fork companions | hidden original → 404 for a proposer; withdrawn original → 422 |
+| AC9 | Shared proposal | 403 while the document is a draft, 200 once open; 403 for a user with a blocked record, 200 for anonymous |
+| AC10 | Blocked commenter | own comment PATCH 403, DELETE 403, text unchanged |
+| AC11 | Hidden-comment placeholder | `text ''`, `user_id null`, `hidden_by null` below supervisor; supervisor sees the author |
+| AC12 | Author of a hidden proposal | withdraw 404, share 404, status still pending |
+| AC13 | Vote on a withdrawn proposal | 422 |
+| AC14 | User search | voter 403 (with or without `document_id`); supervisor with `document_id` 200; creator and superadmin 200 |
+| AC15 | Sign-in codes | a new request invalidates the earlier code (401), the new one signs in |
+| AC16 | Anonymous reader | `/votes` → `votes []` with tallies; a voter sees identities; `GET /documents/:id` has no `resolved_text` / `owner_organization` / `default_access` |
+
+Also changed: "cross-document relation" now expects 404 (no existence oracle); the copy-data
+ownership test grants bob `creator` first.
+
 ## Unit tests (`tests/unit.test.js`)
 
 > 30 tests for the pure helpers in `src/lib/text.js` — no DB, no server. Run as
@@ -506,7 +533,7 @@
 
 | Scenario | Expected |
 |----------|----------|
-| Database from the 2026-05-23, 2026-06-07 and 2026-07-11 schema, with rows in every table | exit 0; tables, columns, defaults, CHECKs and indexes equal a fresh database; every row and value kept; new NOT NULL columns take their default; the next user id does not reuse a deleted one; every action in the CHECK list can be inserted; no foreign-key violations; a second run reports "already matches" |
+| Database from the 2026-05-23, 2026-06-07, 2026-07-11 and 2026-10-03 schema (the last proves the `users` rebuild for the role list), with rows in every table | exit 0; tables, columns, defaults, CHECKs and indexes equal a fresh database; every row and value kept; new NOT NULL columns take their default; the next user id does not reuse a deleted one; every action in the CHECK list can be inserted; no foreign-key violations; a second run reports "already matches" |
 | Leftover `variants_new` table from a crashed earlier migration | exit 0, schema equals fresh |
 | Columns previously added with `ALTER TABLE` in another order | rebuilt; values follow their column names |
 | A row that violates the new schema (unknown document status) | exit 1, "nothing was changed", database byte-for-byte as before |
@@ -532,7 +559,7 @@
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (65 tests). Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (67 tests). Run with `npm run test:e2e`.
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -554,6 +581,7 @@
 | `supervisor.spec.js` | US-8, US-9 as a non-owner supervisor | Start voting from the document page; no-conflict path to final voting; tallies clear the blocker banner; Mark as Resolved → RESOLVED banner (no overall vote); keyboard conflict ordering (+ root, child of…); a voter sees no supervisor controls and the review page refuses |
 | `moderation.spec.js` | UC-18 | Hide a comment → placeholder → moderation page → unhide; hide a proposal → banner, gone for a voter → unhide |
 | `access.spec.js` | UC-5 | Invite by email → change level → block → remove, verified through the API |
+| `roles.spec.js` | UC-22 | A plain user (bob) sees the participation notice and no **New document** button; a creator (alice) sees the button and no notice |
 | `document.spec.js` | UC-1, UC-6, UC-8 | Numbered-line detection and stripping; Copy prefills the modal; countdown banner appears and cancels; delete from the settings modal |
 | `fork.spec.js` | UC-16 | Fork → "based on #1" on the fork, "forked as #2" on the original |
 | `regression.spec.js` | guard rail | Bugs that only show on the second action in one page: Reply after the thread re-rendered; Change status touching a previously opened document; a document without overlapping proposals reaching final voting; selecting text inside a highlighted line; "Use different email" on the login form |

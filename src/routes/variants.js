@@ -4,6 +4,8 @@ const { Router } = require('express');
 const { db, getOne, getAll, run, transaction, logActivity } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { resolveAccessLevel, meetsLevel } = require('../middleware/access');
+const { checkText } = require('../lib/limits');
+const { proposalCooldown, commentCooldown } = require('../lib/cooldown');
 
 const router = Router();
 
@@ -18,6 +20,13 @@ function checkDocAccess(doc, req, minLevel) {
     try { settings = JSON.parse(doc.settings || '{}'); } catch {}
     const level = resolveAccessLevel(doc, settings, req);
     return level !== null && meetsLevel(level, minLevel, req);
+}
+
+// A signed-in user with a blocked access record never sees the document's content, shared or not
+function blockedOn(doc, req) {
+    if (!req.user) return false;
+    const a = getOne('SELECT blocked FROM user_document_access WHERE user_id = ? AND document_id = ?', [req.user.id, doc.id]);
+    return !!(a && a.blocked);
 }
 
 // Hidden proposals do not exist for anyone below supervisor
@@ -58,7 +67,9 @@ router.get('/:id', (req, res, next) => {
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
 
         const doc = getDoc(variant.document_id);
-        if (!doc || (!variant.allow_anonymous_share && !checkDocAccess(doc, req))) return res.status(403).json({ error: 'Access denied' });
+        if (!doc) return res.status(403).json({ error: 'Access denied' });
+        const sharedOk = !!variant.allow_anonymous_share && doc.status !== 'draft' && !blockedOn(doc, req);
+        if (!sharedOk && !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
         if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
         res.json({ variant });
@@ -75,7 +86,8 @@ router.patch('/:id/share', requireAuth, (req, res, next) => {
         if (variant.proposed_by !== req.user.id) return res.status(403).json({ error: 'Not your variant' });
         const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
-        if (!checkDocAccess(doc, req) || hiddenFrom(variant, doc, req)) return res.status(403).json({ error: 'Access denied' });
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
+        if (!checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
         const val = req.body.allow_anonymous_share ? 1 : 0;
         if (val !== variant.allow_anonymous_share) {
             transaction(() => {
@@ -136,7 +148,15 @@ router.post('/:id/fork', requireAuth, (req, res, next) => {
         if (!checkDocAccess(doc, req, minLevel)) {
             return res.status(403).json({ error: ['voting', 'final_voting'].includes(doc.status) ? 'Supervisor access required during voting' : 'Proposer access required' });
         }
+        if (hiddenFrom(original, doc, req)) return res.status(404).json({ error: 'Variant not found' });
+        if (!['pending', 'conflict'].includes(original.status)) return res.status(422).json({ error: 'Only pending proposals can be forked' });
+        const wait = proposalCooldown(req.user.id);
+        if (wait) return res.status(429).json(wait);
         const { title, new_text, rationale } = req.body;
+        for (const [value, key] of [[new_text, 'new_text'], [title, 'title'], [rationale, 'rationale']]) {
+            const bad = checkText(value, key);
+            if (bad) return res.status(400).json({ error: bad });
+        }
         const newTitle = (title && title.trim()) || `Your variant of ${original.title || original.operation}`;
         const newText  = new_text !== undefined ? new_text : original.new_text;
         const newRationale = (rationale && rationale.trim()) || '';
@@ -198,6 +218,10 @@ router.patch('/:id', requireAuth, (req, res, next) => {
         }
 
         const { new_text, title, rationale } = req.body;
+        for (const [value, key] of [[new_text, 'new_text'], [title, 'title'], [rationale, 'rationale']]) {
+            const bad = checkText(value, key);
+            if (bad) return res.status(400).json({ error: bad });
+        }
         run(
             "UPDATE variants SET new_text = COALESCE(?, new_text), title = COALESCE(?, title), rationale = COALESCE(?, rationale), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
             [new_text !== undefined ? new_text : null, title !== undefined ? title : null, rationale !== undefined ? rationale : null, variant.id]
@@ -220,6 +244,7 @@ router.delete('/:id', requireAuth, (req, res, next) => {
         }
         const doc = getDoc(variant.document_id);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
+        if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
         if (!checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
         if (!['draft', 'open'].includes(doc.status)) {
             return res.status(422).json({ error: 'Proposals can only be withdrawn before voting starts' });
@@ -415,11 +440,10 @@ router.post('/:id/relations', requireAuth, (req, res, next) => {
         if (!doc || !checkDocAccess(doc, req, 'proposer')) return res.status(403).json({ error: 'Proposer access required' });
 
         const to = getOne('SELECT * FROM variants WHERE id = ?', [to_variant_id]);
-        if (!to) return res.status(404).json({ error: 'Target variant not found' });
+        if (!to || to.document_id !== from.document_id) return res.status(404).json({ error: 'Target variant not found' });
 
         if (hiddenFrom(from, doc, req) || hiddenFrom(to, doc, req)) return res.status(404).json({ error: 'Variant not found' });
         if (from.id === to.id) return res.status(400).json({ error: 'Cannot relate a variant to itself' });
-        if (from.document_id !== to.document_id) return res.status(422).json({ error: 'Both variants must be in the same document' });
 
         try {
             transaction(() => {
@@ -451,7 +475,7 @@ router.get('/:id/comments', (req, res, next) => {
             'SELECT c.*, u.display_name as author_name FROM comments c JOIN users u ON u.id = c.user_id WHERE c.variant_id = ? AND (c.is_hidden = 0 OR c.hidden_by IS NOT NULL) ORDER BY c.created_at',
             [variant.id]
         );
-        const all = rows.map(c => c.is_hidden && !canModerate ? { ...c, text: '', author_name: '' } : c);
+        const all = rows.map(c => c.is_hidden && !canModerate ? { ...c, text: '', author_name: '', user_id: null, hidden_by: null, edited_at: null } : c);
         const top = all.filter(c => !c.parent_comment_id);
         const replies = all.filter(c => c.parent_comment_id);
         const threaded = top.map(c => ({ ...c, replies: replies.filter(r => r.parent_comment_id === c.id) }));
@@ -465,7 +489,9 @@ router.get('/:id/comments', (req, res, next) => {
 router.post('/:id/comments', requireAuth, (req, res, next) => {
     try {
         const { text, parent_comment_id } = req.body;
-        if (!text || !text.trim()) return res.status(400).json({ error: 'Text required' });
+        if (!text || typeof text !== 'string' || !text.trim()) return res.status(400).json({ error: 'Text required' });
+        const tooLong = checkText(text, 'comment');
+        if (tooLong) return res.status(400).json({ error: tooLong });
 
         const variant = getOne('SELECT * FROM variants WHERE id = ?', [req.params.id]);
         if (!variant) return res.status(404).json({ error: 'Variant not found' });
@@ -474,17 +500,8 @@ router.post('/:id/comments', requireAuth, (req, res, next) => {
         if (!doc || !checkDocAccess(doc, req, 'commenter')) return res.status(403).json({ error: 'Access denied' });
         if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
-        if (process.env.NODE_ENV !== 'test') {
-            const commentCooldown = parseInt(process.env.COMMENT_COOLDOWN_SECONDS || '5');
-            const lastComment = getOne('SELECT created_at FROM comments WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [req.user.id]);
-            if (lastComment) {
-                const elapsed = (Date.now() - new Date(lastComment.created_at).getTime()) / 1000;
-                if (elapsed < commentCooldown) {
-                    const retryAfter = Math.ceil(commentCooldown - elapsed);
-                    return res.status(429).json({ error: `Please wait ${retryAfter} more second${retryAfter !== 1 ? 's' : ''} before commenting.`, retry_after: retryAfter });
-                }
-            }
-        }
+        const wait = commentCooldown(req.user.id);
+        if (wait) return res.status(429).json(wait);
 
         if (parent_comment_id) {
             const parent = getOne('SELECT * FROM comments WHERE id = ?', [parent_comment_id]);
@@ -514,6 +531,9 @@ router.post('/:id/vote', requireAuth, (req, res, next) => {
         if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
         if (['final_voting', 'resolved', 'archived'].includes(doc.status)) {
             return res.status(422).json({ error: 'Cannot vote while document is in final_voting, resolved, or archived state' });
+        }
+        if (['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(variant.status)) {
+            return res.status(422).json({ error: 'This proposal is no longer open for voting' });
         }
 
         const existing = getOne('SELECT id FROM votes WHERE variant_id = ? AND user_id = ?', [variant.id, req.user.id]);
@@ -569,10 +589,11 @@ router.get('/:id/votes', (req, res, next) => {
         if (!doc || !checkDocAccess(doc, req)) return res.status(403).json({ error: 'Access denied' });
         if (hiddenFrom(variant, doc, req)) return res.status(404).json({ error: 'Variant not found' });
 
-        const votes = getAll(
+        // Who voted how is visible to participants who can vote themselves; others get the tallies only
+        const votes = req.user && checkDocAccess(doc, req, 'voter') ? getAll(
             'SELECT v.vote_value, v.user_id, u.display_name, v.created_at, v.updated_at FROM votes v JOIN users u ON u.id = v.user_id WHERE v.variant_id = ? ORDER BY v.created_at',
             [variant.id]
-        );
+        ) : [];
         res.json({ votes, tallies: { votes_for: variant.votes_for, votes_against: variant.votes_against, votes_abstain: variant.votes_abstain } });
     } catch (err) {
         next(err);

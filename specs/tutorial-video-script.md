@@ -98,6 +98,8 @@ once someone invites you, which is exactly what happens in a moment.
 
 [screen: Anna's document list, click "New document"]
 
+> Note: Anna holds the site role *creator* (granted by the superadmin), which is why she sees **New document**; participants like Bjørn and Clara do not.
+
 Now the other side of that story. Anna chairs the garden committee, and she has a
 text the group needs to agree on.
 

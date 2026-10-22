@@ -31,6 +31,7 @@ Report pass / fail counts. If any fail, show the failing test names. The e2e run
 grep -rhoE "logActivity\([^;]*" src | grep -oE "'[a-z_]+'" | sort -u
 ```
 - `git diff --stat schema.sql` — an uncommitted schema change must have the owner's approval.
+- Every route that stores free text runs it through `checkText()` from `src/lib/limits.js`; grep `run('INSERT INTO (documents|variants|comments)` and `UPDATE users SET display_name` in `src/routes/` and confirm a `checkText` call precedes each. `POST /documents` and `copy-data` carry `requireRole('creator', 'superadmin')`.
 
 **5. Environment variables**
 Every `process.env.X` read in `src/` should be in `.env.example` and in the README configuration table, and nothing in `.env.example` should be unread:

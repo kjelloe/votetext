@@ -99,8 +99,13 @@ module.exports = async function globalSetup() {
 
     await waitForServer('http://localhost:3001/api/auth/me');
 
-    // 3. Create and log in alice (owner / editor)
+    // 3. Create and log in alice (owner / editor) — she needs the creator role to create documents
     const aliceSession = await login('alice@e2e.test');
+    {
+        const dbw = new Database(DB_PATH);
+        dbw.prepare("UPDATE users SET role = 'creator' WHERE email = 'alice@e2e.test'").run();
+        dbw.close();
+    }
     fs.writeFileSync(path.join(AUTH_DIR, 'alice.json'), JSON.stringify(storageState(aliceSession)));
 
     // Set alice display name

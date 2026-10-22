@@ -157,7 +157,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `POST` | `/api/auth/logout` | Destroy session |
 | `GET`  | `/api/auth/me` | Get current user info + client config |
 | `PATCH` | `/api/auth/profile` | Update display name, organisation, searchability |
-| `GET`  | `/api/auth/search` | Search users by name/email/organisation (3+ chars; non-searchable/protected excluded) |
+| `GET`  | `/api/auth/search` | Search users by name/email/organisation (3+ chars; non-searchable/protected excluded). Only creators, superadmins, or supervisor+ on `?document_id=` |
 
 #### Documents
 | Method | Path | Description |
@@ -236,6 +236,18 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | `GET`   | `/api/documents/:id/moderation` | Hidden proposals + moderator-hidden comments for a document (supervisor+) |
 | `GET`   | `/api/users` | List all users with protection status (superadmin only; `?q=` filter) |
 | `PATCH` | `/api/users/:id/protection` | Toggle `is_protected` — excludes user from invite search (superadmin only) |
+| `PATCH` | `/api/users/:id/role` | Set a user's site role: `user`, `creator` or `superadmin` (superadmin only, not your own; logs `user_role_changed`) |
+
+#### Site roles and limits
+
+Every account starts as `user`: it can take part in documents it is invited to (or that open themselves via a document's default access) but cannot create documents. A superadmin grants `creator` in *Users* (header menu) or from the server shell:
+
+```bash
+node scripts/grant-role.js you@example.com superadmin   # the first superadmin; later ones from the Users page
+node scripts/grant-role.js alice@example.com creator
+```
+
+Text fields are capped server-side (`src/lib/limits.js`): title 200, description 2 000, proposal text 50 000, rationale 5 000, comment 5 000, display name and organisation 100 characters; unknown document settings keys are dropped. Per user: 10 new documents and 5 data copies per hour, 20 invitations to new addresses per hour (also per client address), a 5-second cooldown between proposals (including forks) and between comments. Sign-in codes: 10 requests per client address and 5 per address per 15 minutes, one live code per address, and a process-wide budget of 300 emails per hour. These are constants, not settings.
 
 #### Operations
 | Method | Path | Description |
@@ -423,7 +435,7 @@ On the server it installs dependencies (only when `package-lock.json` changed), 
 
 ```bash
 # 1. Point the DNS A record to the server IP
-# 2. From your laptop — .env.prod must contain SESSION_SECRET and no NODE_ENV
+# 2. From your laptop — .env.prod must contain SESSION_SECRET, RESEND_API_KEY, VOTETEXT_URL and no NODE_ENV
 ./scripts/deploy.sh --env
 # 3. On the server: enable the service at boot and obtain the TLS certificate
 ssh -p 2222 <DEPLOY_USER>@<YOUR_DOMAIN>

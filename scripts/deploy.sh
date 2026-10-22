@@ -96,7 +96,7 @@ systemctl is-enabled --quiet "$SERVICE" 2>/dev/null && ok "service enabled at bo
 if [ -f "$APP/.env" ]; then
     perm=$(stat -c '%a %U:%G' "$APP/.env")
     case "$perm" in 600*|640*) ok ".env is $perm" ;; *) warn ".env is $perm — should be 600 (or 640 with the service group)" ;; esac
-    for k in SESSION_SECRET RESEND_API_KEY; do [ -n "$(envval "$k" "$APP/.env")" ] && ok "$k set" || warn "$k missing from .env"; done
+    for k in SESSION_SECRET RESEND_API_KEY VOTETEXT_URL; do [ -n "$(envval "$k" "$APP/.env")" ] && ok "$k set" || warn "$k missing from .env"; done
     [ -n "$(envval NODE_ENV "$APP/.env")" ] && warn "NODE_ENV in .env — the unit sets it; remove it" || ok "NODE_ENV not in .env"
     for k in LOG_LEVEL ACTIVITY_REFRESH_INTERVAL OTP_LOCKOUT_MINUTES; do [ -n "$(envval "$k" "$APP/.env")" ] && warn "$k in .env is not read by the app"; done
     mode=$(envval SIGNUP_MODE "$APP/.env"); [ "$mode" = invited ] && ok "SIGNUP_MODE=invited" || warn "SIGNUP_MODE=${mode:-open} — anyone with an email can sign up"

@@ -2,10 +2,12 @@
 
 const { Router } = require('express');
 const { db, getOne, getAll, run, transaction, logActivity, applyVotingSchedules } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
+const { checkText, pickSettings } = require('../lib/limits');
+const { proposalCooldown } = require('../lib/cooldown');
 const { requireDocumentAccess, resolveAccessLevel, meetsLevel, redactActivity, ACCESS_LEVELS, VISIBLE_DOCUMENT_IDS_SQL } = require('../middleware/access');
 const { applyVariantsToText, decideOutcomes, escapeHtml, VALID_THRESHOLDS, importText } = require('../lib/text');
-const { sendMail } = require('../lib/mail');
+const { sendMail, budgetLeft } = require('../lib/mail');
 
 const router = Router();
 
@@ -13,13 +15,44 @@ const router = Router();
 const inviteLog = new Map();
 const INVITE_EMAILS_PER_HOUR = 20;
 
-function inviteLimited(userId) {
+const inviteByIp = new Map();
+const createLog = new Map();
+const DOCUMENTS_PER_HOUR = 10;
+const copyLog = new Map();
+const COPIES_PER_HOUR = 5;
+
+// true when `key` already has `max` hits in the last hour; records the hit otherwise
+function hourlyLimited(map, key, max) {
+    if (process.env.NODE_ENV === 'test') return false;
     const now = Date.now();
-    const sent = (inviteLog.get(userId) || []).filter(t => now - t < 3600000);
-    if (sent.length >= INVITE_EMAILS_PER_HOUR) return true;
-    sent.push(now);
-    inviteLog.set(userId, sent);
+    const hits = (map.get(key) || []).filter(t => now - t < 3600000);
+    if (hits.length >= max) return true;
+    hits.push(now);
+    map.set(key, hits);
     return false;
+}
+
+function inviteLimited(req) {
+    if (process.env.NODE_ENV === 'test') return false;
+    const now = Date.now();
+    const fresh = (map, key) => (map.get(key) || []).filter(t => now - t < 3600000);
+    if (fresh(inviteLog, req.user.id).length >= INVITE_EMAILS_PER_HOUR || fresh(inviteByIp, req.ip).length >= INVITE_EMAILS_PER_HOUR) return true;
+    hourlyLimited(inviteLog, req.user.id, INVITE_EMAILS_PER_HOUR);
+    hourlyLimited(inviteByIp, req.ip, INVITE_EMAILS_PER_HOUR);
+    return false;
+}
+
+const DEFAULT_ACCESS_VALUES = ['viewer', 'commenter', 'proposer', 'voter'];
+
+// Shared by POST and PATCH: returns an error message or null
+function settingsError(settings) {
+    if (settings.majority_threshold != null && !VALID_THRESHOLDS.has(settings.majority_threshold)) {
+        return 'Invalid majority_threshold. Use simple, absolute, two_thirds, or three_quarters.';
+    }
+    if (settings.default_access != null && !DEFAULT_ACCESS_VALUES.includes(settings.default_access)) {
+        return 'default_access must be viewer, commenter, proposer, or voter';
+    }
+    return null;
 }
 
 function originalText(documentId) {
@@ -105,16 +138,22 @@ router.get('/', (req, res, next) => {
 });
 
 // POST /api/documents
-router.post('/', requireAuth, (req, res, next) => {
+router.post('/', requireAuth, requireRole('creator', 'superadmin'), (req, res, next) => {
     try {
         const { title, text, description, settings } = req.body;
-        if (!title || !title.trim()) return res.status(400).json({ error: 'Title required' });
-        if (!text || !text.trim()) return res.status(400).json({ error: 'Text content required' });
+        if (!title || typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'Title required' });
+        if (!text || typeof text !== 'string' || !text.trim()) return res.status(400).json({ error: 'Text content required' });
+        for (const [value, key] of [[title, 'title'], [description, 'description']]) {
+            const bad = checkText(value, key);
+            if (bad) return res.status(400).json({ error: bad });
+        }
 
         const maxChars = parseInt(process.env.MAX_DOCUMENT_CHARS || '1000000');
         if (text.length > maxChars) return res.status(400).json({ error: `Document too large (max ${maxChars} chars)` });
 
-        const parsedSettings = (settings && typeof settings === 'object') ? settings : {};
+        const parsedSettings = pickSettings(settings);
+        const settingsBad = settingsError(parsedSettings);
+        if (settingsBad) return res.status(400).json({ error: settingsBad });
         const linesPerPage = Number(parsedSettings.lines_per_page ?? (process.env.DEFAULT_LINES_PER_PAGE || '30'));
         if (!Number.isInteger(linesPerPage) || linesPerPage < 1) return res.status(400).json({ error: 'lines_per_page must be a positive whole number' });
         const lineItems = importText(text, linesPerPage);
@@ -123,6 +162,10 @@ router.post('/', requireAuth, (req, res, next) => {
         const maxPages = Math.min(parseInt(process.env.MAX_PAGES || '200'), 200);
         if (totalPages > maxPages) {
             return res.status(400).json({ error: `Document too long: ${totalPages} pages at ${linesPerPage} lines per page (max ${maxPages} pages)` });
+        }
+
+        if (hourlyLimited(createLog, req.user.id, DOCUMENTS_PER_HOUR)) {
+            return res.status(429).json({ error: `You can create at most ${DOCUMENTS_PER_HOUR} documents per hour.` });
         }
 
         const insertLine = db.prepare(
@@ -168,7 +211,13 @@ router.get('/:id', (req, res, next) => {
         const myAccessLevel = resolveAccessLevel(doc, settings, req);
         if (myAccessLevel === null) return res.status(403).json({ error: 'Access denied' });
 
-        res.json({ document: { ...doc, settings, my_access_level: myAccessLevel } });
+        const document = { ...doc, settings, my_access_level: myAccessLevel };
+        if (!req.user) {
+            delete document.resolved_text;
+            delete document.owner_organization;
+            document.settings = { lines_per_page: settings.lines_per_page, majority_threshold: settings.majority_threshold, allow_anonymous_view: settings.allow_anonymous_view };
+        }
+        res.json({ document });
     } catch (err) {
         next(err);
     }
@@ -183,21 +232,19 @@ router.patch('/:id', requireAuth, requireDocumentAccess('editor'), (req, res, ne
         let currentSettings = {};
         try { currentSettings = JSON.parse(doc.settings || '{}'); } catch {}
 
-        const newSettings = settings ? { ...currentSettings, ...settings } : currentSettings;
-
-        if (newSettings.majority_threshold != null && !VALID_THRESHOLDS.has(newSettings.majority_threshold)) {
-            return res.status(400).json({ error: 'Invalid majority_threshold. Use simple, absolute, two_thirds, or three_quarters.' });
-        }
-
-        if (newSettings.default_access != null && !['viewer', 'commenter', 'proposer', 'voter'].includes(newSettings.default_access)) {
-            return res.status(400).json({ error: 'default_access must be viewer, commenter, proposer, or voter' });
+        const newSettings = settings ? { ...currentSettings, ...pickSettings(settings) } : currentSettings;
+        const settingsBad = settingsError(newSettings);
+        if (settingsBad) return res.status(400).json({ error: settingsBad });
+        for (const [value, key] of [[title, 'title'], [description, 'description']]) {
+            const bad = checkText(value, key);
+            if (bad) return res.status(400).json({ error: bad });
         }
 
         run(
             "UPDATE documents SET title = ?, description = ?, settings = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
             [
-                title !== undefined ? title.trim() : doc.title,
-                description !== undefined ? description.trim() : doc.description,
+                title != null ? title.trim() : doc.title,
+                description != null ? description.trim() : doc.description,
                 JSON.stringify(newSettings),
                 doc.id,
             ]
@@ -348,14 +395,16 @@ router.get('/:id/resolved-text', requireAuth, requireDocumentAccess('viewer'), (
 });
 
 // POST /api/documents/:id/copy-data — copy variants/votes/comments into a target doc (owner only)
-router.post('/:id/copy-data', requireAuth, requireDocumentAccess('admin'), (req, res, next) => {
+router.post('/:id/copy-data', requireAuth, requireRole('creator', 'superadmin'), requireDocumentAccess('admin'), (req, res, next) => {
     try {
         const sourceDoc = req.document;
         const { target_doc_id, copy_variants, copy_votes, copy_comments } = req.body;
 
         const targetDoc = getOne('SELECT id, owner_id FROM documents WHERE id = ? AND deleted_at IS NULL', [target_doc_id]);
         if (!targetDoc) return res.status(404).json({ error: 'Target document not found' });
+        if (targetDoc.id === sourceDoc.id) return res.status(422).json({ error: 'Target must be a different document' });
         if (targetDoc.owner_id !== req.user.id) return res.status(403).json({ error: 'You do not own the target document' });
+        if (hourlyLimited(copyLog, req.user.id, COPIES_PER_HOUR)) return res.status(429).json({ error: `You can copy data at most ${COPIES_PER_HOUR} times per hour.` });
 
         const counts = { variants: 0, votes: 0, comments: 0 };
 
@@ -472,16 +521,11 @@ router.post('/:id/variants', requireAuth, requireDocumentAccess('proposer'), (re
             return res.status(422).json({ error: 'Cannot propose on a resolved or archived document' });
         }
 
-        if (process.env.NODE_ENV !== 'test') {
-            const variantCooldown = parseInt(process.env.VARIANT_COOLDOWN_SECONDS || '5');
-            const lastVariant = getOne("SELECT created_at FROM variants WHERE proposed_by = ? ORDER BY created_at DESC LIMIT 1", [req.user.id]);
-            if (lastVariant) {
-                const elapsed = (Date.now() - new Date(lastVariant.created_at).getTime()) / 1000;
-                if (elapsed < variantCooldown) {
-                    const retryAfter = Math.ceil(variantCooldown - elapsed);
-                    return res.status(429).json({ error: `Please wait ${retryAfter} more second${retryAfter !== 1 ? 's' : ''} before submitting a new proposal.`, retry_after: retryAfter });
-                }
-            }
+        const wait = proposalCooldown(req.user.id);
+        if (wait) return res.status(429).json(wait);
+        for (const [value, key] of [[new_text, 'new_text'], [title, 'title'], [rationale, 'rationale']]) {
+            const bad = checkText(value, key);
+            if (bad) return res.status(400).json({ error: bad });
         }
 
         if (!Number.isInteger(char_start) || !Number.isInteger(char_end)) return res.status(400).json({ error: 'char_start and char_end must be whole numbers' });
@@ -592,8 +636,11 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (re
             const existing = getOne('SELECT id FROM user_document_access WHERE user_id = ? AND document_id = ?', [user.id, req.params.id]);
             if (existing) return res.status(403).json({ error: 'Admin access required to change existing access' });
         }
-        if (isNewUser && process.env.NODE_ENV !== 'test' && inviteLimited(req.user.id)) {
+        if (isNewUser && inviteLimited(req)) {
             return res.status(429).json({ error: 'Too many invitations to new addresses. Try again in an hour.' });
+        }
+        if (isNewUser && process.env.NODE_ENV === 'production' && !budgetLeft()) {
+            return res.status(503).json({ error: 'Too many emails are being sent right now. Try the invitation again later.' });
         }
         if (!user) {
             const r = run('INSERT INTO users (email, display_name) VALUES (?, ?)', [normalizedEmail, normalizedEmail.split('@')[0]]);
@@ -611,9 +658,9 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (re
             const appUrl = process.env.VOTETEXT_URL || `${req.protocol}://${req.get('host')}`;
             const inviterName = req.user.display_name || req.user.email;
             const docTitle = req.document.title;
-            const subject = `You have been invited to "${docTitle.replace(/[\r\n]+/g, ' ')}" on VoteText`;
+            const subject = 'You have been invited to a document on VoteText';
             const plainText =
-                `${inviterName} has invited you to participate in "${docTitle}" as a ${access_level}.\n\n` +
+                `You have been invited to take part in a document on VoteText as a ${access_level}.\n\n` +
                 `Sign in with this email address (${normalizedEmail}) at:\n${appUrl}\n\n` +
                 `If you were not expecting this, you can safely ignore this email.`;
             const htmlBody =

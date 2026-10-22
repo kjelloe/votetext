@@ -71,7 +71,7 @@ app.use(errorHandler);
 
 if (require.main === module) {
     if (process.env.NODE_ENV === 'production') {
-        for (const key of ['SESSION_SECRET', 'RESEND_API_KEY']) {
+        for (const key of ['SESSION_SECRET', 'RESEND_API_KEY', 'VOTETEXT_URL']) {
             if (!process.env[key]) {
                 console.error(`${key} is not set. Add it to .env before starting in production.`);
                 process.exit(1);

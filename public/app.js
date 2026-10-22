@@ -19,6 +19,11 @@ const state = {
 /* ===== Utilities ===== */
 const ACCESS_LEVELS = ['viewer', 'commenter', 'proposer', 'voter', 'supervisor', 'editor', 'admin'];
 
+// Site role gate for POST /documents and copy-data — mirrors requireRole('creator', 'superadmin')
+function canCreateDocuments() {
+    return !!state.user && ['creator', 'superadmin'].includes(state.user.role);
+}
+
 function hasLevel(doc, minLevel) {
     return !!(doc && doc.my_access_level) && ACCESS_LEVELS.indexOf(doc.my_access_level) >= ACCESS_LEVELS.indexOf(minLevel);
 }
@@ -230,18 +235,22 @@ async function viewDocumentList() {
     const data = await api('GET', '/documents');
     const docs = data.documents || [];
 
+    const canCreate = canCreateDocuments();
     const wrap = el('div', { class: 'page-container' });
     wrap.innerHTML = `
         <div class="page-header">
             <h1 class="page-title">Documents</h1>
-            <button id="create-doc-btn" class="btn btn-primary">+ New document</button>
+            ${canCreate ? '<button id="create-doc-btn" class="btn btn-primary">+ New document</button>' : ''}
         </div>
+        ${canCreate ? '' : '<p id="creator-notice" class="text-muted mb-2">You can take part in documents you are invited to. Ask the site administrator for permission to create documents.</p>'}
         <div id="doc-list"></div>
     `;
 
     const list = wrap.querySelector('#doc-list');
     if (docs.length === 0) {
-        list.innerHTML = `<div class="empty-state"><h3>No documents yet</h3><p>Create a document to get started.</p></div>`;
+        list.innerHTML = canCreate
+            ? `<div class="empty-state"><h3>No documents yet</h3><p>Create a document to get started.</p></div>`
+            : `<div class="empty-state"><h3>No documents yet</h3><p>Documents appear here once you are invited to one.</p></div>`;
     } else {
         list.innerHTML = `<div class="doc-grid">${docs.map(d => `
             <a href="#/documents/${esc(d.id)}" class="doc-card">
@@ -258,7 +267,8 @@ async function viewDocumentList() {
 
     setMain(wrap);
 
-    document.getElementById('create-doc-btn').addEventListener('click', () => openCreateDocModal());
+    const createBtn = document.getElementById('create-doc-btn');
+    if (createBtn) createBtn.addEventListener('click', () => openCreateDocModal());
 }
 
 function openCreateDocModal(prefill = {}) {
@@ -504,7 +514,7 @@ async function viewDocument(docId) {
             <div class="flex gap-1 items-center">
                 ${(doc.status === 'voting' || doc.status === 'final_voting') && hasLevel(doc, 'supervisor') ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}${(['resolved', 'archived'].includes(doc.status) && state.user) || (doc.status === 'final_voting' && hasLevel(doc, 'supervisor')) ? `<a href="#/documents/${esc(String(docId))}/resolved-text" class="btn btn-ghost btn-sm">Resolved text</a>` : ''}
                 ${hasLevel(doc, 'editor') ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
-                ${doc.owner_id === (state.user && state.user.id) ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
+                ${doc.owner_id === (state.user && state.user.id) && canCreateDocuments() ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
                 ${hasLevel(doc, 'supervisor') ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
             </div>
         </div>
@@ -1204,10 +1214,11 @@ async function viewVariant(variantId) {
 
     const wrap = el('div', { class: 'variant-layout' });
 
-    const canFork = !['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(v.status) &&
+    const canFork = ['pending', 'conflict'].includes(v.status) &&
         (doc && doc.status === 'open' ? hasLevel(doc, 'proposer') : ['voting', 'final_voting'].includes(doc && doc.status) && hasLevel(doc, 'supervisor'));
-    const canVote = hasLevel(doc, 'voter') && ['draft', 'open', 'voting'].includes(doc.status);
-    const voteNote = !state.user ? 'Log in to vote' : canVote ? '' : (hasLevel(doc, 'voter') ? 'Voting on proposals is closed' : 'Voter access is required to vote');
+    const variantOpen = !['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(v.status);
+    const canVote = hasLevel(doc, 'voter') && ['draft', 'open', 'voting'].includes(doc.status) && variantOpen;
+    const voteNote = !state.user ? 'Log in to vote' : canVote ? '' : (!variantOpen ? 'This proposal is no longer open for voting' : hasLevel(doc, 'voter') ? 'Voting on proposals is closed' : 'Voter access is required to vote');
     const numOf = id => { const m = rawVariants.find(x => x.id === id); return m ? `#${m.proposal_num}` : ''; };
     const basedOn = (relData.relations || []).filter(r => r.relation_type === 'based_on' && r.from_variant_id === variantId);
     const forks = (relData.relations || []).filter(r => r.relation_type === 'based_on' && r.to_variant_id === variantId);

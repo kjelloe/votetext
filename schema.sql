@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name    TEXT    NOT NULL DEFAULT '',
     organization    TEXT    NOT NULL DEFAULT '',
     role            TEXT    NOT NULL DEFAULT 'user'
-                            CHECK (role IN ('user', 'admin', 'superadmin')),
+                            CHECK (role IN ('user', 'creator', 'superadmin')),  -- creator: may create documents (granted by a superadmin)
     is_active           INTEGER NOT NULL DEFAULT 1,   -- 0 = soft-deleted / banned
     is_non_searchable   INTEGER NOT NULL DEFAULT 0,   -- 1 = hidden from user search (user-controlled)
     is_protected        INTEGER NOT NULL DEFAULT 0,   -- 1 = hidden from all searches (admin-controlled)
@@ -323,7 +323,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
                             'document_deleted', 'document_data_copied',
                             'user_access_changed', 'user_access_removed',
                             'variant_share_changed', 'variant_relation_added',
-                            'comment_deleted'
+                            'comment_deleted', 'user_role_changed'
                         )),
     metadata    TEXT    NOT NULL DEFAULT '{}',   -- JSON with action-specific data
     created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

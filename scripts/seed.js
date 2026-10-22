@@ -45,9 +45,10 @@ transaction(() => {
     // Create users
     const alice = getOne('SELECT id FROM users WHERE email = ?', ['alice@example.com']) ||
         (() => {
-            run("INSERT INTO users (email, display_name, organization) VALUES ('alice@example.com', 'Alice Smith', 'Acme Corp')");
+            run("INSERT INTO users (email, display_name, organization, role) VALUES ('alice@example.com', 'Alice Smith', 'Acme Corp', 'creator')");
             return getOne("SELECT id FROM users WHERE email = 'alice@example.com'");
         })();
+    run("UPDATE users SET role = 'creator' WHERE id = ? AND role = 'user'", [alice.id]);
 
     const bob = getOne('SELECT id FROM users WHERE email = ?', ['bob@example.com']) ||
         (() => {

@@ -136,6 +136,8 @@ test('POST /auth/verify-otp — correct code → 200, session cookie set', async
     assert.equal(r.data.user.email, 'alice@test.com');
     assert.ok(r.sessionId, 'session_id cookie should be present in response');
     sessionCookie = `session_id=${r.sessionId}`;
+    // Site role: only creators may create documents (group AC covers the gate itself)
+    db.prepare("UPDATE users SET role = 'creator' WHERE email = 'alice@test.com'").run();
 });
 
 test('POST /auth/verify-otp — used code → 401', async () => {
@@ -913,12 +915,12 @@ test('POST /variants/:id/relations — invalid relation_type → 400', async () 
     assert.equal(r.status, 400);
 });
 
-test('POST /variants/:id/relations — cross-document → 422', async () => {
+test('POST /variants/:id/relations — cross-document → 404 (no existence oracle on other documents)', async () => {
     const r = await req('POST', `/variants/${relV1Id}/relations`, {
         body: { to_variant_id: variantId, relation_type: 'conflicts' },
         cookie: sessionCookie,
     });
-    assert.equal(r.status, 422);
+    assert.equal(r.status, 404);
 });
 
 test('GET /variants/:id/relations → 200, both sides returned', async () => {
@@ -1675,6 +1677,7 @@ test('Copied comments on target — reply parent remapped to new comment id', as
 });
 
 test('POST /documents/:id/copy-data — target not owned by requester → 403', async () => {
+    db.prepare("UPDATE users SET role = 'creator' WHERE email = 'bob@test.com'").run();
     const d = await req('POST', '/documents', {
         body: { title: 'Bob target', text: 'Bob owns this' },
         cookie: viewerCookie,
@@ -3003,6 +3006,213 @@ test('AB7: deleting a document logs document_deleted and removes it from the fee
     assert.deepEqual(rows[0].metadata, { title: 'AB doc' });
     const feed = await req('GET', '/activity', { cookie: sessionCookie });
     assert.ok(!feed.data.activity.some(a => a.document_id === abDocId), 'activity of a deleted document is no longer listed');
+});
+
+
+// ── GROUP AC — Security hardening 2026-10-21 (site roles, caps, companions) ──
+
+const { spawnSync: acSpawn } = require('child_process');
+const acPath = require('path');
+let acDocId, acUserCookie, acSuperCookie, acSupCookie, acBlockedCookie, acVarId, acBlockedCommentId, acUserVarId, acWithdrawnVarId;
+
+test('AC1: setup — open doc, plain user (voter), supervisor, commenter, superadmin', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AC doc', text: 'Alpha beta gamma delta\nSecond line here' }, cookie: sessionCookie });
+    assert.equal(d.status, 201);
+    acDocId = d.data.document.id;
+    await req('POST', `/documents/${acDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    for (const [email, level] of [['acuser@test.com', 'voter'], ['acsup@test.com', 'supervisor'], ['acblocked@test.com', 'commenter']]) {
+        const r = await req('POST', `/documents/${acDocId}/access`, { body: { email, access_level: level }, cookie: sessionCookie });
+        assert.equal(r.status, 201);
+    }
+    acUserCookie = await loginAs('acuser@test.com');
+    acSupCookie = await loginAs('acsup@test.com');
+    acBlockedCookie = await loginAs('acblocked@test.com');
+    acSuperCookie = await loginAs('acsuper@test.com');
+    db.prepare("UPDATE users SET role = 'superadmin' WHERE email = 'acsuper@test.com'").run();
+    const v = await req('POST', `/documents/${acDocId}/variants`, { body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'ALPHA', title: 'AC-1' }, cookie: sessionCookie });
+    acVarId = v.data.variant.id;
+});
+
+test('AC2: a plain user cannot create documents or copy data (403); superadmin can create', async () => {
+    const r = await req('POST', '/documents', { body: { title: 'Nope', text: 'text' }, cookie: acUserCookie });
+    assert.equal(r.status, 403);
+    const c = await req('POST', `/documents/${acDocId}/copy-data`, { body: { target_doc_id: acDocId }, cookie: acUserCookie });
+    assert.equal(c.status, 403);
+    const s = await req('POST', '/documents', { body: { title: 'Super doc', text: 'text' }, cookie: acSuperCookie });
+    assert.equal(s.status, 201);
+});
+
+test('AC3: PATCH /users/:id/role — superadmin only, not self, logged; a creator can then create', async () => {
+    const me = (await req('GET', '/auth/me', { cookie: acUserCookie })).data.user;
+    const superMe = (await req('GET', '/auth/me', { cookie: acSuperCookie })).data.user;
+    assert.equal((await req('PATCH', `/users/${me.id}/role`, { body: { role: 'creator' }, cookie: acUserCookie })).status, 403);
+    assert.equal((await req('PATCH', `/users/${me.id}/role`, { body: { role: 'owner' }, cookie: acSuperCookie })).status, 400);
+    assert.equal((await req('PATCH', `/users/${superMe.id}/role`, { body: { role: 'user' }, cookie: acSuperCookie })).status, 422);
+    const g = await req('PATCH', `/users/${me.id}/role`, { body: { role: 'creator' }, cookie: acSuperCookie });
+    assert.equal(g.status, 200);
+    assert.equal(g.data.user.role, 'creator');
+    const log = db.prepare("SELECT metadata FROM activity_log WHERE action = 'user_role_changed' ORDER BY id DESC LIMIT 1").get();
+    assert.deepEqual(JSON.parse(log.metadata), { target_user_id: me.id, role: 'creator', previous_role: 'user' });
+    assert.equal((await req('POST', '/documents', { body: { title: 'Now allowed', text: 'text' }, cookie: acUserCookie })).status, 201);
+    const back = await req('PATCH', `/users/${me.id}/role`, { body: { role: 'user' }, cookie: acSuperCookie });
+    assert.equal(back.data.user.role, 'user');
+    assert.equal((await req('POST', '/documents', { body: { title: 'Denied again', text: 'text' }, cookie: acUserCookie })).status, 403);
+});
+
+test('AC4: scripts/grant-role.js sets a role from the shell', async () => {
+    const script = acPath.join(__dirname, '..', 'scripts', 'grant-role.js');
+    const bad = acSpawn(process.execPath, [script, 'acuser@test.com', 'owner'], { env: { ...process.env, DATABASE_PATH: DB_PATH }, encoding: 'utf8' });
+    assert.equal(bad.status, 1);
+    const r = acSpawn(process.execPath, [script, 'acuser@test.com', 'creator'], { env: { ...process.env, DATABASE_PATH: DB_PATH }, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.equal(db.prepare("SELECT role FROM users WHERE email = 'acuser@test.com'").get().role, 'creator');
+    db.prepare("UPDATE users SET role = 'user' WHERE email = 'acuser@test.com'").run();
+});
+
+test('AC5: text caps — title, description, proposal, rationale, comment, profile', async () => {
+    const big = n => 'x'.repeat(n);
+    assert.equal((await req('POST', '/documents', { body: { title: big(201), text: 't' }, cookie: sessionCookie })).status, 400);
+    assert.equal((await req('POST', '/documents', { body: { title: 'ok', description: big(2001), text: 't' }, cookie: sessionCookie })).status, 400);
+    assert.equal((await req('PATCH', `/documents/${acDocId}`, { body: { title: big(201) }, cookie: sessionCookie })).status, 400);
+    const v = { char_start: 0, char_end: 5, operation: 'replace' };
+    assert.equal((await req('POST', `/documents/${acDocId}/variants`, { body: { ...v, new_text: big(50001) }, cookie: sessionCookie })).status, 400);
+    assert.equal((await req('POST', `/documents/${acDocId}/variants`, { body: { ...v, new_text: 'ok', rationale: big(5001) }, cookie: sessionCookie })).status, 400);
+    assert.equal((await req('PATCH', `/variants/${acVarId}`, { body: { new_text: big(50001) }, cookie: sessionCookie })).status, 400);
+    assert.equal((await req('POST', `/variants/${acVarId}/fork`, { body: { new_text: big(50001) }, cookie: sessionCookie })).status, 400);
+    assert.equal((await req('POST', `/variants/${acVarId}/comments`, { body: { text: big(5001) }, cookie: acUserCookie })).status, 400);
+    const c = await req('POST', `/variants/${acVarId}/comments`, { body: { text: 'fine' }, cookie: acUserCookie });
+    assert.equal((await req('PATCH', `/comments/${c.data.comment.id}`, { body: { text: big(5001) }, cookie: acUserCookie })).status, 400);
+    assert.equal((await req('PATCH', '/auth/profile', { body: { display_name: big(101) }, cookie: acUserCookie })).status, 400);
+    assert.equal((await req('PATCH', '/auth/profile', { body: { display_name: null }, cookie: acUserCookie })).status, 400);
+    assert.equal((await req('PATCH', '/auth/profile', { body: { organization: 12345 }, cookie: acUserCookie })).status, 400);
+    assert.equal((await req('PATCH', '/auth/profile', { body: { display_name: 'AC User' }, cookie: acUserCookie })).status, 200);
+});
+
+test('AC6: settings are validated on create and unknown keys are dropped', async () => {
+    assert.equal((await req('POST', '/documents', { body: { title: 'S', text: 't', settings: { default_access: 'admin' } }, cookie: sessionCookie })).status, 400);
+    assert.equal((await req('POST', '/documents', { body: { title: 'S', text: 't', settings: { majority_threshold: 'bogus' } }, cookie: sessionCookie })).status, 400);
+    const d = await req('POST', '/documents', { body: { title: 'S', text: 't', settings: { lines_per_page: 20, junk: 'x'.repeat(1000) } }, cookie: sessionCookie });
+    assert.equal(d.status, 201);
+    const got = await req('GET', `/documents/${d.data.document.id}`, { cookie: sessionCookie });
+    assert.deepEqual(got.data.document.settings, { lines_per_page: 20 });
+    await req('PATCH', `/documents/${d.data.document.id}`, { body: { settings: { junk: 'y', majority_threshold: 'absolute' } }, cookie: sessionCookie });
+    const again = await req('GET', `/documents/${d.data.document.id}`, { cookie: sessionCookie });
+    assert.deepEqual(again.data.document.settings, { lines_per_page: 20, majority_threshold: 'absolute' });
+});
+
+test('AC7: copy-data onto the same document → 422', async () => {
+    const r = await req('POST', `/documents/${acDocId}/copy-data`, { body: { target_doc_id: acDocId, copy_variants: true }, cookie: sessionCookie });
+    assert.equal(r.status, 422);
+});
+
+test('AC8: fork — hidden original → 404; withdrawn original → 422', async () => {
+    const h = await req('POST', `/documents/${acDocId}/variants`, { body: { char_start: 6, char_end: 10, operation: 'replace', new_text: 'SECRET-HIDDEN', title: 'hidden one' }, cookie: sessionCookie });
+    const hiddenId = h.data.variant.id;
+    assert.equal((await req('POST', `/variants/${hiddenId}/hide`, { cookie: sessionCookie })).status, 200);
+    const f = await req('POST', `/variants/${hiddenId}/fork`, { body: {}, cookie: acUserCookie });
+    assert.equal(f.status, 404);
+    const w = await req('POST', `/documents/${acDocId}/variants`, { body: { char_start: 11, char_end: 16, operation: 'replace', new_text: 'gone', title: 'withdrawn one' }, cookie: sessionCookie });
+    acWithdrawnVarId = w.data.variant.id;
+    assert.equal((await req('DELETE', `/variants/${acWithdrawnVarId}`, { cookie: sessionCookie })).status, 200);
+    assert.equal((await req('POST', `/variants/${acWithdrawnVarId}/fork`, { body: {}, cookie: acUserCookie })).status, 422);
+});
+
+test('AC9: a shared proposal is not readable on a draft document, nor by a blocked user', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AC draft share', text: 'Draft words here' }, cookie: sessionCookie });
+    const draftId = d.data.document.id;
+    const v = await req('POST', `/documents/${draftId}/variants`, { body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'Final', title: 'draft share' }, cookie: sessionCookie });
+    const vid = v.data.variant.id;
+    assert.equal((await req('PATCH', `/variants/${vid}/share`, { body: { allow_anonymous_share: true }, cookie: sessionCookie })).status, 200);
+    assert.equal((await req('GET', `/variants/${vid}`)).status, 403, 'anonymous share link is dead while the document is a draft');
+    await req('POST', `/documents/${draftId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    assert.equal((await req('GET', `/variants/${vid}`)).status, 200);
+
+    const sv = await req('PATCH', `/variants/${acVarId}/share`, { body: { allow_anonymous_share: true }, cookie: sessionCookie });
+    assert.equal(sv.status, 200);
+    const blockedId = (await req('GET', '/auth/me', { cookie: acBlockedCookie })).data.user.id;
+    const c = await req('POST', `/variants/${acVarId}/comments`, { body: { text: 'posted before the block' }, cookie: acBlockedCookie });
+    assert.equal(c.status, 201);
+    acBlockedCommentId = c.data.comment.id;
+    assert.equal((await req('PATCH', `/documents/${acDocId}/access/${blockedId}`, { body: { blocked: true }, cookie: sessionCookie })).status, 200);
+    assert.equal((await req('GET', `/variants/${acVarId}`, { cookie: acBlockedCookie })).status, 403, 'blocked users do not get the shared proposal');
+    assert.equal((await req('GET', `/variants/${acVarId}`)).status, 200, 'anonymous still does');
+});
+
+test('AC10: a blocked user can no longer edit or delete their own comments', async () => {
+    assert.equal((await req('PATCH', `/comments/${acBlockedCommentId}`, { body: { text: 'edited while blocked' }, cookie: acBlockedCookie })).status, 403);
+    assert.equal((await req('DELETE', `/comments/${acBlockedCommentId}`, { cookie: acBlockedCookie })).status, 403);
+    const list = await req('GET', `/variants/${acVarId}/comments`, { cookie: acUserCookie });
+    assert.equal(list.data.comments.find(c => c.id === acBlockedCommentId).text, 'posted before the block');
+});
+
+test('AC11: a moderator-hidden comment placeholder carries no author or moderator id', async () => {
+    assert.equal((await req('POST', `/comments/${acBlockedCommentId}/hide`, { cookie: sessionCookie })).status, 204);
+    const list = await req('GET', `/variants/${acVarId}/comments`, { cookie: acUserCookie });
+    const ph = list.data.comments.find(c => c.id === acBlockedCommentId);
+    assert.ok(ph, 'placeholder is listed');
+    assert.equal(ph.text, '');
+    assert.equal(ph.user_id, null);
+    assert.equal(ph.hidden_by, null);
+    const mod = await req('GET', `/variants/${acVarId}/comments`, { cookie: acSupCookie });
+    assert.ok(mod.data.comments.find(c => c.id === acBlockedCommentId).user_id, 'supervisors still see the author');
+});
+
+test('AC12: the author of a hidden proposal gets 404 on withdraw and share', async () => {
+    const v = await req('POST', `/documents/${acDocId}/variants`, { body: { char_start: 17, char_end: 22, operation: 'replace', new_text: 'mine', title: 'user proposal' }, cookie: acUserCookie });
+    acUserVarId = v.data.variant.id;
+    assert.equal((await req('POST', `/variants/${acUserVarId}/hide`, { cookie: sessionCookie })).status, 200);
+    assert.equal((await req('DELETE', `/variants/${acUserVarId}`, { cookie: acUserCookie })).status, 404);
+    assert.equal((await req('PATCH', `/variants/${acUserVarId}/share`, { body: { allow_anonymous_share: true }, cookie: acUserCookie })).status, 404);
+    assert.equal(db.prepare('SELECT status FROM variants WHERE id = ?').get(acUserVarId).status, 'pending');
+});
+
+test('AC13: voting on a withdrawn proposal → 422', async () => {
+    const r = await req('POST', `/variants/${acWithdrawnVarId}/vote`, { body: { vote_value: 1 }, cookie: acUserCookie });
+    assert.equal(r.status, 422);
+});
+
+test('AC14: user search needs invite rights — creator, superadmin, or supervisor on the given document', async () => {
+    assert.equal((await req('GET', '/auth/search?q=acs', { cookie: acUserCookie })).status, 403);
+    assert.equal((await req('GET', `/auth/search?q=acs&document_id=${acDocId}`, { cookie: acUserCookie })).status, 403, 'a voter cannot search even with the document');
+    const sup = await req('GET', `/auth/search?q=acu&document_id=${acDocId}`, { cookie: acSupCookie });
+    assert.equal(sup.status, 200);
+    assert.ok(sup.data.users.some(u => u.email === 'acuser@test.com'));
+    assert.equal((await req('GET', '/auth/search?q=acu', { cookie: sessionCookie })).status, 200, 'creators search without a document');
+    assert.equal((await req('GET', '/auth/search?q=acu', { cookie: acSuperCookie })).status, 200);
+});
+
+test('AC15: requesting a new sign-in code invalidates the earlier one', async () => {
+    await req('POST', '/auth/request-otp', { body: { email: 'acotp@test.com' } });
+    const first = latestOtp('acotp@test.com').code;
+    await req('POST', '/auth/request-otp', { body: { email: 'acotp@test.com' } });
+    const second = latestOtp('acotp@test.com').code;
+    assert.notEqual(first, second);
+    assert.equal((await req('POST', '/auth/verify-otp', { body: { email: 'acotp@test.com', code: first } })).status, 401);
+    assert.equal((await req('POST', '/auth/verify-otp', { body: { email: 'acotp@test.com', code: second } })).status, 200);
+});
+
+test('AC16: anonymous readers get tallies but no voter identities, and a trimmed document', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AC public', text: 'Public words here', settings: { allow_anonymous_view: true, default_access: 'voter' } }, cookie: sessionCookie });
+    const pubId = d.data.document.id;
+    await req('POST', `/documents/${pubId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${pubId}/variants`, { body: { char_start: 0, char_end: 6, operation: 'replace', new_text: 'Open', title: 'pub var' }, cookie: sessionCookie });
+    const vid = v.data.variant.id;
+    assert.equal((await req('POST', `/variants/${vid}/vote`, { body: { vote_value: 1 }, cookie: acUserCookie })).status, 200);
+
+    const anon = await req('GET', `/variants/${vid}/votes`);
+    assert.equal(anon.status, 200);
+    assert.deepEqual(anon.data.votes, []);
+    assert.equal(anon.data.tallies.votes_for, 1);
+    const voter = await req('GET', `/variants/${vid}/votes`, { cookie: acUserCookie });
+    assert.equal(voter.data.votes.length, 1, 'a voter sees who voted');
+
+    const doc = (await req('GET', `/documents/${pubId}`)).data.document;
+    assert.equal(doc.my_access_level, 'viewer');
+    assert.ok(!('resolved_text' in doc) && !('owner_organization' in doc));
+    assert.equal(doc.settings.allow_anonymous_view, true);
+    assert.ok(!('default_access' in doc.settings), 'anonymous readers do not get the access configuration');
+    const full = (await req('GET', `/documents/${pubId}`, { cookie: acUserCookie })).data.document;
+    assert.equal(full.settings.default_access, 'voter');
 });
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────

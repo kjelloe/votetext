@@ -798,7 +798,7 @@ Every control is gated on `my_access_level` with `hasLevel(doc, level)` in `app.
 
 1. Moderator opens a proposal and clicks **Hide** in the header row, confirming the prompt.
 2. `POST /api/variants/:id/hide` sets `variants.is_hidden = 1` and logs `variant_hidden`.
-3. The proposal disappears from all listings and the resolved-text merge for regular participants; a direct link returns 404 for them (including anonymous share links), and so do its comments, votes and relations. Activity entries about it are left out of their feeds. If it was the parent of other proposals in a conflict group, those children become ordinary unordered proposals again.
+3. The proposal disappears from all listings and the resolved-text merge for regular participants; a direct link returns 404 for them (including anonymous share links), and so do its comments, votes, relations, fork, withdraw and share toggle (its author included). A moderator-hidden comment's placeholder carries no author or moderator id below supervisor. Activity entries about it are left out of their feeds. If it was the parent of other proposals in a conflict group, those children become ordinary unordered proposals again.
 4. Supervisors still see the proposal, with a red *Hidden by moderator* banner and an **Unhide** button.
 5. The document's **Moderation** page lists it under *Hidden proposals* with an Unhide action (`POST /api/variants/:id/unhide`, logs `variant_unhidden`).
 
@@ -900,9 +900,33 @@ A `DELETE` of someone else's comment by a doc admin is recorded as a moderation 
 - Everyone else receives the same `200 { message: 'Code sent' }` and no code, so the response does not reveal which addresses have accounts.
 - The host's own address or domain must be on the allowlist unless the account already exists.
 
-Any signed-in user can still create documents and invite others, so access spreads by invitation; the switch closes anonymous self-registration, not the invitation chain.
+Since 2026-10-21 a new account cannot create documents or invite anyone (see UC-22), so with `open` sign-up a stranger can only reach documents they were pointed to; `invited` additionally closes self-registration.
 
 **Tests:** AA14 in `tests/api.test.js`.
+
+---
+
+## UC-22: Site roles — who may create documents
+
+**Status: implemented 2026-10-21.**
+
+**Actor:** The site's superadmin granting roles; any account.
+
+**Goal:** Sign-up is open, but creating documents (and with it inviting, copying data and searching users) is a granted right, so a stranger's account can only take part where it is invited.
+
+### Behaviour
+
+- Every account starts as `user`. The documents list shows no **New document** button but a notice: *You can take part in documents you are invited to. Ask the site administrator for permission to create documents.* `POST /api/documents` and `POST /api/documents/:id/copy-data` answer 403.
+- `creator` may create documents and copy data; document-level rights are unchanged (admin of own documents only). `superadmin` implies creator.
+- Roles are set in **Users** (header menu, superadmin) with a dropdown per user — never on yourself — via `PATCH /api/users/:id/role`, logged as `user_role_changed { target_user_id, role, previous_role }`. The first superadmin is created on the server with `node scripts/grant-role.js <email> superadmin`.
+- Supervisors still invite on their documents (they were appointed by a creator). `GET /api/auth/search` needs creator/superadmin, or supervisor+ on the document given as `document_id`.
+- Invited users who should later start documents are promoted by the superadmin; there is no self-service request.
+
+### Related hardening (same date)
+
+Text caps on every stored field, hourly quotas (documents, copies, invitations per user and per address), the proposal cooldown also on forks, settings validated on create, one live sign-in code per address, 10 code requests per client address per 15 minutes, a process-wide mail budget, generic 500 messages, anonymous readers get tallies but no voter identities and a trimmed document, shared proposals are refused on drafts and for blocked users, blocked users cannot edit or delete their comments. See `plan-update.md` § Security review 2026-10-21.
+
+**Tests:** group AC in `tests/api.test.js`; `tests/e2e/roles.spec.js`.
 
 ---
 

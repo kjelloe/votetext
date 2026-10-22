@@ -82,8 +82,8 @@ const SHED_TEXT = [
     '4. Broken tools are reported to the committee, not returned quietly to the rack.',
 ].join('\n');
 
-function createUser(email, name, org) {
-    run('INSERT INTO users (email, display_name, organization) VALUES (?, ?, ?)', [email, name, org]);
+function createUser(email, name, org, role = 'user') {
+    run('INSERT INTO users (email, display_name, organization, role) VALUES (?, ?, ?, ?)', [email, name, org, role]);
     return getOne('SELECT id FROM users WHERE email = ?', [email]);
 }
 
@@ -136,7 +136,7 @@ console.log('Seeding tutorial demo data…');
 
 transaction(() => {
     // ── Cast ──────────────────────────────────────────────────────────────────
-    const anna  = createUser('anna@demo.votetext',  'Anna Berg',  'Garden Committee');   // chair — owns all docs
+    const anna  = createUser('anna@demo.votetext',  'Anna Berg',  'Garden Committee', 'creator');   // chair — owns all docs
     const bjorn = createUser('bjorn@demo.votetext', 'Bjørn Dahl', 'Plot 14');            // proposer
     const clara = createUser('clara@demo.votetext', 'Clara Foss', 'Plot 3');             // voter/commenter
     const david = createUser('david@demo.votetext', 'David Lie',  'Garden Committee');   // supervisor

@@ -4,6 +4,7 @@ const { Router } = require('express');
 const { getOne, run, transaction, logActivity } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { resolveAccessLevel, meetsLevel } = require('../middleware/access');
+const { checkText } = require('../lib/limits');
 
 const router = Router();
 const editWindowMins = parseInt(process.env.COMMENT_EDIT_WINDOW_MINUTES || '30');
@@ -24,11 +25,15 @@ function hasDocLevel(req, documentId, minLevel) {
 router.patch('/:id', requireAuth, (req, res, next) => {
     try {
         const { text } = req.body;
-        if (!text || !text.trim()) return res.status(400).json({ error: 'Text required' });
+        if (!text || typeof text !== 'string' || !text.trim()) return res.status(400).json({ error: 'Text required' });
+        const tooLong = checkText(text, 'comment');
+        if (tooLong) return res.status(400).json({ error: tooLong });
 
         const comment = getOne('SELECT * FROM comments WHERE id = ?', [req.params.id]);
         if (!comment) return res.status(404).json({ error: 'Comment not found' });
         if (comment.user_id !== req.user.id) return res.status(403).json({ error: 'Not your comment' });
+        const variant = getOne('SELECT document_id FROM variants WHERE id = ?', [comment.variant_id]);
+        if (!variant || !hasDocLevel(req, variant.document_id, 'commenter')) return res.status(403).json({ error: 'Access denied' });
         if (comment.is_hidden) return res.status(422).json({ error: 'Hidden comments cannot be edited' });
 
         const editCutoff = new Date(Date.now() - EDIT_WINDOW_MS).toISOString();
@@ -41,8 +46,7 @@ router.patch('/:id', requireAuth, (req, res, next) => {
 
         run("UPDATE comments SET text = ?, edited_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [text.trim(), comment.id]);
 
-        const variant = getOne('SELECT document_id FROM variants WHERE id = ?', [comment.variant_id]);
-        logActivity(req.user.id, variant ? variant.document_id : null, comment.variant_id, 'comment_updated', { comment_id: comment.id, previous_text: comment.text });
+        logActivity(req.user.id, variant.document_id, comment.variant_id, 'comment_updated', { comment_id: comment.id, previous_text: comment.text });
 
         res.json({ comment: getOne('SELECT c.*, u.display_name as author_name FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?', [comment.id]) });
     } catch (err) {
@@ -58,7 +62,8 @@ router.delete('/:id', requireAuth, (req, res, next) => {
 
         const variant = getOne('SELECT document_id FROM variants WHERE id = ?', [comment.variant_id]);
 
-        if (comment.user_id !== req.user.id && !(variant && hasDocLevel(req, variant.document_id, 'admin'))) {
+        const isAuthor = comment.user_id === req.user.id;
+        if (!variant || !hasDocLevel(req, variant.document_id, isAuthor ? 'viewer' : 'admin')) {
             return res.status(403).json({ error: 'Not authorized' });
         }
 

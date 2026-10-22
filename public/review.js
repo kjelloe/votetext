@@ -231,7 +231,7 @@ async function viewResolvedText(docId) {
         toolbar.append(resolveBtn);
     }
 
-    if ((doc.status === 'resolved' || doc.status === 'archived') && isOwner) {
+    if ((doc.status === 'resolved' || doc.status === 'archived') && isOwner && canCreateDocuments()) {
         const forkBtn = el('button', { class: 'btn btn-ghost btn-sm' }, 'Fork as new document');
         forkBtn.addEventListener('click', async () => {
             let forkText = text;
@@ -926,16 +926,21 @@ async function viewUserAdmin() {
     wrap.innerHTML = `
         <h1 class="mb-2">Users</h1>
         <div class="card">
-            <p class="text-muted mb-2">Protected users are hidden from all user searches (e.g. access invites).</p>
+            <p class="text-muted mb-2">Role: <strong>user</strong> takes part in documents they are invited to; <strong>creator</strong> may also create documents; <strong>superadmin</strong> administers the site. Protected users are hidden from all user searches (e.g. access invites).</p>
             ${users.map(u => `
                 <div class="user-admin-row" style="${rowStyle}">
                     <div>
                         <strong>${esc(u.display_name || u.email)}</strong>
-                        <span class="text-muted"> — ${esc(u.email)} · ${esc(u.role)}${u.is_protected ? ' · <em>protected</em>' : ''}${u.is_active ? '' : ' · <em>inactive</em>'}</span>
+                        <span class="text-muted"> — ${esc(u.email)}${u.is_protected ? ' · <em>protected</em>' : ''}${u.is_active ? '' : ' · <em>inactive</em>'}</span>
                     </div>
-                    <button class="btn btn-ghost btn-sm protect-toggle-btn" data-id="${esc(u.id)}" data-val="${u.is_protected ? 0 : 1}">
-                        ${u.is_protected ? 'Unprotect' : 'Protect'}
-                    </button>
+                    <div class="flex items-center gap-1">
+                        ${u.id === state.user.id
+                            ? `<span class="text-muted">${esc(u.role)}</span>`
+                            : `<select class="invite-role-select role-select" data-id="${esc(u.id)}" title="Site role">${['user', 'creator', 'superadmin'].map(r => `<option value="${r}"${r === u.role ? ' selected' : ''}>${r}</option>`).join('')}</select>`}
+                        <button class="btn btn-ghost btn-sm protect-toggle-btn" data-id="${esc(u.id)}" data-val="${u.is_protected ? 0 : 1}">
+                            ${u.is_protected ? 'Unprotect' : 'Protect'}
+                        </button>
+                    </div>
                 </div>`).join('')}
         </div>
     `;
@@ -948,6 +953,14 @@ async function viewUserAdmin() {
             await api('PATCH', `/users/${btn.dataset.id}/protection`, { is_protected: parseInt(btn.dataset.val) });
             runRoute();
         } catch (err) { alert(err.message); }
+    });
+    wrap.addEventListener('change', async e => {
+        const sel = e.target.closest('.role-select');
+        if (!sel) return;
+        try {
+            await api('PATCH', `/users/${sel.dataset.id}/role`, { role: sel.value });
+            runRoute();
+        } catch (err) { alert(err.message); runRoute(); }
     });
 }
 
@@ -1029,7 +1042,7 @@ function openAccessModal(docId) {
             const q = searchInput.value.trim();
             if (q.length < 3) { hideResults(); return; }
             try {
-                const { users } = await api('GET', `/auth/search?q=${encodeURIComponent(q)}`);
+                const { users } = await api('GET', `/auth/search?q=${encodeURIComponent(q)}&document_id=${encodeURIComponent(docId)}`);
                 if (!users.length) { hideResults(); return; }
                 resultsList.innerHTML = users.map(u => `
                     <li class="user-search-result" data-email="${esc(u.email)}">

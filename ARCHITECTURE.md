@@ -217,11 +217,17 @@ History: before 2026-07-11 this logic existed in five divergent copies; `/lines`
 
 ### Invite email
 
-When an invited email has no existing account, `POST /api/documents/:id/access` sends a fire-and-forget invitation email through `sendMail()` in `src/lib/mail.js` (same path as OTP). The email names the inviter, the document, the role, and the app URL (`VOTETEXT_URL` env var); all user-supplied values are passed through `escapeHtml()`. Email failure does not roll back the access grant. Each inviter is limited to 20 invitations to new addresses per hour (in-memory, 429 beyond that).
+When an invited email has no existing account, `POST /api/documents/:id/access` sends a fire-and-forget invitation email through `sendMail()` in `src/lib/mail.js` (same path as OTP). The plain-text part is a fixed template (role, address, app URL from `VOTETEXT_URL`, which production requires); only the HTML part names the inviter and the document, through `escapeHtml()`, so no user text reaches a mail client unescaped. Email failure does not roll back the access grant. Each inviter is limited to 20 invitations to new addresses per hour (in-memory, 429 beyond that).
 
 ### Global roles
 
-`users.role` controls platform-wide permissions: `user`, `admin`, `superadmin`. `superadmin` can delete other users' documents, withdraw others' variants, moderate any document, and manage user protection via `/api/users` (first real use of `requireRole`). Granting the role itself is a manual DB operation — there is deliberately no promotion UI.
+`users.role` controls platform-wide permissions: `user`, `creator`, `superadmin` (2026-10-21; the unused `admin` value was replaced).
+
+- `user` — every new account. Takes part in documents it is invited to or that open themselves through `default_access`; cannot create documents, copy data between documents, or search users.
+- `creator` — may also `POST /api/documents` and `POST /api/documents/:id/copy-data` (`requireRole('creator', 'superadmin')`) and search users for invitations. Document-level rights are unchanged: a creator is admin of its own documents only.
+- `superadmin` — everything a creator can, plus deleting other users' documents, withdrawing others' variants, moderating any document, user protection and roles via `/api/users`. Implied document admin everywhere.
+
+Roles are granted by a superadmin in `#/admin/users` (`PATCH /api/users/:id/role`, never on yourself, logged as `user_role_changed`) or from the server shell with `node scripts/grant-role.js <email> <role>` — the only way to create the first superadmin. Supervisors invite without a creator role: they were appointed by one. `GET /api/auth/search` requires creator/superadmin or supervisor+ on the document passed as `?document_id=`; the manage-access modal passes it.
 
 ---
 
@@ -594,7 +600,7 @@ Stored in `state.config` during `init()`. Used by `openStatusModal` (default cou
 
 ### Spam cooldowns
 
-`POST /api/variants/:id/comments` and `POST /api/documents/:id/variants` enforce per-user cooldowns to prevent scripted flooding:
+`POST /api/variants/:id/comments`, `POST /api/documents/:id/variants` and `POST /api/variants/:id/fork` enforce per-user cooldowns (`src/lib/cooldown.js`) to prevent scripted flooding:
 
 | Env var | Default | Applies to |
 |---------|---------|-----------|
@@ -603,9 +609,13 @@ Stored in `state.config` during `init()`. Used by `openStatusModal` (default cou
 
 The check queries the user's most recent comment/variant timestamp and returns `429 { error, retry_after }` if within the window. Skipped when `NODE_ENV=test`. The frontend mirrors the cooldown with a live countdown on the submit button after a successful post, and applies `retry_after` seconds from a 429 response.
 
+### Input limits and quotas (2026-10-21)
+
+`src/lib/limits.js` holds the caps every text-storing route applies through `checkText()`: title 200, description 2 000, `new_text` 50 000, rationale 5 000, comment 5 000, display name / organisation 100 characters. A value over the cap, or a non-string, is a 400 before anything is written. `pickSettings()` keeps only `lines_per_page`, `majority_threshold`, `default_access`, `allow_anonymous_view`, and `settingsError()` validates them on create and update alike. In-memory hourly quotas in `documents.js`: 10 documents and 5 `copy-data` calls per user, 20 invitations to new addresses per user and per client address; `copy-data` refuses its own document as target. Sign-in: 10 code requests per client address per 15 minutes (`request-otp` only), a new request invalidates the address's earlier codes, and `src/lib/mail.js` enforces a process-wide 300 mails/hour budget (`MailBudgetError` → 503 on sign-in, warning on invites). All counters live in memory and reset on restart — fine for one process on one VM.
+
 ### Share proposal
 
-`PATCH /api/variants/:id/share { allow_anonymous_share: 0|1 }` — proposer only. No document status requirement. Sets the `allow_anonymous_share` flag which enables anonymous `GET /api/variants/:id` access even on non-public documents.
+`PATCH /api/variants/:id/share { allow_anonymous_share: 0|1 }` — proposer only; hidden proposals answer 404. No status requirement to toggle it, but the shared read (`GET /api/variants/:id`) is refused while the document is a draft and for signed-in users with a blocked access record. Sets the `allow_anonymous_share` flag which enables anonymous `GET /api/variants/:id` access even on non-public documents.
 
 Frontend: a **Share** button lives in the top-right of every proposal card in `viewVariant`. Clicking it opens a modal with the full URL and a Copy button. For the proposer, an extra checkbox toggles the flag immediately on change (no separate Save needed).
 

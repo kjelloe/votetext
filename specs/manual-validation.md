@@ -116,6 +116,17 @@ Two browsers: the document owner and an invited voter.
 - [ ] Log in in the same tab → the unread badge and voting toasts work without a reload
 - [ ] An insert proposal: the final-voting card says "Inserted at character N — nothing removed"
 
+## Security hardening (2026-10-21) — site roles and limits
+
+- [ ] Sign in with a brand-new address → documents list shows the notice and no **New document** button; `#/admin/users` is not in the menu
+- [ ] As superadmin, **Users** → set that account to **creator** → after a reload it sees **New document** and can create; set it back to **user** → button gone
+- [ ] As superadmin, the dropdown is absent on your own row
+- [ ] On the server, `node scripts/grant-role.js <email> creator` prints the change and the Users page reflects it
+- [ ] Manage access as a non-owner supervisor: the invite search still returns results (it passes the document id)
+- [ ] Paste a 60 000-character proposal text → "new_text is too long (max 50000 characters)" and nothing saved
+- [ ] Request a sign-in code twice → only the second code works
+- [ ] Anonymous visit to a document with *Anyone can view*: proposal page shows tallies, no voter names
+
 ## Deploy (`scripts/deploy.sh`)
 
 - [ ] `./scripts/deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing

@@ -242,6 +242,168 @@ A and B can run in parallel with the design pass; C after the first live deploy;
 
 ---
 
+## Security review 2026-10-21 (live efc032c; three independent read-only reviews, every finding verified in code)
+
+No way was found for a user without a login, or without access to a document, to read a
+document's text or to change or delete anyone else's data. The core (`resolveAccessLevel`,
+sessions, CSRF posture, soft delete, mass assignment, headers) is clean. What remains is
+abuse of open sign-up, a few routes that skip a companion check, and missing size caps.
+
+### S1 — Fix before wider use (abuse by any self-registered account)
+
+| # | Finding | Where | Fix |
+|---|---|---|---|
+| S1.1 | **No size caps**: `title`, `description`, variant `new_text`/`rationale`, comment `text`, `display_name`/`organization` and the `settings` blob accept anything up to the 2 MB body limit; `POST /documents` has no cooldown; `POST /variants/:id/fork` has **no cooldown** (only direct proposals do) | documents.js POST/PATCH, variants.js fork + comments, auth.js profile | One `limits` helper: title 200, description 2 000, new_text 50 000, rationale 5 000, comment 5 000, name/org 100, settings keys whitelisted; apply the variant cooldown to fork; 10 documents/hour per user |
+| S1.2 | **copy-data onto itself** doubles a document's variants per call (14→28→56…), no throttle | documents.js copy-data | Reject `target_doc_id == id`; treat as a mutation with the variant cooldown |
+| S1.3 | **Sign-in email flood**: 100 code requests/min per IP, 5 per address, no global budget; no nginx `limit_req` on the live VM | auth.js `ipLimit`; cloud-init (simple) | Per-IP limit for `request-otp` alone (5/min), a process-wide send budget (e.g. 300/h), and the hardened template's nginx `limit_req` on the live site |
+| S1.4 | **Invites as a spam channel**: any account creates a document and invites any address; a new address gets a user row and an email whose plain-text body embeds the attacker's unbounded `display_name` and title; 20/h per account, accounts are free. In `invited` mode this also bypasses the allowlist | documents.js POST /access | Fixed plain-text template (no user text), name cap (S1.1), invite limit per IP as well as per user; in `invited` mode only allowlisted addresses get a user row |
+| S1.5 | **User directory dump**: `GET /api/auth/search?q=` needs only a login and returns `email` for any 3-character substring, 10 per query | auth.js search | Exact-email match only, or restrict to users sharing a document with the caller; drop `email` from the result |
+
+### S2 — Access gaps (moderation and draft rules bypassed by one route each)
+
+| # | Finding | Where | Fix |
+|---|---|---|---|
+| S2.1 | **Fork reveals a moderator-hidden proposal**: `POST /variants/:id/fork` never calls `hiddenFrom`, copies `new_text`/title/range and returns them (ids are sequential) | variants.js fork | `hiddenFrom` → 404; also refuse withdrawn/rejected/not_applicable/merged originals |
+| S2.2 | **Settings unvalidated on create**: `POST /documents` stores `default_access:'admin'` (PATCH caps it at voter) → every logged-in user becomes admin of that document; bad `majority_threshold` later blocks PATCH | documents.js POST | Share the PATCH validation |
+| S2.3 | **Share link survives `open → draft`** and ignores blocks: `allow_anonymous_share` short-circuits the document check | variants.js GET | Require `doc.status !== 'draft'` even when shared, or clear the flag on the transition to draft |
+| S2.4 | **Blocked users keep editing/deleting their comments** for the edit window: comment PATCH/DELETE check authorship only | comments.js | Author path also needs `hasDocLevel(req, variant.document_id, 'commenter')` |
+| S2.5 | **Hidden-comment placeholder leaks `user_id`/`hidden_by`** below supervisor | variants.js comments list | Null those fields too |
+| S2.6 | **Author can withdraw a hidden variant** (DELETE lacks `hiddenFrom`; `/share` answers 403 where GET answers 404) | variants.js DELETE, share | `hiddenFrom` → 404 in both |
+
+### S3 — Hygiene
+
+| # | Finding | Fix |
+|---|---|---|
+| S3.1 | 500 responses echo `err.message` (e.g. SQLite constraint text) | `status === 500 ? 'Internal server error' : message` in errors.js |
+| S3.2 | Profile fields untyped: `null` → 500, numbers stored as text | `typeof === 'string'` + cap (S1.1) |
+| S3.3 | Earlier sign-in codes stay valid until expiry (up to 5 live codes) | Mark older codes used on each new request |
+| S3.4 | Invite link falls back to the `Host` header when `VOTETEXT_URL` is unset (set in `.env.prod`, so not live today) | Add `VOTETEXT_URL` to the production boot check |
+| S3.5 | Anonymous readers of `allow_anonymous_view` documents get `d.*` (settings blob, `resolved_text`, owner organisation) and per-voter identities from `/votes` | Whitelist fields in `GET /documents/:id`; decide whether ballots are open (today: yes, by design?) |
+| S3.6 | `/relations` answers 422 vs 404 before the access check — existence oracle on other documents' variant ids | Reorder checks |
+| S3.7 | Voting on withdrawn/rejected variants is accepted (tallies polluted, resolution unaffected) | Reject unless `status IN ('pending','conflict')` |
+
+Effort: S1 ≈ M (one limits helper + rate-limit helper + nginx line), S2 ≈ S (six one-to-three-line changes), S3 ≈ S. Each fix gets an API test in a new group AC.
+
+---
+
+## Phase S — Security hardening (designed and implemented 2026-10-21, uncommitted, undeployed)
+
+**Done 2026-10-21 (Q14–Q18 as recommended):** S.A role `creator` (schema, `tests/fixtures/schema-2026-10-03.sql`,
+`requireRole` on create + copy-data, `PATCH /api/users/:id/role`, `scripts/grant-role.js`, role dropdown
+in `#/admin/users`, notice + hidden button for plain users, seeds/tests grant creator), S.B caps and quotas
+(`src/lib/limits.js`, `src/lib/cooldown.js`, fork cooldown, 10 docs/h, 5 copies/h, self-copy refused, invite
+limit per IP, fixed plain-text invite), S.C sign-in (10 code requests/IP/15 min, one live code per address,
+300 mails/h budget → 503), S.D companions (fork/withdraw/share hidden → 404, settings validated on create,
+draft/blocked share, blocked commenters, placeholder ids, relations 404, vote on closed → 422), S.E hygiene
+(generic 500, `VOTETEXT_URL` required in production + audited, anonymous document trimmed, `/votes`
+identities voter+ only), S.F docs/specs/skills. Tests: 346 node (group AC = 16), 67 e2e (`roles.spec.js`).
+Review round (independent agent) fixed: Copy / Fork-as-new-document buttons now hidden for non-creators, fork and
+vote buttons match the server's status rules, quotas no longer burn a slot on a refused request, invites refuse
+with 503 before writing when the mail budget is gone, `seed.js` re-runs grant alice `creator`.
+**Open for you:** C3 nginx `limit_req` on the live VM; G2–G4 (commit, merge, push, deploy, then
+`node scripts/grant-role.js kjell@kjell.solutions superadmin` on the server, grant creators in Users, `--check`).
+Note: after the migration every existing account — including yours — is `user` until that grant.
+
+
+Goal: a fresh sign-up can only *take part* in documents it is invited to (or that open
+themselves via `default_access`); creating documents is a granted site role; the abuse
+paths S1–S3 are closed with caps and companion checks. No new npm dependency, no new
+tables; one `schema.sql` change (role list + two activity actions), which needs the
+owner's approval.
+
+### Decisions needed (Q14–Q18)
+
+| # | Question | Options | Recommendation |
+|---|---|---|---|
+| Q14 | How to gate document creation | (a) new site role `creator` in `users.role` (replaces the unused `admin` value: `user` / `creator` / `superadmin`); (b) reuse the existing `admin` value as "may create"; (c) `CREATOR_ALLOWLIST` env var, no schema change | **(a)**: clear name, manageable in the UI, migration is a plain table rebuild; (b) overloads "admin" with the document-level admin; (c) cannot be managed without a deploy |
+| Q15 | Where the new limits live | (a) constants in code like `INVITE_EMAILS_PER_HOUR`; (b) new `.env` variables | **(a)**; only `SIGNUP_MODE` stays configurable. Fewer knobs, nothing to get wrong on the server |
+| Q16 | Who sees individual ballots (`/votes`) | (a) anyone with read access incl. anonymous (today); (b) signed-in voter+ only, anonymous and viewers get tallies; (c) supervisor+ only | **(b)**: participants can still audit each other, outsiders see counts only |
+| Q17 | `SIGNUP_MODE` after the creator role | (a) stay `open`; (b) `invited` | **(a)**: a new account can no longer create anything or invite anyone, so open sign-up only lets people reach documents they were pointed to |
+| Q18 | Who may use user search (for invites) | (a) any account (today); (b) `creator`/`superadmin`, or supervisor+ on the document the modal is opened for | **(b)** with `?document_id=`; exact e-mail still works for everyone with invite rights |
+
+### S.A — Site role `creator` (Q14a)
+
+| Step | Change | Who |
+|---|---|---|
+| A1 | `schema.sql`: `role IN ('user','creator','superadmin')`; activity actions `user_role_changed`, `document_create_denied` is **not** logged (no spam) — only `user_role_changed { target_user_id, role }` | Claude, after approval |
+| A2 | `tests/fixtures/schema-2026-10-03.sql` = copy of today's schema, so `migrate.test.js` proves the rebuild of `users` (FK targets: sessions, documents, votes, comments, access, activity) keeps every row | Claude |
+| A3 | `POST /documents` and `POST /documents/:id/copy-data` require `requireRole('creator','superadmin')`; `superadmin` always implies creator | Claude |
+| A4 | `PATCH /api/users/:id/role { role }` (superadmin; cannot change own role; logs `user_role_changed`); `#/admin/users` gets a role selector next to Protect | Claude |
+| A5 | `scripts/grant-role.js <email> <role>` for bootstrapping the first superadmin on the server (today a manual SQL) — ships with `scripts/`, documented in README | Claude |
+| A6 | Frontend: `+ New document` only for creator/superadmin; `user` sees a one-line notice on the list ("You can take part in documents you are invited to. Ask the site administrator for permission to create documents.") and a 403 toast if they hit the API anyway | Claude |
+| A7 | Seeds, API tests, e2e global-setup grant `creator` to the accounts that create documents (`UPDATE users SET role`), invited accounts stay `user`; new API group **AC** (role gating, grant/revoke, self-change refused, user cannot create/copy) and one e2e assertion (button hidden for a `user`) | Claude |
+| A8 | After deploy, on the server: `node scripts/grant-role.js kjell@kjell.solutions superadmin`, then grant `creator` to the people who should start documents via `#/admin/users` | **You** |
+
+### S.B — Abuse caps (S1.1, S1.2, S1.4, S3.2)
+
+| Step | Change | Who |
+|---|---|---|
+| B1 | `src/lib/limits.js`: `LIMITS = { title: 200, description: 2000, new_text: 50000, rationale: 5000, comment: 5000, name: 100, organization: 100, settings_keys: [...] }` + `checkText(value, max, label)` → 400 message; applied in documents POST/PATCH/import, variants POST/PATCH/fork, comments POST/PATCH, profile PATCH; `settings` reduced to the whitelisted keys before storing | Claude |
+| B2 | Fork shares the variant cooldown (move the cooldown into a helper used by both routes) | Claude |
+| B3 | Document creation: 10 per user per hour (in-memory map like invites) | Claude |
+| B4 | `copy-data`: refuse `target_doc_id === id`; 5 per user per hour | Claude |
+| B5 | Invite e-mail: fixed plain-text template (no inviter name or title in the text part; the HTML part stays escaped); invite limit also per IP (20/h); in `invited` mode a new address only gets a user row if it matches `SIGNUP_ALLOWLIST` | Claude |
+| B6 | Tests in group AC for every cap (413-style 400s, cooldown on fork, self-copy refused, invite template) | Claude |
+
+### S.C — Sign-in flood (S1.3, S3.3)
+
+| Step | Change | Who |
+|---|---|---|
+| C1 | `request-otp`: own per-IP window — 10 code requests per IP per 15 min (existing `ipLimit` stays for `verify-otp`); process-wide send budget 300 mails/hour across OTP + invites (`src/lib/mail.js` counts, returns a 503 "Try again later" when exhausted, logs once) | Claude |
+| C2 | New code request marks that address's earlier unused codes as used (one live code per address) | Claude |
+| C3 | nginx on the live VM: `limit_req_zone … votetext_auth … 30r/m` + `limit_req` on `/api/auth/` (the hardened template's two blocks) — done by hand now, or arrives with the hardened rebuild (B.2) | **You** |
+
+### S.D — Access companions (S2.1–S2.6, S3.6, S3.7)
+
+| Step | Change | Who |
+|---|---|---|
+| D1 | Fork: `hiddenFrom` → 404; refuse originals not in `pending`/`conflict` | Claude |
+| D2 | `POST /documents` validates `settings` with the same helper as PATCH (`validateSettings()`) | Claude |
+| D3 | Shared variant: also requires `doc.status !== 'draft'`; blocked users refused | Claude |
+| D4 | Comment PATCH/DELETE: author path also needs `hasDocLevel(req, document_id, 'commenter')` | Claude |
+| D5 | Hidden-comment placeholder nulls `user_id`, `hidden_by`, `edited_at` for non-moderators | Claude |
+| D6 | Variant DELETE and `/share`: `hiddenFrom` → 404 | Claude |
+| D7 | `/relations`: access check before the target lookup (404 for both) ; `/vote` refuses variants not `pending`/`conflict` | Claude |
+| D8 | Tests AC for each (extends AA19/AA20 patterns); UC-18 step 3 gains "fork, withdraw, share" | Claude |
+
+### S.E — Hygiene (S3.1, S3.4, S3.5)
+
+| Step | Change | Who |
+|---|---|---|
+| E1 | `errors.js`: generic text for 500 | Claude |
+| E2 | `VOTETEXT_URL` added to the production boot check; `--check` warns when missing | Claude |
+| E3 | `GET /documents/:id` returns a whitelisted field set (no settings blob/`resolved_text` for anonymous); `/votes` per Q16 | Claude |
+
+### S.F — Docs, specs, skills, memory
+
+ARCHITECTURE (§ Global roles rewritten, § Limits new), README (API table: role route, grant script, limits), CLAUDE.md (role gate + limits helper in "patterns"), `specs/use-cases.md` (UC-22 Site roles; UC-18 step 3), `specs/user-stories.md`, `specs/test-plan.md` (group AC, migration fixture row), `specs/manual-validation.md` (role rows), tutorial scripts (persona who creates = creator), `.claude/commands/vt-check.md` (limits helper present, no route without a cap), memory. | Claude |
+
+### S.G — Ship
+
+| Step | Who |
+|---|---|
+| G1 Review round with independent agents on the diff (the pattern that found all of the above) | Claude |
+| G2 `npm test`, `npm run test:e2e`, `npm run test:deploy` green; commit; merge to main; push; CI green | **You** (commit/push) |
+| G3 `./scripts/deploy.sh --dry-run` → `./scripts/deploy.sh` (migrates `users`; pre-deploy backup automatic) | **You** |
+| G4 A8 (grant superadmin + creators), C3 (nginx), `./scripts/deploy.sh --check`, browser check: sign in as a plain user → no "New document" | **You** |
+
+### Omissions checked after the first draft
+
+- **Existing accounts on the live DB**: only the owner today; the migration keeps `role='user'` for everyone, so A8 is required before anyone can create a document — including you.
+- **Invited users who later should create**: superadmin promotes them in `#/admin/users`; no self-service request flow (deliberate; a mailto line in the notice is enough).
+- **`default_access` documents** still let any sign-up propose/comment there — that is the owner's explicit choice per document; the caps in S.B bound the damage.
+- **Supervisors can still invite** (they need no creator role) — fine, they were appointed by a creator; B5 removes the free-text from the mail.
+- **Demo/seed data**: `seed.js`, `seed-demo.js` set `creator` on the persona that uploads; the tutorial scripts mention the role once.
+- **Tests that create documents as ad-hoc users** (api.test.js groups A–AB, e2e fixtures): the test helper that signs a user in gets a `role` option; default `creator` so existing groups stay green, `user` where the gate is under test.
+- **Migration of `users`** rebuilds a table referenced by six foreign keys — `migrate.js` already disables FK enforcement during rebuilds and the new fixture (A2) proves it on real data.
+- **Rollback**: deploying the previous commit keeps the new schema (role list is a superset in practice: `creator` rows would violate the old CHECK only if the old code tried to rewrite them, which it never does).
+- **Rate-limit state is in memory**: resets on restart and per process — acceptable for one VM; noted in ARCHITECTURE.
+- **`--check` audit**: add a line that `VOTETEXT_URL` is set and that nginx has `limit_req` (already warns).
+
+Effort: S.A M, S.B M, S.C S, S.D S, S.E S, S.F S, S.G S — about two working sessions, S.A first because everything else assumes the role gate.
+
+---
+
 ## Remaining work packages
 
 ### Phase 4 — Visual design pass

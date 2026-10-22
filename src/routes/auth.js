@@ -4,7 +4,9 @@ const crypto = require('crypto');
 const { Router } = require('express');
 const { getOne, getAll, run } = require('../db');
 const { requireAuth, signSessionId, unwrapSessionId } = require('../middleware/auth');
-const { sendMail } = require('../lib/mail');
+const { sendMail, MailBudgetError } = require('../lib/mail');
+const { resolveAccessLevel, meetsLevel } = require('../middleware/access');
+const { checkText } = require('../lib/limits');
 
 const router = Router();
 
@@ -12,10 +14,12 @@ const router = Router();
 // acceptable at this scale; stale keys are pruned every window.
 const WINDOW_MS = 15 * 60 * 1000;
 const IP_FAILED_VERIFY_MAX = 20;
+const IP_CODE_REQUESTS_MAX = 10;   // code requests per client address per WINDOW_MS
 const otpLog = new Map();          // code requests per email
 const failedVerifies = new Map();  // wrong codes per email while a code is outstanding
 const failedByIp = new Map();      // wrong codes per client address
 const authByIp = new Map();        // sign-in requests per client address
+const codesByIp = new Map();       // code requests per client address
 
 function recent(map, key, windowMs) {
     const now = Date.now();
@@ -32,7 +36,7 @@ function record(map, key, windowMs) {
 }
 
 setInterval(() => {
-    for (const map of [otpLog, failedVerifies, failedByIp, authByIp]) {
+    for (const map of [otpLog, failedVerifies, failedByIp, authByIp, codesByIp]) {
         for (const key of [...map.keys()]) recent(map, key, WINDOW_MS);
     }
 }, WINDOW_MS).unref();
@@ -70,9 +74,13 @@ router.post('/request-otp', ipLimit, async (req, res, next) => {
         if (typeof email !== 'string' || !email.includes('@') || email.length > 254) return res.status(400).json({ error: 'Valid email required' });
 
         const normalizedEmail = email.trim().toLowerCase();
+        if (process.env.NODE_ENV !== 'test' && recent(codesByIp, req.ip, WINDOW_MS).length >= IP_CODE_REQUESTS_MAX) {
+            return res.status(429).json({ error: 'Too many code requests from this address. Try again in 15 minutes.' });
+        }
         if (isRateLimited(normalizedEmail)) {
             return res.status(429).json({ error: 'Too many requests. Try again in 15 minutes.' });
         }
+        if (process.env.NODE_ENV !== 'test') record(codesByIp, req.ip, WINDOW_MS);
 
         if (!maySignIn(normalizedEmail)) return res.json({ message: 'Code sent' });
 
@@ -80,6 +88,7 @@ router.post('/request-otp', ipLimit, async (req, res, next) => {
         const code = String(crypto.randomInt(10 ** (len - 1), 10 ** len));
         const expiresAt = new Date(Date.now() + parseInt(process.env.OTP_EXPIRY_MINUTES || '10') * 60000).toISOString();
 
+        run('UPDATE otp_codes SET used = 1 WHERE email = ? AND used = 0', [normalizedEmail]);
         run('INSERT INTO otp_codes (email, code, expires_at) VALUES (?, ?, ?)', [normalizedEmail, code, expiresAt]);
 
         if (process.env.NODE_ENV === 'test') {
@@ -104,6 +113,9 @@ router.post('/request-otp', ipLimit, async (req, res, next) => {
                     await send();
                 } catch (emailErr) {
                     failed(emailErr);
+                    if (emailErr instanceof MailBudgetError) {
+                        return res.status(503).json({ error: 'Too many sign-in emails right now. Try again later.' });
+                    }
                     if (process.env.NODE_ENV === 'production') {
                         return res.status(502).json({ error: 'Could not send the login email. Try again in a moment.' });
                     }
@@ -204,10 +216,25 @@ router.get('/me', requireAuth, (req, res) => {
 });
 
 // GET /api/auth/search?q=... — find users by partial email, display_name, or organization
+// Only people who can invite may search: creators/superadmins, or supervisor+
+// on the document given as ?document_id= (the manage-access modal passes it).
+function maySearch(req) {
+    if (['creator', 'superadmin'].includes(req.user.role)) return true;
+    const docId = req.query.document_id;
+    if (!docId) return false;
+    const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [docId]);
+    if (!doc) return false;
+    let settings = {};
+    try { settings = JSON.parse(doc.settings || '{}'); } catch {}
+    const level = resolveAccessLevel(doc, settings, req);
+    return level !== null && meetsLevel(level, 'supervisor', req);
+}
+
 router.get('/search', requireAuth, (req, res, next) => {
     try {
-        const q = (req.query.q || '').trim();
-        if (q.length < 3) return res.json({ users: [] });
+        if (!maySearch(req)) return res.status(403).json({ error: 'Only users who can invite may search' });
+        const q = String(req.query.q || '').trim();
+        if (q.length < 3 || q.length > 100) return res.json({ users: [] });
         const like = `%${q}%`;
         const users = getAll(
             `SELECT id, display_name, email, organization FROM users
@@ -242,6 +269,11 @@ if (process.env.NODE_ENV === 'test') {
 router.patch('/profile', requireAuth, (req, res, next) => {
     try {
         const { display_name, organization, is_non_searchable } = req.body;
+        for (const [value, key] of [[display_name, 'display_name'], [organization, 'organization']]) {
+            if (value === null) return res.status(400).json({ error: `${key} must be text` });
+            const bad = checkText(value, key);
+            if (bad) return res.status(400).json({ error: bad });
+        }
         if (display_name !== undefined) {
             run("UPDATE users SET display_name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", [display_name, req.user.id]);
         }
