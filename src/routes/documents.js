@@ -160,7 +160,6 @@ router.post('/', requireAuth, requireRole('creator', 'superadmin'), (req, res, n
         if (settingsBad) return res.status(400).json({ error: settingsBad });
         let lineItems, totalPages, storedText = text, importInfo = null;
         if (parsedSettings.lines_per_page === 'auto') {
-            if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'Automatic page detection is available to superadmins only' });
             const imported = importPagedText(text, { keepUnnumbered: req.body.keep_unnumbered === true });
             if (imported.error) return res.status(400).json({ error: imported.error });
             lineItems = imported.lines;

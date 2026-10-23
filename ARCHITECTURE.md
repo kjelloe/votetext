@@ -115,7 +115,7 @@ activity_log ── references users, documents, variants
 
 **Denormalized vote tallies** — `variants.votes_for/against/abstain` are updated atomically alongside the `votes` table insert/update inside a transaction. This gives O(1) tally reads.
 
-**JSON settings blob** — `documents.settings` stores configurable options (`allow_anonymous_view`, `lines_per_page`, `default_access`, etc.) without schema migrations.
+**JSON settings blob** — `documents.settings` stores configurable options (`allow_anonymous_view`, `lines_per_page` — a number or `"auto"`, fixed once imported —, `default_access`, etc.) without schema migrations.
 
 **Soft delete** — `documents.deleted_at TEXT` (NULL = active). All queries filter `AND deleted_at IS NULL`.
 
@@ -241,7 +241,7 @@ Routes are grouped by resource and mounted in `server.js`:
 /api/auth/*        → src/routes/auth.js
                        (includes GET /search — user lookup, excludes non-searchable/protected)
 /api/documents/*   → src/routes/documents.js
-                       (includes GET /:id/text — full reconstructed text for copy/export)
+                       (includes GET /:id/text — full reconstructed text for copy/export; ?format=paged → paged markdown that re-imports to the same pages)
                        (includes GET /:id/resolved-text — resolved text with approved variants applied; stored for resolved/archived (viewer+), on-the-fly preview for final_voting (supervisor+))
                        (includes PATCH /:id/doc-vote — overall document vote tallies, supervisor+, final_voting only)
                        (includes GET /:id/moderation — hidden variants + moderator-hidden comments, supervisor+)
@@ -294,8 +294,8 @@ Before the text is sent to the server, the browser detects the format and pre-pr
 
 | Detected format | Trigger | Action |
 |----------------|---------|--------|
-| **Paged markdown, superadmin** | as below, and the signed-in user is a superadmin | Nothing: *Auto (page breaks in file)* is preselected and the text goes to the server as is with `settings.lines_per_page = "auto"` (plus `keep_unnumbered` from the checkbox); the notice counts pages, numbered lines and unnumbered lines that will be skipped |
-| **Paged markdown** | `---` lines present and ≥1 section has ≥5 numbered lines | Strip `---` separators, strip `*Page N*` / `*Page N - …*` headers, strip leading line-number prefixes, collapse excess blank lines; set `lines_per_page` to the line count of the first content page |
+| **Paged markdown** | `---` lines present and ≥1 section has ≥5 numbered lines | Nothing: *Auto (page breaks in file)* is preselected and the text goes to the server as is with `settings.lines_per_page = "auto"` (plus `keep_unnumbered` from the checkbox); the notice counts pages, numbered lines and unnumbered lines that will be skipped |
+| **Paged markdown, fixed size chosen** | as above, but the user picks a number instead of *Auto* | Strip `---` separators, strip `*Page N*` / `*Page N - …*` headers, strip leading line-number prefixes, collapse excess blank lines; set `lines_per_page` to the line count of the first content page |
 | **Pre-numbered** | ≥50% of non-empty lines match `/^\s*\d+\s/` | Optionally strip leading line-number prefixes (user toggle, default on) |
 | **Plain text** | Neither above | No transformation |
 
@@ -323,9 +323,9 @@ total_pages = ceil(total_lines / linesPerPage)
 
 The entire import runs inside a single `db.transaction()` call alongside the `documents` INSERT and the owner's access record.
 
-### Automatic page detection (`lines_per_page: "auto"`, superadmin only for now)
+### Automatic page detection (`lines_per_page: "auto"`)
 
-`importPagedText()` in `src/lib/text.js` reads the structure that `pdf2md.py` writes: `*Page N*` markers (also `*Page 1 - …*`), `---` separators, and lines of the form `[# |## ]<number>  <text>`. Each kept line gets `page_num` = the source page number, so VoteText's "Page 5" is the printed page 5; pages without numbered text (cover, contents) exist as empty pages and the reader shows a note. `line_num` is sequential over the kept lines, which equals the printed number when the source numbering runs continuously from 1; the response's `import.renumbered` counts the lines where it does not and the modal says so. Heading markers (`# `, `## `) stay in the stored text, numbers are removed, empty numbered lines are kept as empty lines. Unnumbered lines are skipped by default (`import.skipped_unnumbered`); `keep_unnumbered: true` stores them on their page, shifting the numbering. `GET /documents/:id/text?format=paged` is the inverse (`exportPagedText()`): one section per page including empty ones, each line as `<line_num>  <text>`, and re-importing it reproduces lines, pages and offsets — that is how **Copy** works for such documents. `lines_per_page` cannot be changed after import for any document (`PATCH` → 422) because the stored pages would not follow; proposal lists carry `page_start`/`page_end` next to `line_start`/`line_end`, so the frontend never computes a page from a line count. The route refuses `auto` for creators (403) until the option is opened up.
+`importPagedText()` in `src/lib/text.js` reads the structure that `pdf2md.py` writes: `*Page N*` markers (also `*Page 1 - …*`), `---` separators, and lines of the form `[# |## ]<number>  <text>`. Each kept line gets `page_num` = the source page number, so VoteText's "Page 5" is the printed page 5; pages without numbered text (cover, contents) exist as empty pages and the reader shows a note. `line_num` is sequential over the kept lines, which equals the printed number when the source numbering runs continuously from 1; the response's `import.renumbered` counts the lines where it does not and the modal says so. Heading markers (`# `, `## `) stay in the stored text, numbers are removed, empty numbered lines are kept as empty lines. Unnumbered lines are skipped by default (`import.skipped_unnumbered`); `keep_unnumbered: true` stores them on their page, shifting the numbering. `GET /documents/:id/text?format=paged` is the inverse (`exportPagedText()`): one section per page including empty ones, each line as `<line_num>  <text>`, and re-importing it reproduces lines, pages and offsets — that is how **Copy** works for such documents. `lines_per_page` cannot be changed after import for any document (`PATCH` → 422) because the stored pages would not follow; proposal lists carry `page_start`/`page_end` next to `line_start`/`line_end`, so the frontend never computes a page from a line count. Any account that may create documents (creator or superadmin) may use it; it was superadmin-only for its first day.
 
 ---
 
@@ -677,7 +677,7 @@ All six mutations log to `activity_log` (`variant_hidden`/`variant_unhidden`, `c
 
 ### `app.js` split strategy
 
-`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,879 lines after UC-18):
+`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,907 lines after UC-23 — the next frontend feature should move the editor-only views out first):
 
 | File | Contents | Audience |
 |---|---|---|

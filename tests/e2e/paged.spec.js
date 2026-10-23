@@ -1,10 +1,10 @@
 'use strict';
 
-// UC-23: automatic page detection on import — superadmin only.
+// UC-23: automatic page detection on import (creators and superadmins).
 
 const { test, expect } = require('@playwright/test');
 const path = require('path');
-const { AUTH_DIR } = require('./helpers');
+const { apireq, rootCookie, AUTH_DIR } = require('./helpers');
 
 const PAGED = [
     '*Page 1 - full screen picture*', '', '---', '*Page 2*', '', '## Innhold', '## Kapittel 1 ....', '', '---',
@@ -38,14 +38,54 @@ test('superadmin: paged markdown preselects Auto, keeps source page numbers and 
     await ctx.close();
 });
 
-test('creator: no Auto option — paged markdown falls back to a fixed detected page size', async ({ browser }) => {
+test('creator: Auto is offered and preselected for paged markdown as well', async ({ browser }) => {
     const ctx = await browser.newContext({ storageState: path.join(AUTH_DIR, 'alice.json') });
     const page = await ctx.newPage();
     await page.goto('/#/documents');
     await page.locator('#create-doc-btn').click();
-    await expect(page.locator('#new-doc-lpp option[value="auto"]')).toHaveCount(0);
+    await expect(page.locator('#new-doc-lpp')).toHaveValue('30');
     await page.locator('#new-doc-text').fill(PAGED);
-    await expect(page.locator('#new-doc-format-label')).toHaveText('Page breaks detected — 5 lines/page');
-    await expect(page.locator('#new-doc-keep-label')).toBeHidden();
+    await expect(page.locator('#new-doc-lpp')).toHaveValue('auto');
+    await expect(page.locator('#new-doc-format-label')).toContainText('4 pages, 11 numbered lines');
+    await page.locator('#new-doc-title').fill('Creator paged import');
+    await page.locator('#create-doc-submit').click();
+    await expect(page).toHaveURL(/#\/documents\/\d+$/);
+    await expect(page.locator('.pagination-info')).toHaveText('Page 1 of 4');
+    await ctx.close();
+});
+
+test('superadmin: the page link on a proposal names the printed page, and Copy re-imports the same pages', async ({ browser }) => {
+    const cookie = rootCookie();
+    const created = await apireq('POST', '/documents', { body: { title: 'Paged source', text: PAGED, settings: { lines_per_page: 'auto' } }, cookie });
+    const docId = created.document.id;
+    await apireq('POST', `/documents/${docId}/status`, { body: { status: 'open' }, cookie });
+    const text = (await apireq('GET', `/documents/${docId}/text`, { cookie })).text;
+    const start = text.indexOf('Ni');
+    await apireq('POST', `/documents/${docId}/variants`, { body: { char_start: start, char_end: start + 2, operation: 'replace', new_text: 'Nine', title: 'On page four' }, cookie });
+
+    const ctx = await browser.newContext({ storageState: path.join(AUTH_DIR, 'root.json') });
+    const page = await ctx.newPage();
+    await page.goto(`/#/documents/${docId}`);
+    const card = page.locator('.variant-card', { hasText: 'On page four' });
+    await expect(card).toContainText('line 9');
+    await card.hover();
+    await expect(card.locator('.goto-link')).toHaveText('↗ p.4');
+    await card.locator('.goto-link').click();
+    await expect(page.locator('.pagination-info')).toHaveText('Page 4 of 4');
+    await expect(page.locator('.line-text.has-variant')).toHaveText('Ni');
+
+    await page.locator('#doc-copy-btn').click();
+    await expect(page.locator('#new-doc-title')).toHaveValue('Paged source (copy)');
+    await expect(page.locator('#new-doc-text')).toHaveValue(/^\*Page 1\*\n---\n\*Page 2\*\n---\n\*Page 3\*\n1  # Kapittel 1/);
+    await expect(page.locator('#new-doc-lpp')).toHaveValue('auto');
+    await page.locator('#copy-proposals').check();
+    await page.locator('#create-doc-submit').click();
+    await expect(page).toHaveURL(new RegExp(`#/documents/(?!${docId}$)\\d+$`));
+    await expect(page.locator('.pagination-info')).toHaveText('Page 1 of 4');
+    await expect(page.locator('.variant-card', { hasText: 'On page four' })).toContainText('line 9');
+    await page.locator('#doc-pagination button[data-page="2"]').click();
+    await page.locator('#doc-pagination button[data-page="3"]').click();
+    await expect(page.locator('.pagination-info')).toHaveText('Page 3 of 4');
+    await expect(page.locator('.line-num').first()).toHaveText('1');
     await ctx.close();
 });

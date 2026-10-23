@@ -3229,9 +3229,10 @@ const AD_TEXT = [
 ].join('\n');
 let adDocId;
 
-test('AD1: a creator may not use lines_per_page "auto" (403); bad values are 400 for everyone', async () => {
+test('AD1: a creator may use lines_per_page "auto" too; bad values are 400 for everyone', async () => {
     const r = await req('POST', '/documents', { body: { title: 'AD creator', text: AD_TEXT, settings: { lines_per_page: 'auto' } }, cookie: sessionCookie });
-    assert.equal(r.status, 403);
+    assert.equal(r.status, 201);
+    assert.equal(r.data.document.total_pages, 4);
     const bad = await req('POST', '/documents', { body: { title: 'AD bad', text: AD_TEXT, settings: { lines_per_page: 'automatic' } }, cookie: acSuperCookie });
     assert.equal(bad.status, 400);
     assert.match(bad.data.error, /lines_per_page/);
@@ -3296,6 +3297,12 @@ test('AD6: proposals carry page_start/page_end from the stored pages', async () 
     assert.equal(mine.line_start, 5);
     assert.equal(mine.page_start, 4);
     assert.equal(mine.page_end, 4);
+});
+
+test('AD8: a source page number beyond MAX_PAGES is refused like a too-long document', async () => {
+    const r = await req('POST', '/documents', { body: { title: 'AD huge', text: '*Page 999*\n1  one', settings: { lines_per_page: 'auto' } }, cookie: acSuperCookie });
+    assert.equal(r.status, 400);
+    assert.match(r.data.error, /too long/);
 });
 
 test('AD7: GET /text?format=paged re-imports to the same pages and lines, so copy-data works on the copy', async () => {

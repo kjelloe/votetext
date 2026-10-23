@@ -291,7 +291,7 @@ function openCreateDocModal(prefill = {}) {
         <div class="form-group">
             <label>Lines per page</label>
             <select id="new-doc-lpp">
-                ${state.user && state.user.role === 'superadmin' ? '<option value="auto">Auto (page breaks in file)</option>' : ''}
+                <option value="auto">Auto (page breaks in file)</option>
                 <option value="27">27</option>
                 <option value="30" selected>30</option>
                 <option value="35">35</option>
@@ -325,7 +325,6 @@ function openCreateDocModal(prefill = {}) {
     const keepLabel = document.getElementById('new-doc-keep-label');
     const keepCb = document.getElementById('new-doc-keep-unnumbered');
     const errEl = document.getElementById('create-doc-err');
-    const canAuto = !!(state.user && state.user.role === 'superadmin');
 
     let detectedFormat = 'plain'; // 'plain' | 'numbered' | 'paged'
 
@@ -361,7 +360,7 @@ function openCreateDocModal(prefill = {}) {
         const sel = document.getElementById('new-doc-lpp');
         const prev = sel.querySelector('option[data-detected]');
         if (prev) prev.remove();
-        if (n === 'auto') { if (canAuto) sel.value = 'auto'; return; }
+        if (n === 'auto') { sel.value = 'auto'; return; }
         const match = Array.from(sel.options).find(o => parseInt(o.value) === n);
         if (match) {
             sel.value = n;
@@ -383,7 +382,7 @@ function openCreateDocModal(prefill = {}) {
         const text = textarea.value;
         const pagedLpp = detectPagedLpp(text);
         keepLabel.style.display = 'none';
-        if (pagedLpp !== null && canAuto) {
+        if (pagedLpp !== null) {
             detectedFormat = 'paged';
             const st = pagedStats(text);
             formatLabel.textContent = `Page breaks detected — ${st.pages} pages, ${st.numbered} numbered lines` + (st.unnumbered ? `, ${st.unnumbered} unnumbered lines skipped` : '');
@@ -391,12 +390,6 @@ function openCreateDocModal(prefill = {}) {
             keepLabel.style.display = st.unnumbered ? '' : 'none';
             formatNotice.style.display = '';
             setLpp('auto');
-        } else if (pagedLpp !== null) {
-            detectedFormat = 'paged';
-            formatLabel.textContent = `Page breaks detected — ${pagedLpp} lines/page`;
-            stripCb.parentElement.style.display = 'none';
-            formatNotice.style.display = '';
-            setLpp(pagedLpp);
         } else if (isNumbered(text)) {
             detectedFormat = 'numbered';
             formatLabel.textContent = 'Numbered lines detected';
@@ -550,7 +543,7 @@ async function viewDocument(docId) {
             <div class="flex gap-1 items-center">
                 ${(doc.status === 'voting' || doc.status === 'final_voting') && hasLevel(doc, 'supervisor') ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}${(['resolved', 'archived'].includes(doc.status) && state.user) || (doc.status === 'final_voting' && hasLevel(doc, 'supervisor')) ? `<a href="#/documents/${esc(String(docId))}/resolved-text" class="btn btn-ghost btn-sm">Resolved text</a>` : ''}
                 ${hasLevel(doc, 'editor') ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
-                ${doc.owner_id === (state.user && state.user.id) && canCreateDocuments() && (!autoPaged || state.user.role === 'superadmin') ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
+                ${doc.owner_id === (state.user && state.user.id) && canCreateDocuments() ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
                 ${hasLevel(doc, 'supervisor') ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
             </div>
         </div>

@@ -21,6 +21,12 @@ function bobCookie() {
     return `session_id=${c.value}`;
 }
 
+function rootCookie() {
+    const state = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, 'root.json'), 'utf8'));
+    const c = state.cookies.find(x => x.name === 'session_id');
+    return `session_id=${c.value}`;
+}
+
 async function apireq(method, endpoint, { body, cookie } = {}) {
     const res = await fetch(`${BASE}${endpoint}`, {
         method,
@@ -60,4 +66,4 @@ async function setStatus(docId, status) {
     await apireq('POST', `/documents/${docId}/status`, { body: { status }, cookie: aliceCookie() });
 }
 
-module.exports = { apireq, aliceCookie, bobCookie, createDoc, createVariant, setStatus, AUTH_DIR };
+module.exports = { apireq, aliceCookie, bobCookie, rootCookie, createDoc, createVariant, setStatus, AUTH_DIR };
