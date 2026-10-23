@@ -294,6 +294,7 @@ Before the text is sent to the server, the browser detects the format and pre-pr
 
 | Detected format | Trigger | Action |
 |----------------|---------|--------|
+| **Paged markdown, superadmin** | as below, and the signed-in user is a superadmin | Nothing: *Auto (page breaks in file)* is preselected and the text goes to the server as is with `settings.lines_per_page = "auto"` (plus `keep_unnumbered` from the checkbox); the notice counts pages, numbered lines and unnumbered lines that will be skipped |
 | **Paged markdown** | `---` lines present and ≥1 section has ≥5 numbered lines | Strip `---` separators, strip `*Page N*` / `*Page N - …*` headers, strip leading line-number prefixes, collapse excess blank lines; set `lines_per_page` to the line count of the first content page |
 | **Pre-numbered** | ≥50% of non-empty lines match `/^\s*\d+\s/` | Optionally strip leading line-number prefixes (user toggle, default on) |
 | **Plain text** | Neither above | No transformation |
@@ -321,6 +322,10 @@ total_pages = ceil(total_lines / linesPerPage)
 ```
 
 The entire import runs inside a single `db.transaction()` call alongside the `documents` INSERT and the owner's access record.
+
+### Automatic page detection (`lines_per_page: "auto"`, superadmin only for now)
+
+`importPagedText()` in `src/lib/text.js` reads the structure that `pdf2md.py` writes: `*Page N*` markers (also `*Page 1 - …*`), `---` separators, and lines of the form `[# |## ]<number>  <text>`. Each kept line gets `page_num` = the source page number, so VoteText's "Page 5" is the printed page 5; pages without numbered text (cover, contents) exist as empty pages and the reader shows a note. `line_num` is sequential over the kept lines, which equals the printed number when the source numbering runs continuously from 1; the response's `import.renumbered` counts the lines where it does not and the modal says so. Heading markers (`# `, `## `) stay in the stored text, numbers are removed, empty numbered lines are kept as empty lines. Unnumbered lines are skipped by default (`import.skipped_unnumbered`); `keep_unnumbered: true` stores them on their page, shifting the numbering. `GET /documents/:id/text?format=paged` is the inverse (`exportPagedText()`): one section per page including empty ones, each line as `<line_num>  <text>`, and re-importing it reproduces lines, pages and offsets — that is how **Copy** works for such documents. `lines_per_page` cannot be changed after import for any document (`PATCH` → 422) because the stored pages would not follow; proposal lists carry `page_start`/`page_end` next to `line_start`/`line_end`, so the frontend never computes a page from a line count. The route refuses `auto` for creators (403) until the option is opened up.
 
 ---
 

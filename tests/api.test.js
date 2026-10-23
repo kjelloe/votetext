@@ -3217,6 +3217,103 @@ test('AC16: anonymous readers get tallies but no voter identities, and a trimmed
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 
+
+// ============================================================================
+// Group AD — Automatic page detection on import (superadmin only)
+// ============================================================================
+
+const AD_TEXT = [
+    '*Page 1 - full screen picture*', '', '---', '*Page 2*', '', '## Innhold', '## Kapittel 1 ....', '', '---',
+    '*Page 3*', '', '## 9.3 En by ....', '', '#   1  Kapittel 1: Mulighetenes by', '  2  Den handler om', '  3  ', '', '---',
+    '*Page 4*', '', '##  4  2.1 Barnehagen', '  5  Fem', '  6  Seks', '',
+].join('\n');
+let adDocId;
+
+test('AD1: a creator may not use lines_per_page "auto" (403); bad values are 400 for everyone', async () => {
+    const r = await req('POST', '/documents', { body: { title: 'AD creator', text: AD_TEXT, settings: { lines_per_page: 'auto' } }, cookie: sessionCookie });
+    assert.equal(r.status, 403);
+    const bad = await req('POST', '/documents', { body: { title: 'AD bad', text: AD_TEXT, settings: { lines_per_page: 'automatic' } }, cookie: acSuperCookie });
+    assert.equal(bad.status, 400);
+    assert.match(bad.data.error, /lines_per_page/);
+});
+
+test('AD2: superadmin auto import — source page numbers, skipped title/contents lines, heading markers kept', async () => {
+    const r = await req('POST', '/documents', { body: { title: 'AD auto', text: AD_TEXT, settings: { lines_per_page: 'auto' } }, cookie: acSuperCookie });
+    assert.equal(r.status, 201, JSON.stringify(r.data));
+    adDocId = r.data.document.id;
+    assert.equal(r.data.document.total_pages, 4);
+    assert.equal(r.data.document.total_lines, 6);
+    assert.deepEqual(r.data.import, { skipped_unnumbered: 3, renumbered: 0 });
+    assert.equal(JSON.parse(r.data.document.settings).lines_per_page, 'auto');
+    const p1 = await req('GET', `/documents/${adDocId}/lines?page=1`, { cookie: acSuperCookie });
+    assert.deepEqual(p1.data.lines, []);
+    assert.equal(p1.data.total_pages, 4);
+    const p3 = await req('GET', `/documents/${adDocId}/lines?page=3`, { cookie: acSuperCookie });
+    assert.deepEqual(p3.data.lines.map(l => [l.line_num, l.original_text]), [[1, '# Kapittel 1: Mulighetenes by'], [2, 'Den handler om'], [3, '']]);
+    const p4 = await req('GET', `/documents/${adDocId}/lines?page=4`, { cookie: acSuperCookie });
+    assert.deepEqual(p4.data.lines.map(l => [l.page_num, l.line_num, l.original_text]), [[4, 4, '## 2.1 Barnehagen'], [4, 5, 'Fem'], [4, 6, 'Seks']]);
+    const t = await req('GET', `/documents/${adDocId}/text`, { cookie: acSuperCookie });
+    assert.equal(t.data.text, '# Kapittel 1: Mulighetenes by\nDen handler om\n\n## 2.1 Barnehagen\nFem\nSeks');
+    assert.equal(r.data.document.total_chars, t.data.text.length);
+});
+
+test('AD3: keep_unnumbered stores the title and contents lines on their own pages and reports the shifted numbering', async () => {
+    const r = await req('POST', '/documents', { body: { title: 'AD keep', text: AD_TEXT, settings: { lines_per_page: 'auto' }, keep_unnumbered: true }, cookie: acSuperCookie });
+    assert.equal(r.status, 201);
+    assert.equal(r.data.document.total_lines, 9);
+    assert.deepEqual(r.data.import, { skipped_unnumbered: 0, renumbered: 9 });
+    const p2 = await req('GET', `/documents/${r.data.document.id}/lines?page=2`, { cookie: acSuperCookie });
+    assert.deepEqual(p2.data.lines.map(l => [l.line_num, l.original_text]), [[1, '## Innhold'], [2, '## Kapittel 1 ....']]);
+});
+
+test('AD4: auto import without markers or numbered lines → 400', async () => {
+    const a = await req('POST', '/documents', { body: { title: 'AD none', text: '1  one\n2  two', settings: { lines_per_page: 'auto' } }, cookie: acSuperCookie });
+    assert.equal(a.status, 400);
+    assert.match(a.data.error, /page markers/);
+    const b = await req('POST', '/documents', { body: { title: 'AD none', text: '*Page 1*\nplain', settings: { lines_per_page: 'auto' } }, cookie: acSuperCookie });
+    assert.equal(b.status, 400);
+    assert.match(b.data.error, /numbered lines/);
+});
+
+test('AD5: lines_per_page cannot change after import (422); other settings still can', async () => {
+    const r = await req('PATCH', `/documents/${adDocId}`, { body: { settings: { lines_per_page: 30 } }, cookie: acSuperCookie });
+    assert.equal(r.status, 422);
+    const same = await req('PATCH', `/documents/${adDocId}`, { body: { settings: { lines_per_page: 'auto', majority_threshold: 'two_thirds' } }, cookie: acSuperCookie });
+    assert.equal(same.status, 200);
+    assert.equal(JSON.parse(same.data.document.settings).majority_threshold, 'two_thirds');
+    const fixed = await req('PATCH', `/documents/${acDocId}`, { body: { settings: { lines_per_page: 40 } }, cookie: sessionCookie });
+    assert.equal(fixed.status, 422);
+});
+
+test('AD6: proposals carry page_start/page_end from the stored pages', async () => {
+    await req('POST', `/documents/${adDocId}/status`, { body: { status: 'open' }, cookie: acSuperCookie });
+    const text = '# Kapittel 1: Mulighetenes by\nDen handler om\n\n## 2.1 Barnehagen\nFem\nSeks';
+    const start = text.indexOf('Fem');
+    const v = await req('POST', `/documents/${adDocId}/variants`, { body: { char_start: start, char_end: start + 3, operation: 'replace', new_text: 'Five', title: 'AD-1' }, cookie: acSuperCookie });
+    assert.equal(v.status, 201);
+    const list = await req('GET', `/documents/${adDocId}/variants`, { cookie: acSuperCookie });
+    const mine = list.data.variants.find(x => x.id === v.data.variant.id);
+    assert.equal(mine.line_start, 5);
+    assert.equal(mine.page_start, 4);
+    assert.equal(mine.page_end, 4);
+});
+
+test('AD7: GET /text?format=paged re-imports to the same pages and lines, so copy-data works on the copy', async () => {
+    const e = await req('GET', `/documents/${adDocId}/text?format=paged`, { cookie: acSuperCookie });
+    assert.equal(e.status, 200);
+    assert.match(e.data.text, /^\*Page 1\*\n---\n\*Page 2\*\n---\n\*Page 3\*\n1  # Kapittel 1/);
+    const c = await req('POST', '/documents', { body: { title: 'AD copy', text: e.data.text, settings: { lines_per_page: 'auto' } }, cookie: acSuperCookie });
+    assert.equal(c.status, 201);
+    assert.equal(c.data.document.total_pages, 4);
+    assert.equal(c.data.document.total_lines, 6);
+    assert.deepEqual(c.data.import, { skipped_unnumbered: 0, renumbered: 0 });
+    const cp = await req('POST', `/documents/${adDocId}/copy-data`, { body: { target_doc_id: c.data.document.id, copy_variants: true }, cookie: acSuperCookie });
+    assert.equal(cp.status, 200, JSON.stringify(cp.data));
+    const list = await req('GET', `/documents/${c.data.document.id}/variants`, { cookie: acSuperCookie });
+    assert.equal(list.data.variants.length, 1);
+    assert.equal(list.data.variants[0].page_start, 4);
+});
+
 test('POST /auth/logout — clears session → 200', async () => {
     // Create a disposable session
     await req('POST', '/auth/request-otp', { body: { email: 'temp@test.com' } });

@@ -44,7 +44,7 @@ Open work, decisions and their order live in `plan-update.md`.
 ```
 src/server.js       — Express entry point (does NOT call listen() when imported)
 src/db.js           — single better-sqlite3 instance; getOne/getAll/run/transaction/logActivity
-src/lib/text.js     — pure helpers (applyVariantsToText, passesThreshold, decideOutcomes, escapeHtml, importText); unit-tested; passesThreshold is mirrored in public/review.js and a contract test enforces sync
+src/lib/text.js     — pure helpers (applyVariantsToText, passesThreshold, decideOutcomes, escapeHtml, importText, importPagedText/exportPagedText for `lines_per_page: "auto"`); unit-tested; passesThreshold is mirrored in public/review.js and a contract test enforces sync
 src/lib/mail.js     — sendMail(): the only place that talks to Resend (client created on first send)
 src/middleware/
     auth.js         — optionalAuth (attaches req.user), requireAuth, requireRole

@@ -4,7 +4,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, decideOutcomes, escapeHtml, importText } = require('../src/lib/text');
+const { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, decideOutcomes, escapeHtml, importText, importPagedText, exportPagedText } = require('../src/lib/text');
 
 // ── applyVariantsToText ───────────────────────────────────────────────────────
 
@@ -224,4 +224,52 @@ test('outcomes: an insert counts as a point at char_start, whatever range was se
     const insert = V(1, 4, 9, 3, 1, { operation: 'insert' });
     assert.deepEqual(decideOutcomes([insert, V(2, 6, 12, 3, 1)], 'simple').overlaps, [], 'a replace inside the selected range does not conflict');
     assert.deepEqual(decideOutcomes([insert, V(2, 0, 12, 3, 1)], 'simple').overlaps, [[1, 2]], 'a replace that spans the insertion point does');
+});
+
+// ── importPagedText / exportPagedText ────────────────────────────────────────
+
+const PAGED = [
+    '*Page 1 - full screen picture*', '', '---', '*Page 2*', '', '## Innhold', '## Kapittel 1 ....', '', '---',
+    '*Page 3*', '', '## 9.3 En by ....', '', '#   1  Kapittel 1: Mulighetenes by', '  2  Den handler om', '  3  ', '', '---',
+    '*Page 4*', '', '##  4  2.1 Barnehagen', '  5  Fem', '  6  Seks', '',
+].join('\n');
+
+test('paged: pages keep the source number, unnumbered lines are skipped, headings keep their marker', () => {
+    const r = importPagedText(PAGED);
+    assert.equal(r.error, undefined);
+    assert.equal(r.total_pages, 4);
+    assert.equal(r.skipped_unnumbered, 3);
+    assert.equal(r.renumbered, 0);
+    assert.deepEqual(r.lines.map(l => [l.page_num, l.line_num, l.original_text]), [
+        [3, 1, '# Kapittel 1: Mulighetenes by'], [3, 2, 'Den handler om'], [3, 3, ''],
+        [4, 4, '## 2.1 Barnehagen'], [4, 5, 'Fem'], [4, 6, 'Seks'],
+    ]);
+    assert.equal(r.text, r.lines.map(l => l.original_text).join('\n'));
+    assert.equal(r.lines[3].char_offset_start, r.text.indexOf('## 2.1'));
+    assert.equal(r.lines[2].char_offset_start, r.lines[2].char_offset_end);
+});
+
+test('paged: keepUnnumbered puts title and contents lines on their pages and shifts the numbering', () => {
+    const r = importPagedText(PAGED, { keepUnnumbered: true });
+    assert.equal(r.lines.length, 9);
+    assert.equal(r.skipped_unnumbered, 0);
+    assert.deepEqual(r.lines.slice(0, 3).map(l => [l.page_num, l.line_num, l.original_text]), [[2, 1, '## Innhold'], [2, 2, '## Kapittel 1 ....'], [3, 3, '## 9.3 En by ....']]);
+    assert.equal(r.renumbered, 9);
+});
+
+test('paged: refuses text without markers or without numbered lines; counts a numbering that does not start at 1', () => {
+    assert.match(importPagedText('1  one\n2  two').error, /No page markers/);
+    assert.match(importPagedText('*Page 1*\nplain text only').error, /No numbered lines/);
+    assert.equal(importPagedText('*Page 1*\n5  five\n6  six').renumbered, 2);
+    assert.equal(importPagedText('*Page 1*\r\n1  one\r\n2  two\r\n').lines[1].original_text, 'two');
+});
+
+test('paged: export → import round-trips lines, pages and offsets, including empty pages and empty lines', () => {
+    const r = importPagedText(PAGED);
+    const exported = exportPagedText(r.lines, r.total_pages);
+    assert.match(exported, /^\*Page 1\*\n---\n\*Page 2\*\n---\n\*Page 3\*\n1  # Kapittel/);
+    const again = importPagedText(exported);
+    assert.deepEqual(again.lines, r.lines);
+    assert.equal(again.total_pages, 4);
+    assert.equal(again.text, r.text);
 });

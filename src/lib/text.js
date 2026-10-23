@@ -92,4 +92,72 @@ function importText(text, linesPerPage) {
     });
 }
 
-module.exports = { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, decideOutcomes, escapeHtml, importText };
+// Paged markdown as written by pdf2md.py: "*Page N*" markers, "---" separators and
+// lines of the form "[# |## ]<number>  <text>". Pages keep the source page number so
+// VoteText's pages match the printed document; line numbers are sequential over the
+// kept lines, which equals the source numbering when it is continuous from 1.
+const PAGE_MARKER = /^\*Page (\d+)\b/;
+const NUMBERED_LINE = /^(#{1,6} )?\s*(\d+)(?:\s{2,}(.*))?$/;
+
+function importPagedText(text, { keepUnnumbered = false } = {}) {
+    let page = 1, sawMarker = false, skipped = 0;
+    const kept = [];
+    for (const raw of text.split('\n')) {
+        const line = raw.replace(/\r$/, '');
+        const trimmed = line.trim();
+        const marker = trimmed.match(PAGE_MARKER);
+        if (marker) { page = Number(marker[1]); sawMarker = true; continue; }
+        if (trimmed === '' || trimmed === '---') continue;
+        const m = line.match(NUMBERED_LINE);
+        if (m) {
+            kept.push({ page_num: page, original_text: `${m[1] || ''}${(m[3] || '').trim()}`, source_num: Number(m[2]) });
+        } else if (keepUnnumbered) {
+            kept.push({ page_num: page, original_text: trimmed, source_num: null });
+        } else {
+            skipped++;
+        }
+    }
+    if (!sawMarker) return { error: 'No page markers (*Page N*) found — choose a fixed number of lines per page' };
+    if (!kept.length) return { error: 'No numbered lines found — choose a fixed number of lines per page' };
+
+    let charOffset = 0, renumbered = 0;
+    const lines = kept.map((item, i) => {
+        if (item.source_num !== i + 1) renumbered++;
+        const out = {
+            page_num: item.page_num,
+            line_num: i + 1,
+            original_text: item.original_text,
+            char_offset_start: charOffset,
+            char_offset_end: charOffset + item.original_text.length,
+        };
+        charOffset += item.original_text.length + 1;
+        return out;
+    });
+    return {
+        text: lines.map(l => l.original_text).join('\n'),
+        lines,
+        total_pages: Math.max(...lines.map(l => l.page_num)),
+        skipped_unnumbered: skipped,
+        renumbered,
+    };
+}
+
+// The inverse of importPagedText for a stored document: one "*Page N*" section per
+// page (empty pages included), each line as "<line_num>  <text>". Re-importing the
+// result reproduces the same lines, pages and character offsets.
+function exportPagedText(lines, totalPages) {
+    const byPage = new Map();
+    for (const l of lines) {
+        if (!byPage.has(l.page_num)) byPage.set(l.page_num, []);
+        byPage.get(l.page_num).push(l);
+    }
+    const parts = [];
+    for (let p = 1; p <= totalPages; p++) {
+        parts.push(`*Page ${p}*`);
+        for (const l of byPage.get(p) || []) parts.push(`${l.line_num}  ${l.original_text}`);
+        parts.push('---');
+    }
+    return parts.join('\n');
+}
+
+module.exports = { applyVariantsToText, passesThreshold, VALID_THRESHOLDS, decideOutcomes, escapeHtml, importText, importPagedText, exportPagedText };

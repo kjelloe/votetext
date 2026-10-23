@@ -38,7 +38,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 
 #### Document Management
 - Import from `.txt` or `.md` files via drag-and-drop, file picker, or paste
-- Auto-detects format: paged markdown (`---` page breaks), pre-numbered lines, or plain text
+- Auto-detects format: paged markdown (`---` page breaks), pre-numbered lines, or plain text; superadmins can import paged markdown with *Auto (page breaks in file)*, which keeps the source's page and line numbers even when pages hold different numbers of lines
 - Paged markdown: strips separators and line-number prefixes, infers lines-per-page from page structure
 - Pre-numbered text: optional strip of leading line numbers before import
 - Automatic page/line structuring (configurable lines per page, default 30)
@@ -163,14 +163,14 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET`    | `/api/documents` | List documents accessible to current user |
-| `POST`   | `/api/documents` | Create new document (upload text/md) |
+| `POST`   | `/api/documents` | Create new document (upload text/md); `settings.lines_per_page` is a number or `"auto"` (superadmin: pages and line numbers read from `*Page N*` markers and numbered lines; `keep_unnumbered` keeps title/contents lines) — the response carries `import: { skipped_unnumbered, renumbered }` |
 | `GET`    | `/api/documents/:id` | Get document with full text and metadata |
-| `PATCH`  | `/api/documents/:id` | Update document metadata/settings |
+| `PATCH`  | `/api/documents/:id` | Update document metadata/settings (`lines_per_page` is fixed at import → 422) |
 | `DELETE` | `/api/documents/:id` | Delete document (owner/admin only) |
 | `POST`   | `/api/documents/:id/status` | Change document status |
 | `GET`    | `/api/documents/:id/lines` | Get paginated document lines |
 | `GET`    | `/api/documents/:id/lines?page=N` | Get lines for specific page |
-| `GET`    | `/api/documents/:id/text` | Full reconstructed document text (for copy/export) |
+| `GET`    | `/api/documents/:id/text` | Full reconstructed document text (for copy/export); `?format=paged` returns it as paged markdown that re-imports to the same pages |
 | `POST`   | `/api/documents/:id/copy-data` | Copy proposals/votes/comments from source `:id` into a target doc (owner of both) |
 | `PATCH`  | `/api/documents/:id/doc-vote` | Record overall document vote tallies (supervisor+, `final_voting` only) |
 
@@ -504,7 +504,7 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
-- [x] Playwright e2e suite (`npm run test:e2e`) — 68 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Playwright e2e suite (`npm run test:e2e`) — 70 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
 - [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
@@ -517,4 +517,5 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Launch (2026-10-20) — first production deploy with `scripts/deploy.sh` (app on loopback in production, `VACUUM INTO` backups, nightly cron, `--check` audit)
 - [x] Security hardening (2026-10-21, live 2026-10-22) — site roles `user`/`creator`/`superadmin` (creating documents is a granted role), text caps and hourly quotas, proposal/fork/comment cooldowns, one live sign-in code per address with a per-address request limit and a mail budget, hidden proposals invisible to fork/withdraw/share, generic 500 text, nginx rate limit on `/api/auth/`
 - [x] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log, server-hardening guide)
+- [x] Automatic page detection on import (2026-10-23, UC-23) — `lines_per_page: "auto"` keeps the source page and line numbers of paged markdown from `pdf2md.py`; superadmin only for now
 - [ ] Hardened server layout and offsite backups on the live VM (in-place conversion, guide in the ops repository)

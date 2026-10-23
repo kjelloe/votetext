@@ -286,6 +286,22 @@ Effort: S1 ≈ M (one limits helper + rate-limit helper + nginx line), S2 ≈ S 
 
 ---
 
+## Phase P — Automatic page detection on import (2026-10-23, uncommitted)
+
+After a user test with the Oslo Høyre programme (variable numbered lines per page: title and
+contents pages, 21 lines on page 3, 40 on page 4 …) the fixed `lines_per_page` import produced
+wrong pages and line numbers. Decisions (as recommended): skip unnumbered lines by default with a
+checkbox to keep them; store the source page number so VoteText pages match the printed document
+(empty cover/contents pages included); keep `#`/`##` heading markers verbatim for a later view
+option; superadmin only for now. Done: `importPagedText`/`exportPagedText` in `src/lib/text.js`,
+`lines_per_page: "auto"` on `POST /documents` (403 for creators), `GET /text?format=paged` for
+**Copy**, `PATCH` refuses `lines_per_page` changes (422) for every document, proposals carry
+`page_start`/`page_end` and the reader no longer derives pages from a line count, empty-page note,
+*Auto* option + keep-checkbox + counts in the modal. `pdf2md.py` (doctools) `HEADING_L2_HEIGHT`
+11.0 → 11.5: body text is 11 pt, so 789 of 836 lines had been tagged `##`. Tests: 357 node (unit
+paged cases + group AD), 70 e2e (`paged.spec.js`). **Open for you:** commit, deploy, import the
+programme as superadmin, then decide when to open *Auto* to creators (one `requireRole` change).
+
 ## Phase S — Security hardening (designed and implemented 2026-10-21, deployed 2026-10-22 as 4485389)
 
 **Done 2026-10-21 (Q14–Q18 as recommended):** S.A role `creator` (schema, `tests/fixtures/schema-2026-10-03.sql`,

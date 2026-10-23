@@ -127,6 +127,13 @@ Two browsers: the document owner and an invited voter.
 - [ ] Request a sign-in code twice → only the second code works
 - [ ] Anonymous visit to a document with *Anyone can view*: proposal page shows tallies, no voter names
 
+## Automatic page detection (2026-10-23, UC-23)
+
+- [ ] As superadmin, drop the real `1st-utkast-til-Oslo-Hoyres-program.md` (after the `pdf2md.py` heading fix): notice shows 23 pages and the skipped contents lines, *Auto* preselected; after creation page 3 starts at line 1 and page 4 at line 22, matching the PDF; pages 1–2 show the empty-page note
+- [ ] Hover a proposal card → the ↗ p.N link names the printed page; the proposal page's back link lands on that page
+- [ ] **Copy** on the auto document → the modal shows paged markdown with *Auto* preselected → the copy has the same page count and line numbers; copied proposals sit on the same lines
+- [ ] As a creator, the same file shows no *Auto* option
+
 ## Deploy (`scripts/deploy.sh`)
 
 - [ ] `./scripts/deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing

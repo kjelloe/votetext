@@ -6,7 +6,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { checkText, pickSettings } = require('../lib/limits');
 const { proposalCooldown } = require('../lib/cooldown');
 const { requireDocumentAccess, resolveAccessLevel, meetsLevel, redactActivity, ACCESS_LEVELS, VISIBLE_DOCUMENT_IDS_SQL } = require('../middleware/access');
-const { applyVariantsToText, decideOutcomes, escapeHtml, VALID_THRESHOLDS, importText } = require('../lib/text');
+const { applyVariantsToText, decideOutcomes, escapeHtml, VALID_THRESHOLDS, importText, importPagedText, exportPagedText } = require('../lib/text');
 const { sendMail, budgetLeft } = require('../lib/mail');
 
 const router = Router();
@@ -51,6 +51,10 @@ function settingsError(settings) {
     }
     if (settings.default_access != null && !DEFAULT_ACCESS_VALUES.includes(settings.default_access)) {
         return 'default_access must be viewer, commenter, proposer, or voter';
+    }
+    const lpp = settings.lines_per_page;
+    if (lpp != null && lpp !== 'auto' && !(Number.isInteger(Number(lpp)) && Number(lpp) >= 1)) {
+        return 'lines_per_page must be a positive whole number or "auto"';
     }
     return null;
 }
@@ -154,14 +158,24 @@ router.post('/', requireAuth, requireRole('creator', 'superadmin'), (req, res, n
         const parsedSettings = pickSettings(settings);
         const settingsBad = settingsError(parsedSettings);
         if (settingsBad) return res.status(400).json({ error: settingsBad });
-        const linesPerPage = Number(parsedSettings.lines_per_page ?? (process.env.DEFAULT_LINES_PER_PAGE || '30'));
-        if (!Number.isInteger(linesPerPage) || linesPerPage < 1) return res.status(400).json({ error: 'lines_per_page must be a positive whole number' });
-        const lineItems = importText(text, linesPerPage);
+        let lineItems, totalPages, storedText = text, importInfo = null;
+        if (parsedSettings.lines_per_page === 'auto') {
+            if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'Automatic page detection is available to superadmins only' });
+            const imported = importPagedText(text, { keepUnnumbered: req.body.keep_unnumbered === true });
+            if (imported.error) return res.status(400).json({ error: imported.error });
+            lineItems = imported.lines;
+            totalPages = imported.total_pages;
+            storedText = imported.text;
+            importInfo = { skipped_unnumbered: imported.skipped_unnumbered, renumbered: imported.renumbered };
+        } else {
+            const linesPerPage = Number(parsedSettings.lines_per_page ?? (process.env.DEFAULT_LINES_PER_PAGE || '30'));
+            lineItems = importText(text, linesPerPage);
+            totalPages = Math.max(1, Math.ceil(lineItems.length / linesPerPage));
+        }
         const totalLines = lineItems.length;
-        const totalPages = Math.max(1, Math.ceil(totalLines / linesPerPage));
         const maxPages = Math.min(parseInt(process.env.MAX_PAGES || '200'), 200);
         if (totalPages > maxPages) {
-            return res.status(400).json({ error: `Document too long: ${totalPages} pages at ${linesPerPage} lines per page (max ${maxPages} pages)` });
+            return res.status(400).json({ error: `Document too long: ${totalPages} pages (max ${maxPages} pages)` });
         }
 
         if (hourlyLimited(createLog, req.user.id, DOCUMENTS_PER_HOUR)) {
@@ -175,7 +189,7 @@ router.post('/', requireAuth, requireRole('creator', 'superadmin'), (req, res, n
         const documentId = transaction(() => {
             const r = run(
                 'INSERT INTO documents (title, description, owner_id, total_pages, total_lines, total_chars, settings) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                [title.trim(), (description || '').trim(), req.user.id, totalPages, totalLines, text.length, JSON.stringify(parsedSettings)]
+                [title.trim(), (description || '').trim(), req.user.id, totalPages, totalLines, storedText.length, JSON.stringify(parsedSettings)]
             );
             const docId = r.lastInsertRowid;
             for (const line of lineItems) {
@@ -189,7 +203,7 @@ router.post('/', requireAuth, requireRole('creator', 'superadmin'), (req, res, n
             return docId;
         });
 
-        res.status(201).json({ document: getOne('SELECT * FROM documents WHERE id = ?', [documentId]) });
+        res.status(201).json({ document: getOne('SELECT * FROM documents WHERE id = ?', [documentId]), import: importInfo });
     } catch (err) {
         next(err);
     }
@@ -235,6 +249,9 @@ router.patch('/:id', requireAuth, requireDocumentAccess('editor'), (req, res, ne
         const newSettings = settings ? { ...currentSettings, ...pickSettings(settings) } : currentSettings;
         const settingsBad = settingsError(newSettings);
         if (settingsBad) return res.status(400).json({ error: settingsBad });
+        if (settings && settings.lines_per_page !== undefined && String(settings.lines_per_page) !== String(currentSettings.lines_per_page ?? '')) {
+            return res.status(422).json({ error: 'lines_per_page is fixed at import; copy the document to re-page it' });
+        }
         for (const [value, key] of [[title, 'title'], [description, 'description']]) {
             const bad = checkText(value, key);
             if (bad) return res.status(400).json({ error: bad });
@@ -357,11 +374,15 @@ router.get('/:id/lines', (req, res, next) => {
 // GET /api/documents/:id/text — full reconstructed document text (for copy/export)
 router.get('/:id/text', (req, res, next) => {
     try {
-        const doc = getOne('SELECT id, owner_id, status, settings FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+        const doc = getOne('SELECT id, owner_id, status, settings, total_pages FROM documents WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
         if (!doc) return res.status(404).json({ error: 'Document not found' });
         let settings = {};
         try { settings = JSON.parse(doc.settings || '{}'); } catch {}
         if (resolveAccessLevel(doc, settings, req) === null) return res.status(403).json({ error: 'Access denied' });
+        if (req.query.format === 'paged') {
+            const lines = getAll('SELECT page_num, line_num, original_text FROM document_lines WHERE document_id = ? ORDER BY line_num', [doc.id]);
+            return res.json({ text: exportPagedText(lines, doc.total_pages) });
+        }
         res.json({ text: originalText(doc.id) });
     } catch (err) {
         next(err);
@@ -493,6 +514,8 @@ router.get('/:id/variants', (req, res, next) => {
             `SELECT v.*, u.display_name as proposer_name, u.organization as proposer_org,
                 (SELECT MIN(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_start,
                 (SELECT MAX(dl.line_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as line_end,
+                (SELECT MIN(dl.page_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as page_start,
+                (SELECT MAX(dl.page_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as page_end,
                 (SELECT COUNT(*) FROM comments c WHERE c.variant_id = v.id AND c.is_hidden = 0) as comment_count,
                 (SELECT COUNT(*) FROM variants x WHERE x.document_id = v.document_id AND x.id <= v.id) as proposal_num
              FROM variants v JOIN users u ON u.id = v.proposed_by

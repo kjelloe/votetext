@@ -930,6 +930,30 @@ Text caps on every stored field, hourly quotas (documents, copies, invitations p
 
 ---
 
+## UC-23: Automatic page detection on import (superadmin only for now)
+
+**Actor:** Superadmin creating a document from paged markdown (the output of `pdf2md.py`: `*Page N*` markers, `---` separators, numbered lines, `#`/`##` heading markers).
+**Entry point:** **New document** → paste or drop the `.md` file.
+**Preconditions:** the signed-in user is a superadmin; the text contains at least one page marker and one numbered line.
+
+### Main flow
+
+1. The modal detects page breaks and preselects **Auto (page breaks in file)** in *Lines per page*. The notice reads "Page breaks detected — N pages, M numbered lines, K unnumbered lines skipped"; a checkbox *Keep unnumbered lines (shifts line numbers)* appears when K > 0.
+2. The superadmin submits. The server stores every numbered line on its source page (`page_num` = printed page), removes the number, keeps heading markers and empty numbered lines, skips unnumbered lines unless the checkbox was ticked.
+3. The reader opens on page 1. Pages without numbered text (cover, contents) show *No numbered text on this page (a title or contents page in the source document)*; pagination counts to the last printed page with numbered text.
+4. Line numbers in the reader equal the printed ones when the source numbering is continuous from 1; otherwise an alert after creation says how many lines got a different number.
+
+### Alternative flows
+
+- A creator pastes the same file: no *Auto* option; today's fixed-size detection applies (first section with five or more numbered lines).
+- Text without page markers or without numbered lines under *Auto* → 400 with a message to choose a fixed number.
+- **Copy** on such a document (superadmin only) fetches `GET /documents/:id/text?format=paged` and re-imports it, so pages, lines and proposal offsets carry over.
+- Changing *lines per page* after import is refused for every document (422): the stored pages would not follow.
+
+**Tests:** group AD in `tests/api.test.js`, the paged cases in `tests/unit.test.js`, `tests/e2e/paged.spec.js`.
+
+---
+
 ## Planned / future use cases
 
 All specced use cases are implemented in the API. The open UI gaps against them (supervisor buttons, profile modal trigger, access-level editing, "based on" display, line tooltip) and their order are tracked in `plan-update.md`, phase 3.

@@ -505,6 +505,22 @@
 | AC15 | Sign-in codes | a new request invalidates the earlier code (401), the new one signs in |
 | AC16 | Anonymous reader | `/votes` → `votes []` with tallies; a voter sees identities; `GET /documents/:id` has no `resolved_text` / `owner_organization` / `default_access` |
 
+## Group AD — Automatic page detection on import (2026-10-23, superadmin only)
+
+> Fixtures: `AD_TEXT` — four pages: cover marker, contents page (unnumbered `##` lines), page 3 with a leftover contents line, a `#` heading line 1, lines 2–3 (3 empty), page 4 with a `##` heading line 4 and lines 5–6. acsuper (superadmin) and alice (creator) from group AC.
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| AD1 | Creator posts `lines_per_page: "auto"`; superadmin posts `"automatic"` | 403; 400 naming `lines_per_page` |
+| AD2 | Superadmin auto import | 201, `total_pages` 4, `total_lines` 6, `import {skipped_unnumbered: 3, renumbered: 0}`, settings keep `"auto"`; `/lines?page=1` empty with `total_pages` 4; page 3 = lines 1–3 (`# Kapittel…`, text, empty); page 4 = lines 4–6 with `## 2.1…`; `/text` is the joined kept lines and `total_chars` matches |
+| AD3 | `keep_unnumbered: true` | 9 lines, `import {skipped_unnumbered: 0, renumbered: 9}`; page 2 holds the two contents lines as lines 1–2 |
+| AD4 | Auto without markers / without numbered lines | 400 "page markers" / 400 "numbered lines" |
+| AD5 | `PATCH` settings | `lines_per_page: 30` on the auto doc → 422; same value plus `majority_threshold` → 200 and applied; `lines_per_page: 40` on a fixed-size doc → 422 |
+| AD6 | Proposal on page 4 | list shows `line_start` 5, `page_start` 4, `page_end` 4 |
+| AD7 | `GET /text?format=paged` | starts `*Page 1*` / `---` / `*Page 2*` / `---` / `*Page 3*` / `1  # Kapittel 1`; re-import as auto → 4 pages, 6 lines, nothing skipped or renumbered; `copy-data` onto it copies the proposal with `page_start` 4 |
+
+Unit (`tests/unit.test.js`): `importPagedText` pages/skips/markers/offsets; `keepUnnumbered`; refusals and CRLF; `exportPagedText` → `importPagedText` round-trip equality.
+
 Also changed: "cross-document relation" now expects 404 (no existence oracle); the copy-data
 ownership test grants bob `creator` first.
 
@@ -560,7 +576,7 @@ ownership test grants bob `creator` first.
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (68 tests). Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (70 tests). Run with `npm run test:e2e`.
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -583,6 +599,7 @@ ownership test grants bob `creator` first.
 | `moderation.spec.js` | UC-18 | Hide a comment → placeholder → moderation page → unhide; hide a proposal → banner, gone for a voter → unhide |
 | `access.spec.js` | UC-5 | Invite by email → change level → block → remove, verified through the API |
 | `roles.spec.js` | UC-22 | A plain user (bob) sees the participation notice and no **New document** button; a creator (alice) sees the button and no notice; the superadmin (root) sets carol to creator from the Users page dropdown (absent on the superadmin's own row) → carol sees the button; back to user → notice again |
+| `paged.spec.js` | UC-23 | Superadmin (root) pastes paged markdown → notice "4 pages, 11 numbered lines, 2 unnumbered lines skipped", *Auto* preselected, keep-checkbox visible → create → "Page 1 of 4" with the empty-page note on pages 1–2, page 3 starts at line 1 with the `#` heading kept, page 4 runs 7–11; a creator (alice) has no *Auto* option and sees the fixed "5 lines/page" detection |
 | `document.spec.js` | UC-1, UC-6, UC-8 | Numbered-line detection and stripping; Copy prefills the modal; countdown banner appears and cancels; delete from the settings modal |
 | `fork.spec.js` | UC-16 | Fork → "based on #1" on the fork, "forked as #2" on the original |
 | `regression.spec.js` | guard rail | Bugs that only show on the second action in one page: Reply after the thread re-rendered; Change status touching a previously opened document; a document without overlapping proposals reaching final voting; selecting text inside a highlighted line; "Use different email" on the login form |

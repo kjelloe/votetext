@@ -285,11 +285,13 @@ function openCreateDocModal(prefill = {}) {
             <div id="new-doc-format-notice" class="format-notice" style="display:none">
                 <span id="new-doc-format-label">Numbered lines detected</span>
                 <label><input type="checkbox" id="new-doc-strip" checked> Strip leading line numbers</label>
+                <label id="new-doc-keep-label" style="display:none"><input type="checkbox" id="new-doc-keep-unnumbered"> Keep unnumbered lines (shifts line numbers)</label>
             </div>
         </div>
         <div class="form-group">
             <label>Lines per page</label>
             <select id="new-doc-lpp">
+                ${state.user && state.user.role === 'superadmin' ? '<option value="auto">Auto (page breaks in file)</option>' : ''}
                 <option value="27">27</option>
                 <option value="30" selected>30</option>
                 <option value="35">35</option>
@@ -320,7 +322,10 @@ function openCreateDocModal(prefill = {}) {
     const formatNotice = document.getElementById('new-doc-format-notice');
     const formatLabel = document.getElementById('new-doc-format-label');
     const stripCb = document.getElementById('new-doc-strip');
+    const keepLabel = document.getElementById('new-doc-keep-label');
+    const keepCb = document.getElementById('new-doc-keep-unnumbered');
     const errEl = document.getElementById('create-doc-err');
+    const canAuto = !!(state.user && state.user.role === 'superadmin');
 
     let detectedFormat = 'plain'; // 'plain' | 'numbered' | 'paged'
 
@@ -340,10 +345,23 @@ function openCreateDocModal(prefill = {}) {
         return null;
     }
 
+    // Mirrors importPagedText() in src/lib/text.js closely enough to describe the import before it happens
+    function pagedStats(text) {
+        const stats = { pages: 0, numbered: 0, unnumbered: 0 };
+        for (const raw of text.split('\n')) {
+            const t = raw.trim();
+            if (/^\*Page \d+\b/.test(t)) { stats.pages = Math.max(stats.pages, parseInt(t.slice(6))); continue; }
+            if (t === '' || t === '---') continue;
+            if (/^(#{1,6} )?\s*\d+(\s{2,}.*)?$/.test(raw)) stats.numbered++; else stats.unnumbered++;
+        }
+        return stats;
+    }
+
     function setLpp(n) {
         const sel = document.getElementById('new-doc-lpp');
         const prev = sel.querySelector('option[data-detected]');
         if (prev) prev.remove();
+        if (n === 'auto') { if (canAuto) sel.value = 'auto'; return; }
         const match = Array.from(sel.options).find(o => parseInt(o.value) === n);
         if (match) {
             sel.value = n;
@@ -364,7 +382,16 @@ function openCreateDocModal(prefill = {}) {
     function runDetect() {
         const text = textarea.value;
         const pagedLpp = detectPagedLpp(text);
-        if (pagedLpp !== null) {
+        keepLabel.style.display = 'none';
+        if (pagedLpp !== null && canAuto) {
+            detectedFormat = 'paged';
+            const st = pagedStats(text);
+            formatLabel.textContent = `Page breaks detected — ${st.pages} pages, ${st.numbered} numbered lines` + (st.unnumbered ? `, ${st.unnumbered} unnumbered lines skipped` : '');
+            stripCb.parentElement.style.display = 'none';
+            keepLabel.style.display = st.unnumbered ? '' : 'none';
+            formatNotice.style.display = '';
+            setLpp('auto');
+        } else if (pagedLpp !== null) {
             detectedFormat = 'paged';
             formatLabel.textContent = `Page breaks detected — ${pagedLpp} lines/page`;
             stripCb.parentElement.style.display = 'none';
@@ -428,12 +455,16 @@ function openCreateDocModal(prefill = {}) {
         const title = document.getElementById('new-doc-title').value.trim();
         let text = textarea.value;
         const description = document.getElementById('new-doc-desc').value.trim();
-        const linesPerPage = parseInt(document.getElementById('new-doc-lpp').value);
+        const lppValue = document.getElementById('new-doc-lpp').value;
+        const auto = lppValue === 'auto';
+        const linesPerPage = auto ? 'auto' : parseInt(lppValue);
 
         if (!title) { errEl.textContent = 'Title required'; errEl.style.display = ''; return; }
         if (!text.trim()) { errEl.textContent = 'Text content required'; errEl.style.display = ''; return; }
 
-        if (detectedFormat === 'paged') {
+        if (auto) {
+            // the server reads the page markers and line numbers itself
+        } else if (detectedFormat === 'paged') {
             text = text.split('\n')
                 .filter(l => { const t = l.trim(); return t !== '---' && !/^\*Page \d+/.test(t); })
                 .join('\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -445,8 +476,9 @@ function openCreateDocModal(prefill = {}) {
         const btn = document.getElementById('create-doc-submit');
         btn.disabled = true; btn.textContent = 'Creating…';
         try {
-            const data = await api('POST', '/documents', { title, text, description, settings: { lines_per_page: linesPerPage } });
+            const data = await api('POST', '/documents', { title, text, description, settings: { lines_per_page: linesPerPage }, keep_unnumbered: auto && keepCb.checked });
             const newDocId = data.document.id;
+            if (data.import && data.import.renumbered) alert(`${data.import.renumbered} line${data.import.renumbered === 1 ? '' : 's'} got a different number than in the source (the source numbering is not continuous from 1).`);
             if (prefill.copyFrom) {
                 const copy_variants = document.getElementById('copy-proposals').checked;
                 const copy_votes    = document.getElementById('copy-votes').checked;
@@ -501,6 +533,10 @@ async function viewDocument(docId) {
     state.docLines[docId] = state.docLines[docId] || {};
     state.docLines[docId][currentPage] = lines;
 
+    let parsedSettings = {};
+    try { parsedSettings = typeof doc.settings === 'object' ? doc.settings : JSON.parse(doc.settings || '{}'); } catch {}
+    const autoPaged = parsedSettings.lines_per_page === 'auto';
+
     const wrap = el('div', { class: 'doc-layout' });
 
     // Text panel
@@ -514,7 +550,7 @@ async function viewDocument(docId) {
             <div class="flex gap-1 items-center">
                 ${(doc.status === 'voting' || doc.status === 'final_voting') && hasLevel(doc, 'supervisor') ? `<a href="#/documents/${esc(String(docId))}/review" class="btn btn-primary btn-sm">Review</a>` : ''}${(['resolved', 'archived'].includes(doc.status) && state.user) || (doc.status === 'final_voting' && hasLevel(doc, 'supervisor')) ? `<a href="#/documents/${esc(String(docId))}/resolved-text" class="btn btn-ghost btn-sm">Resolved text</a>` : ''}
                 ${hasLevel(doc, 'editor') ? `<button class="btn btn-ghost btn-sm" id="doc-settings-btn">Settings</button>` : ''}
-                ${doc.owner_id === (state.user && state.user.id) && canCreateDocuments() ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
+                ${doc.owner_id === (state.user && state.user.id) && canCreateDocuments() && (!autoPaged || state.user.role === 'superadmin') ? `<button class="btn btn-ghost btn-sm" id="doc-copy-btn">Copy</button>` : ''}
                 ${hasLevel(doc, 'supervisor') ? `<button class="btn btn-ghost btn-sm" id="doc-status-btn">Change status</button>` : ''}
             </div>
         </div>
@@ -540,10 +576,6 @@ async function viewDocument(docId) {
         </div>
     `;
 
-    // Parse settings once for use in hover handler
-    let parsedSettings = {};
-    try { parsedSettings = typeof doc.settings === 'object' ? doc.settings : JSON.parse(doc.settings || '{}'); } catch {}
-    const linesPerPage = parsedSettings.lines_per_page || 30;
 
     // Variants sidebar — all proposals, filterable by page
     let varFilterMode = state.docFilterMode[docId] || 'all';
@@ -698,9 +730,8 @@ async function viewDocument(docId) {
                     if (cs < charEnd && ce > charStart) span.classList.add('hover-highlight');
                 });
             }
-            const lineStart = parseInt(card.dataset.lineStart);
-            if (!isNaN(lineStart)) {
-                const targetPage = Math.max(1, Math.ceil(lineStart / linesPerPage));
+            const targetPage = parseInt(card.dataset.pageStart);
+            if (!isNaN(targetPage)) {
                 const gotoLink = card.querySelector('.goto-link');
                 if (gotoLink) { gotoLink.textContent = `↗ p.${targetPage}`; gotoLink.dataset.page = targetPage; gotoLink.style.display = ''; }
             }
@@ -774,7 +805,7 @@ async function viewDocument(docId) {
     if (copyBtn) copyBtn.addEventListener('click', async () => {
         copyBtn.disabled = true; copyBtn.textContent = 'Loading…';
         try {
-            const { text } = await api('GET', `/documents/${docId}/text`);
+            const { text } = await api('GET', `/documents/${docId}/text${autoPaged ? '?format=paged' : ''}`);
             openCreateDocModal({ title: `${doc.title} (copy)`, text, linesPerPage: parsedSettings.lines_per_page, copyFrom: doc.id });
         } finally {
             copyBtn.disabled = false; copyBtn.textContent = 'Copy';
@@ -830,6 +861,10 @@ async function viewDocument(docId) {
 
 function renderLines(container, lines, variants) {
     container.innerHTML = '';
+    if (!lines.length) {
+        container.appendChild(el('p', { class: 'text-muted empty-page-note' }, 'No numbered text on this page (a title or contents page in the source document).'));
+        return;
+    }
     for (const line of lines) {
         const overlapping = variants.filter(v =>
             v.status !== 'withdrawn' &&
@@ -889,7 +924,7 @@ function renderVariantCard(v, overlaps = [], totalComments = 0, heatConfig = { o
     const heatClass = pct >= heatConfig.red ? 'comment-heat-red' : pct >= heatConfig.orange ? 'comment-heat-orange' : '';
     const commentBubble = `<span class="comment-bubble ${heatClass}" title="${esc(cc)} comment${cc !== 1 ? 's' : ''}">💬 ${esc(cc)}</span>`;
     return `
-        <div class="variant-card" tabindex="0" data-id="${esc(v.id)}" data-char-start="${esc(v.char_start)}" data-char-end="${esc(v.char_end)}" data-line-start="${esc(v.line_start ?? '')}">
+        <div class="variant-card" tabindex="0" data-id="${esc(v.id)}" data-char-start="${esc(v.char_start)}" data-char-end="${esc(v.char_end)}" data-line-start="${esc(v.line_start ?? '')}" data-page-start="${esc(v.page_start ?? '')}">
             <div class="variant-card-title">${numPrefix}${esc(v.title) || esc(v.operation) + ' at ' + esc(v.char_start)}</div>
             <div class="variant-card-meta">${meta}</div>
             <div class="variant-card-footer">
@@ -1186,18 +1221,15 @@ async function viewVariant(variantId) {
     // Page + line for back-to-document jump
     const thisInList = rawVariants.find(vv => vv.id === variantId);
     const lineStart = thisInList ? thisInList.line_start : null;
-    let parsedSettings = {};
-    try { parsedSettings = doc ? (typeof doc.settings === 'object' ? doc.settings : JSON.parse(doc.settings || '{}')) : {}; } catch {}
-    const linesPerPage = parsedSettings.lines_per_page || 30;
-    const jumpPage = lineStart
-        ? Math.ceil(lineStart / linesPerPage)
+    const jumpPage = thisInList && thisInList.page_start
+        ? thisInList.page_start
         : Math.max(1, Math.ceil((v.char_start / Math.max((doc && doc.total_chars) || 1, 1)) * ((doc && doc.total_pages) || 1)));
 
     // Make sure every page the proposal touches is cached, then cut the original text out of it
     let originalText = null;
     if (doc) {
         state.docLines[v.document_id] = state.docLines[v.document_id] || {};
-        const lastPage = thisInList && thisInList.line_end ? Math.ceil(thisInList.line_end / linesPerPage) : jumpPage;
+        const lastPage = thisInList && thisInList.page_end ? thisInList.page_end : jumpPage;
         for (let p = jumpPage; p <= Math.max(jumpPage, lastPage); p++) {
             if (state.docLines[v.document_id][p]) continue;
             try { state.docLines[v.document_id][p] = (await api('GET', `/documents/${v.document_id}/lines?page=${p}`)).lines; } catch {}
