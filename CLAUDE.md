@@ -60,7 +60,7 @@ src/routes/
 public/
     app.js          — hash router (#/documents, #/variants/:id, …); all-role views; esc() for XSS
     auth.js         — viewLogin, showProfileModal, viewProfile (depends on app.js globals)
-    review.js       — supervisor/editor/admin views: review, conflicts, final voting, resolved text, moderation, user admin, manage-access modal
+    review.js       — creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, document settings, status change
     style.css       — CSS custom properties (--color-*, --font-*); mobile-first
 ```
 

@@ -191,8 +191,9 @@ test('router dispatches only to declared functions', () => {
 
 test('review.js only uses globals that app.js exports (no missing cross-file deps)', () => {
     const APP_GLOBALS_USED_BY_REVIEW = ['esc', 'el', 'api', 'setMain', 'state',
-        'openModal', 'closeModal', 'showToast', 'showError',
-        'renderLines', 'renderPagination', 'timeAgo', 'statusBadge'];
+        'openModal', 'closeModal', 'showToast', 'showError', 'runRoute',
+        'renderLines', 'renderPagination', 'timeAgo', 'statusBadge',
+        'hasLevel', 'canCreateDocuments'];
 
     const appSrc  = readSrc('app.js');
     const appDecl = new Set(topLevelFunctions(appSrc));

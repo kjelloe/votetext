@@ -286,6 +286,78 @@ Effort: S1 ≈ M (one limits helper + rate-limit helper + nginx line), S2 ≈ S 
 
 ---
 
+## Phase M — Proposing and browsing on phones (designed 2026-10-23; Q19–Q25 decided as recommended; split done, M.1 next)
+
+**Trigger:** a user test with the Oslo Høyre programme (23 pages, 840 lines) on a phone. Reading works;
+proposing does not: the only **Propose** button sits in the sidebar, which on phones stacks *below* the
+whole text panel, so after selecting a sentence the user has to scroll away from it. Variants of an
+existing proposal can only be started from the proposal page. After submitting, the app leaves the
+document for the proposal page, so "scroll on and propose as you go" means Back after every proposal.
+
+### What exists today (facts the design builds on)
+
+- Selection capture already works on touch (`selectionchange`, phase 3) and stores `pendingSelection`
+  with exact character offsets; the sidebar button just reads it.
+- The modal is a centred box (`#modal-overlay`/`#modal-box`, max-height 90 vh); phones get the same box.
+- Fork = `POST /variants/:id/fork` creates a `based_on` child with the parent's range; allowed on
+  `pending`/`conflict` proposals (same rule the proposal page uses for its Fork button).
+- Proposal list: server returns document order with `line_start/line_end/page_start/page_end`,
+  `comment_count`, vote tallies — no `my_vote`. Sidebar filters: All / On-page / Top N % (by vote count).
+- Proposal page has Back-to-document (restores page + line) and comment sorting, no next/previous proposal.
+- `public/app.js` is at 1 900 lines; the 2 000 cap means new frontend code goes into a new file
+  (`public/selection.js`) and the editor-only views move to `review.js` first (the split planned in memory).
+- Playwright runs Firefox only; Firefox cannot emulate touch or mobile. Layout can be tested by viewport
+  size; real touch selection needs a Chromium project (no new npm dependency, one more browser download in CI).
+
+### Design
+
+**M.1 Selection toolbar.** When a proposer+ on a document that accepts proposals selects text inside the
+page, a small floating bar appears anchored to the selection rectangle: **Propose**, and **Variant** when
+the selection overlaps a forkable proposal (one → "Variant of #N"; several → a chooser). Mouse: bar above
+the selection (editor convention). Touch: bar *below* the selection, because iOS and Android draw their own
+callout above it; flips when there is no room. Shown after the finger lifts (`pointerup`/`touchend` plus a
+short debounce while handles are dragged), repositioned on scroll, hidden when the selection collapses.
+The sidebar **Propose** stays as the keyboard/desktop path and keeps the e2e hooks.
+
+**M.2 Inline sheet and stay-in-place.** The modal gets a sheet mode: on ≤768 px it anchors to the bottom
+(rounded top, 85 vh max, scroll inside, safe-area padding, follows the keyboard via `visualViewport`);
+desktop keeps the centred box. While the sheet is open the selected lines keep a temporary highlight, since
+focusing the textarea collapses the native selection. The Variant sheet shows the parent proposal (number,
+title, its text) above the fork form, text prefilled. After submit the sheet closes, the current page and
+sidebar re-render with the new highlight, scroll position is kept, and a toast "Proposal #N added · Open"
+offers the proposal page. Same behaviour on desktop for consistency (Q19).
+
+**M.3 Browsing proposals in an order of your choice.** The sidebar's three buttons become *filter* (All ·
+This page) plus *sort* (Document order · Most discussed · Most voted · Newest), compact `<select>`s on
+phones, segments on desktop, remembered per device. "Top N %" folds into *Most voted*. On phones a sticky
+bottom bar "N proposals · Propose" opens the proposal list as a sheet with the same controls, so the list is
+reachable from any scroll position; tapping a card opens the proposal page as today, whose Back already
+returns to page + line. The proposal page gains **‹ Previous / Next ›** following the chosen order, so a
+voter can walk the whole set on either device. Optional (Q23): a *Not yet voted by me* filter, which needs
+`my_vote` added to the list query.
+
+**Q25 done 2026-10-23:** `openCreateDocModal`, `openDocSettingsModal`, `openStatusModal` moved to `review.js` unchanged (app.js 1 900 → 1 541 lines); its own commit; suites green.
+
+**M.4 Ship.** New `public/selection.js` (toolbar, sheet positioning, toast), `review.js` takes the
+editor-only views out of `app.js` first, CSS for bar/sheet/sticky bar, API `my_vote` if Q23 says yes.
+Tests: e2e for the toolbar with programmatic selection (as `proposal.spec.js` does) at desktop and
+375 px viewports, the sheet flow end to end, sort/filter, Prev/Next; a Chromium mobile project for touch
+if Q22 says yes. Docs: UC-24, user story US-4 amended, test-plan rows, manual rows for real-phone checks
+with the programme. Order: M.1 → M.2 → M.3, each behind the full suite; the visual design pass (phase 4)
+then restyles the new DOM rather than the old one.
+
+### Decisions (Q19–Q25, all as recommended on 2026-10-23)
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q19 | After submitting from the sheet: stay on the document with a toast, or go to the proposal page as today? On desktop too? | Stay, both devices; the toast's *Open* link keeps the old path one tap away |
+| Q20 | **Variant** means a fork: the child keeps the *parent's* range even if the user selected a slightly different stretch. A different range is a new competing proposal (**Propose**). Agree? | Yes — that is what `based_on` means today; the toolbar explains it in the chooser ("Variant of #12 — same lines, different wording") |
+| Q21 | Phone proposal list as a sticky bottom bar + sheet, or keep the stacked sidebar under the text? | Bottom bar + sheet |
+| Q22 | Add a Chromium "mobile" Playwright project (touch, 375 px) for the toolbar and sheet tests? Adds a browser download to CI, no npm change | Yes, scoped to the new specs |
+| Q23 | Add a *Not yet voted by me* filter (needs `my_vote` in the list)? | Yes — it is the voter's "where was I" |
+| Q24 | Which statuses accept the toolbar? Today the sidebar button shows for proposer+ unless resolved/archived; the server decides the rest | Keep the same rule; the bar simply mirrors `#propose-btn` |
+| Q25 | Do the `app.js` split (editor views → `review.js`) as the first step of this phase, or as its own commit before it? | Own commit first — pure move, full suite green, then M.1 |
+
 ## Phase P — Automatic page detection on import (2026-10-23, uncommitted)
 
 After a user test with the Oslo Høyre programme (variable numbered lines per page: title and

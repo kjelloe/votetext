@@ -677,13 +677,13 @@ All six mutations log to `activity_log` (`variant_hidden`/`variant_unhidden`, `c
 
 ### `app.js` split strategy
 
-`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,907 lines after UC-23 — the next frontend feature should move the editor-only views out first):
+`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,541 lines after the 2026-10-23 move of the creator/editor modals to `review.js`):
 
 | File | Contents | Audience |
 |---|---|---|
 | `app.js` | Router, helpers, document/variant/comment/activity/access views | all roles, every session |
 | `auth.js` | `viewLogin`, `showProfileModal`, `viewProfile` | once per session / infrequent |
-| `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText`, `viewModeration`, `viewUserAdmin` | supervisors, editors, admins |
+| `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText`, `viewModeration`, `viewUserAdmin`, `openCreateDocModal`, `openDocSettingsModal`, `openStatusModal`, manage-access modal | creators, supervisors, editors, admins |
 
 ⚠ Route handlers defined in `auth.js`/`review.js` and referenced from the `routes` array in `app.js` **must be wrapped in arrow functions** (`() => viewLogin()`), never referenced bare — `app.js` executes before the other files load, so a bare reference throws a `ReferenceError` that kills the entire script. This broke the app in real browsers after the initial split; the e2e smoke suite now guards it.
 

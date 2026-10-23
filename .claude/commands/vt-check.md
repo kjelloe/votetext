@@ -7,7 +7,7 @@ Run a quick health check on the VoteText project and report the results. Execute
 wc -l public/app.js public/review.js public/auth.js
 ```
 - `public/app.js` must stay under 2000 lines. Report as OK / WARNING (>1900) / OVER LIMIT
-- `public/review.js` has no hard limit but flag if it exceeds 1300 lines (1104 on 2026-10-03)
+- `public/review.js` has no hard limit but flag if it exceeds 1700 lines (1484 on 2026-10-23 after the creator/editor modals moved in); `public/selection.js` (Phase M) should stay under 600
 
 **2. Test counts**
 ```bash

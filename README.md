@@ -374,7 +374,7 @@ votetext/
 └── public/
     ├── index.html          # Single-page application shell
     ├── app.js              # Client-side logic (vanilla JS, < 2000 lines)
-    ├── review.js           # Supervisor/editor/admin views: review, conflicts, final voting, resolved text, moderation, user admin, manage-access modal
+    ├── review.js           # Creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, settings, status modal
     └── style.css           # Styles
 ```
 
