@@ -99,6 +99,7 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Content-Security-Policy with no inline scripts, `X-Frame-Options: DENY`, nosniff, referrer policy, HSTS in production
 - Sign-in rate limits per email and per client address; sign-up can be restricted to invited addresses
 - Keyboard: proposal cards are focusable, conflict ordering has button controls as well as drag-and-drop; text selection works on touch screens; usable at phone widths
+- Selection toolbar: selecting text floats **Propose** (and **Variant of #N** when the passage already has a proposal) on the selection — above it with a mouse, below it on a phone — so proposing never means scrolling to the sidebar
 
 #### User Activity Feed
 - Default view: all activity on documents you own or have access to
@@ -375,6 +376,7 @@ votetext/
     ├── index.html          # Single-page application shell
     ├── app.js              # Client-side logic (vanilla JS, < 2000 lines)
     ├── review.js           # Creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, settings, status modal
+    ├── selection.js        # Floating Propose / Variant toolbar on a text selection, fork modal, variant chooser
     └── style.css           # Styles
 ```
 
@@ -504,7 +506,7 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
-- [x] Playwright e2e suite (`npm run test:e2e`) — 71 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Playwright e2e suite (`npm run test:e2e`) — 79 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
 - [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
@@ -519,3 +521,4 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log, server-hardening guide)
 - [x] Automatic page detection on import (2026-10-23, UC-23) — `lines_per_page: "auto"` keeps the source page and line numbers of paged markdown from `pdf2md.py`; opened to creators the same day
 - [ ] Hardened server layout and offsite backups on the live VM (in-place conversion, guide in the ops repository)
+- [ ] Proposing and browsing on phones (Phase M) — [x] M.1 selection toolbar (2026-10-29, UC-24, `public/selection.js`, Chromium phone project in Playwright); [ ] M.2 bottom-sheet modal and stay-in-place after submit; [ ] M.3 proposal sort/filter, sticky bottom bar, Previous/Next on the proposal page

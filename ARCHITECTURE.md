@@ -33,7 +33,7 @@ data/votetext.db  (single SQLite file, WAL mode)
 | HTTP | Express 4 | Minimal, well-understood, enough middleware |
 | Database | SQLite via `better-sqlite3` | Zero-config, single file, synchronous API = simpler code |
 | Auth | Passwordless email OTP | No password storage, Resend SDK covers email delivery |
-| Frontend | Vanilla JS + HTML + CSS | No build step, no framework churn; `app.js` < 2000 lines, split by role into `auth.js` and `review.js` |
+| Frontend | Vanilla JS + HTML + CSS | No build step, no framework churn; `app.js` < 2000 lines, split by role into `auth.js`, `review.js` and `selection.js` |
 | Deployment target | Single Linux VPS | Single-process, SQLite handles thousands of concurrent readers in WAL mode |
 
 ---
@@ -73,7 +73,8 @@ votetext/
 │   ├── index.html          — SPA shell
 │   ├── app.js              — client router + all-role views (< 2000 lines)
 │   ├── auth.js             — login, profile completion modal, profile page
-│   ├── review.js           — supervisor/editor/admin views: review, conflict resolution, final voting, resolved text, moderation, user admin
+│   ├── review.js           — creator/supervisor/editor/admin views and modals: review, conflict resolution, final voting, resolved text, moderation, user admin, new document, settings, status
+│   ├── selection.js        — floating Propose / Variant toolbar on a text selection, fork modal, variant chooser (Phase M)
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
@@ -431,6 +432,8 @@ Each rendered line span (`<span class="line-text">`) carries `data-char-start` a
 
 The resolved `{ char_start, char_end, text }` is stored in `pendingSelection` and passed to `openProposeModal`. The modal shows the raw selected text in a collapsible `<details>` panel and disables submit if no selection is present.
 
+**Selection toolbar (`public/selection.js`, UC-24, 2026-10-29).** `viewDocument` calls `wireSelectionToolbar({ doc, linesContainer, variants, getSelection })` whenever it rendered `#propose-btn`, so the bar follows the same proposer/status rule. One `#selection-toolbar` element lives in `<body>` (`position: fixed`, z-index below the modal). It is shown after `pointerup`/`mouseup`/`touchend` in the text panel, or 350 ms after the last `selectionchange` while no pointer is down (native touch handles fire no pointer events), and hidden on collapse, Escape, `hashchange` or a button press. Placement: above the selection rectangle for a mouse, below for touch (`pointerType`, falling back to `(pointer: coarse)`), flipped when there is no room (the sticky header's bottom edge is the top limit), clamped horizontally; repositioned on capture-phase `scroll` and `resize`. `data-placement` carries the result for tests. The bar renders **Propose** and, when the range overlaps forkable proposals under the proposal page's `canFork` rule, **Variant of #N** (one) or **Variant…** (chooser modal). Pressing a button is `preventDefault`ed and the captured range is snapshotted on show, so a collapsing native selection cannot empty the modal. `openForkModal(v)` moved here from `viewVariant` and is shared by the proposal page's Fork button and the toolbar (which first fetches `GET /variants/:id` for the parent's text).
+
 See `specs/use-cases.md` for full user-facing flows.
 
 ### Role gating in the browser
@@ -677,19 +680,20 @@ All six mutations log to `activity_log` (`variant_hidden`/`variant_unhidden`, `c
 
 ### `app.js` split strategy
 
-`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,541 lines after the 2026-10-23 move of the creator/editor modals to `review.js`):
+`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,514 lines after the 2026-10-23 move of the creator/editor modals to `review.js` and the 2026-10-29 move of the fork modal to `selection.js`):
 
 | File | Contents | Audience |
 |---|---|---|
 | `app.js` | Router, helpers, document/variant/comment/activity/access views | all roles, every session |
 | `auth.js` | `viewLogin`, `showProfileModal`, `viewProfile` | once per session / infrequent |
 | `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText`, `viewModeration`, `viewUserAdmin`, `openCreateDocModal`, `openDocSettingsModal`, `openStatusModal`, manage-access modal | creators, supervisors, editors, admins |
+| `selection.js` | `wireSelectionToolbar`, `openForkModal`, variant chooser; Phase M sheets and toast to follow (budget 600 lines) | proposers, on the document page |
 
-⚠ Route handlers defined in `auth.js`/`review.js` and referenced from the `routes` array in `app.js` **must be wrapped in arrow functions** (`() => viewLogin()`), never referenced bare — `app.js` executes before the other files load, so a bare reference throws a `ReferenceError` that kills the entire script. This broke the app in real browsers after the initial split; the e2e smoke suite now guards it.
+⚠ Route handlers defined in `auth.js`/`review.js`/`selection.js` and referenced from the `routes` array in `app.js` **must be wrapped in arrow functions** (`() => viewLogin()`), never referenced bare — `app.js` executes before the other files load, so a bare reference throws a `ReferenceError` that kills the entire script. This broke the app in real browsers after the initial split; the e2e smoke suite now guards it.
 
 If `app.js` approaches the limit again, the next candidates are the owner/admin modals (`openAccessModal`, `openStatusModal`, `openDocSettingsModal`, ~250 lines) which could move to a `public/admin.js`, followed by `openCreateDocModal` (~197 lines). Core document/variant rendering stays in `app.js` since all roles use it on every page.
 
-All files share globals: `app.js` loads first and defines the helpers (`esc`, `el`, `api`, `state`, etc.); `auth.js` and `review.js` depend on those globals. Cross-file dependency contracts are verified by `tests/frontend.test.js`.
+All files share globals: `app.js` loads first and defines the helpers (`esc`, `el`, `api`, `state`, etc.); `auth.js`, `review.js` and `selection.js` depend on those globals, and `app.js` calls into them only from event handlers, never at load time. Cross-file dependency contracts are verified by `tests/frontend.test.js`.
 
 ---
 
@@ -697,7 +701,7 @@ All files share globals: `app.js` loads first and defines the helpers (`esc`, `e
 
 ```bash
 npm test          # api + unit + frontend-contract + migration tests (node:test)
-npm run test:e2e  # Playwright browser tests (Firefox, own server on port 3001)
+npm run test:e2e  # Playwright browser tests (Firefox desktop + Chromium phone project, own server on port 3001)
 npm run init-db   # (re)create database from schema
 npm run seed      # seed dev data + print session cookie for browser login
 ```

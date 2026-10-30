@@ -1,14 +1,14 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-10-03 (phase 3 implemented)_
+_Last updated: 2026-10-29 (Phase M.1 implemented; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status: **329 node tests** green (273 API + 30 unit + 12 frontend contract +
-8 migration + 6 deploy contract) and **65 Playwright e2e tests** green, run on the final state.
+Test status on 2026-10-29: **359 node tests** and **79 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
 **L** a day or more.
@@ -286,7 +286,7 @@ Effort: S1 ≈ M (one limits helper + rate-limit helper + nginx line), S2 ≈ S 
 
 ---
 
-## Phase M — Proposing and browsing on phones (designed 2026-10-23; Q19–Q25 decided as recommended; split done, M.1 next)
+## Phase M — Proposing and browsing on phones (designed 2026-10-23; Q19–Q25 decided as recommended; split and M.1 done, M.2 next)
 
 **Trigger:** a user test with the Oslo Høyre programme (23 pages, 840 lines) on a phone. Reading works;
 proposing does not: the only **Propose** button sits in the sidebar, which on phones stacks *below* the
@@ -335,6 +335,8 @@ reachable from any scroll position; tapping a card opens the proposal page as to
 returns to page + line. The proposal page gains **‹ Previous / Next ›** following the chosen order, so a
 voter can walk the whole set on either device. Optional (Q23): a *Not yet voted by me* filter, which needs
 `my_vote` added to the list query.
+
+**M.1 done 2026-10-29:** `public/selection.js` (202 lines) — `wireSelectionToolbar` called from `viewDocument` under the `#propose-btn` rule; bar shown on pointer/finger lift or 350 ms after the last `selectionchange`, above for mouse, below for touch, flipped and clamped to the viewport, repositioned on scroll/resize, `data-placement` for tests; **Variant of #N** / **Variant…** chooser under the proposal page's `canFork` rule; `openForkModal` moved out of `viewVariant` (app.js 1 514 lines). Playwright gained a Chromium `mobile` project (375 px, touch) scoped to `mobile.spec.js`; CI installs chromium too. Tests: 359 node, 79 e2e (`selection.spec.js` 6, `mobile.spec.js` 2). Omission pass 2026-10-30: the flip respects the sticky header, pointer state is tracked on the document (a drag may start outside the text panel), Escape hides the bar, tutorial cues now show the floating bar. Submit still navigates to the proposal page — that changes in M.2.
 
 **Q25 done 2026-10-23:** `openCreateDocModal`, `openDocSettingsModal`, `openStatusModal` moved to `review.js` unchanged (app.js 1 900 → 1 541 lines); its own commit; suites green.
 

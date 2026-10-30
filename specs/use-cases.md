@@ -62,7 +62,7 @@ The lines-per-page selector auto-populates with the detected value. A `(detected
 1. User reads through the document text on the current page.
 2. User clicks and drags to select the passage they want to target.
    - Selection is captured on `mouseup`; the system resolves it to absolute character offsets using `data-char-start` / `data-char-end` on each rendered line span.
-3. User clicks "Propose" in the Proposals sidebar.
+3. User clicks "Propose" in the Proposals sidebar, or **Propose** on the toolbar that floats on the selection (UC-24).
 4. "Propose variant" modal opens:
    - **Collapsible "Selected text" panel** (open by default) shows the raw selected text in monospace. User can collapse it.
    - **Operation** selector: Replace / Insert / Delete.
@@ -951,6 +951,30 @@ Text caps on every stored field, hourly quotas (documents, copies, invitations p
 - Changing *lines per page* after import is refused for every document (422): the stored pages would not follow.
 
 **Tests:** group AD in `tests/api.test.js`, the paged cases in `tests/unit.test.js`, `tests/e2e/paged.spec.js`.
+
+---
+
+## UC-24: Selection toolbar — propose where you read
+
+**Actor:** Proposer or higher on a document that still accepts proposals (not `resolved`/`archived` — the same rule as the sidebar **Propose** button).
+**Entry point:** Selecting text in the document reader, with a mouse, keyboard or finger.
+**Preconditions:** signed in with proposer access; the selection lies inside the text panel.
+
+### Main flow
+
+1. The user selects a passage. When the mouse button or finger lifts (`pointerup`/`mouseup`/`touchend`, or 350 ms after the last `selectionchange` when native touch handles are dragged), a small floating bar appears on the selection: **Propose**, plus **Variant of #N** when the selection overlaps exactly one forkable proposal, or **Variant…** when it overlaps several.
+2. Mouse: the bar sits above the selection. Touch: below it, because iOS and Android draw their own callout above. Either placement flips when there is no room (the sticky header counts as no room), and the bar stays within the viewport horizontally. It follows the selection on scroll and resize.
+3. **Propose** opens the usual *Propose variant* modal (UC-2) with the captured range; the bar hides. Submitting still opens the new proposal's page (M.2 changes this to stay in place).
+4. **Variant of #N** loads that proposal and opens the *Fork proposal* modal (UC-16) with its text prefilled; the new proposal keeps the parent's lines (`based_on`). **Variant…** first shows a chooser listing the overlapping proposals, with the note that a variant keeps the proposal's lines and only changes the wording, and that different lines call for **Propose** instead.
+5. The bar hides when the selection collapses, on Escape, when the route changes, and when one of its buttons is used. Pressing a button does not clear the selection (the press is `preventDefault`ed and the captured range is snapshotted when the bar is shown).
+
+### Alternative flows
+
+- The document is `resolved`/`archived`, or the user is below proposer: no bar, as there is no sidebar button either.
+- **Variant** follows the proposal page's fork rule: pending/conflict proposals only; proposer+ while the document is `open`, supervisor+ during `voting`/`final_voting`. Outside that, only **Propose** is offered.
+- The sidebar **Propose** button remains as the keyboard and desktop path.
+
+**Tests:** `tests/e2e/selection.spec.js` (Firefox, mouse), `tests/e2e/mobile.spec.js` (Chromium phone project, touch). Playwright cannot drag native selection handles, so the specs build the selection with the DOM `Range` API and dispatch the lift event; real-phone checks are on the manual list.
 
 ---
 

@@ -622,6 +622,7 @@ async function viewDocument(docId) {
     // Propose button
     const proposeBtn = varSection.querySelector('#propose-btn');
     if (proposeBtn) proposeBtn.addEventListener('click', () => openProposeModal(doc, pendingSelection));
+    if (proposeBtn) wireSelectionToolbar({ doc, linesContainer, variants, getSelection: () => pendingSelection });
 
     // Consume back-from-variant scroll target
     const jump = state.pendingVariantJump;
@@ -996,36 +997,8 @@ async function viewVariant(variantId) {
         });
     });
 
-    // Fork button
-    if (canFork) {
-        document.getElementById('fork-variant-btn').addEventListener('click', () => {
-            const defaultTitle = `Your variant of ${v.title || v.operation}`;
-            openModal(`
-                <div class="form-group"><label>Title</label><input type="text" id="fork-title" value="${esc(defaultTitle)}"></div>
-                <div class="form-group"><label>Proposed text</label><textarea id="fork-text" class="comment-form" rows="4"></textarea></div>
-                <div class="form-group"><label>Rationale</label><textarea id="fork-rationale" class="comment-form" rows="2" placeholder="Why does this variant differ?"></textarea></div>
-                <p id="fork-err" class="error-msg" style="display:none"></p>
-                <div class="form-actions">
-                    <button id="fork-submit-btn" class="btn btn-primary">Submit fork</button>
-                    <button class="btn btn-ghost modal-cancel">Cancel</button>
-                </div>
-            `, 'Fork proposal');
-            document.getElementById('fork-text').value = v.new_text;
-            document.getElementById('fork-submit-btn').addEventListener('click', async () => {
-                const errEl = document.getElementById('fork-err');
-                errEl.style.display = 'none';
-                try {
-                    const d = await api('POST', `/variants/${variantId}/fork`, {
-                        title: document.getElementById('fork-title').value.trim(),
-                        new_text: document.getElementById('fork-text').value,
-                        rationale: document.getElementById('fork-rationale').value.trim(),
-                    });
-                    closeModal();
-                    location.hash = `#/variants/${d.variant.id}`;
-                } catch (e) { errEl.textContent = e.message; errEl.style.display = ''; }
-            });
-        });
-    }
+    // Fork button (modal lives in selection.js, shared with the selection toolbar)
+    if (canFork) document.getElementById('fork-variant-btn').addEventListener('click', () => openForkModal(v));
 
     // Comment sort buttons
     const sortBar = document.getElementById('comment-sort-bar');

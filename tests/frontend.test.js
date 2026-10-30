@@ -221,6 +221,26 @@ test('auth.js only uses globals that app.js exports (no missing cross-file deps)
     }
 });
 
+test('selection.js only uses globals that app.js exports (no missing cross-file deps)', () => {
+    const APP_GLOBALS_USED_BY_SELECTION = ['esc', 'el', 'api', 'state', 'openModal', 'closeModal',
+        'showToast', 'hasLevel', 'openProposeModal'];
+
+    const appSrc  = readSrc('app.js');
+    const appDecl = new Set(topLevelFunctions(appSrc));
+    for (const name of APP_GLOBALS_USED_BY_SELECTION) {
+        if (name === 'state') continue;
+        assert.ok(appDecl.has(name),
+            `selection.js depends on "${name}" but it is not declared as a function in app.js`);
+    }
+    // app.js calls into selection.js only from event handlers (after every script has loaded)
+    const selDecl = new Set(topLevelFunctions(readSrc('selection.js')));
+    const routesBlock = appSrc.match(/const routes\s*=\s*\[([\s\S]*?)\];/)[1];
+    for (const name of ['wireSelectionToolbar', 'openForkModal']) {
+        assert.ok(selDecl.has(name), `app.js expects selection.js to declare "${name}"`);
+        assert.ok(!routesBlock.includes(name), `"${name}" must not be referenced from the routes array (selection.js loads after app.js)`);
+    }
+});
+
 test('passesThreshold: backend (src/lib/text.js) and frontend (review.js) copies are identical', () => {
     const extract = (src, file) => {
         const m = src.match(/function passesThreshold\([\s\S]*?\n\}/);

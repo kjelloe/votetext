@@ -186,11 +186,12 @@ Clara adds her view — it's visible to everyone the moment she posts it.
 
 ## Chapter 6 — Proposing a change *(1:30)* — Bjørn, Community Garden Charter
 
-[screen: document view — select the guest rule sentence with the mouse]
+[screen: document view — select the guest rule sentence with the mouse; the floating "Propose" bar appears above the selection]
 
-Now the heart of VoteText. Bjørn thinks a sentence should change — so he selects it.
+Now the heart of VoteText. Bjørn thinks a sentence should change — so he selects it, and a small
+**Propose** button appears right on the selection. On a phone it sits just below the selected words.
 
-[screen: click "Propose" at the top of the proposal sidebar — modal showing the selected text, the operation selector and three fields]
+[screen: click "Propose" on the floating bar — modal showing the selected text, the operation selector and three fields]
 
 The proposal form asks for three things: a short title, the new wording, and — most
 importantly — *why*. A good rationale is what turns a change request into an argument

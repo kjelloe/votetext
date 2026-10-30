@@ -4,7 +4,7 @@ Run a quick health check on the VoteText project and report the results. Execute
 
 **1. Line count limits**
 ```bash
-wc -l public/app.js public/review.js public/auth.js
+wc -l public/app.js public/review.js public/auth.js public/selection.js
 ```
 - `public/app.js` must stay under 2000 lines. Report as OK / WARNING (>1900) / OVER LIMIT
 - `public/review.js` has no hard limit but flag if it exceeds 1700 lines (1484 on 2026-10-23 after the creator/editor modals moved in); `public/selection.js` (Phase M) should stay under 600
@@ -21,7 +21,7 @@ Report each. Cross-check against the counts in `plan-update.md`, `README.md` (Ro
 npm test 2>&1 | grep -E "^not ok|^# (tests|pass|fail)"
 npm run test:e2e 2>&1 | tail -3
 ```
-Report pass / fail counts. If any fail, show the failing test names. The e2e run needs Firefox (`npx playwright install firefox`); say so if it cannot start rather than skipping silently.
+Report pass / fail counts. If any fail, show the failing test names. The e2e run needs Firefox and Chromium (`npx playwright install firefox chromium` — the `mobile` project runs `mobile.spec.js` in phone-sized Chromium); say so if it cannot start rather than skipping silently.
 
 **4. Schema and migration**
 `scripts/migrate.js` derives everything from `schema.sql`, so there is no column list to compare. Check instead:

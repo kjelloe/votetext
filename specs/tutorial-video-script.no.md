@@ -142,11 +142,12 @@ Clara legger til sitt syn — synlig for alle i samme øyeblikk som hun publiser
 
 ## Kapittel 6 — Foreslå en endring *(1:30)* — Bjørn, Community Garden Charter
 
-[screen: document view — select the guest rule sentence with the mouse]
+[screen: document view — select the guest rule sentence with the mouse; the floating "Propose" bar appears above the selection]
 
-Nå selve hjertet i VoteText. Bjørn mener en setning bør endres — så han markerer den.
+Nå selve hjertet i VoteText. Bjørn mener en setning bør endres — så han markerer den, og en liten
+**Propose**-knapp dukker opp rett på markeringen. På mobil ligger den rett under de markerte ordene.
 
-[screen: click "Propose" at the top of the proposal sidebar — modal showing the selected text, the operation selector and three fields]
+[screen: click "Propose" on the floating bar — modal showing the selected text, the operation selector and three fields]
 
 Forslagsskjemaet ber om tre ting: en kort tittel, den nye formuleringen, og — det
 viktigste — *hvorfor*. En god begrunnelse er det som gjør et endringsønske til et

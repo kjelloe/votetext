@@ -42,7 +42,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps firefox
+      - run: npx playwright install --with-deps firefox chromium
       - run: npm run test:e2e
         env:
           RESEND_API_KEY: re_ci_dummy

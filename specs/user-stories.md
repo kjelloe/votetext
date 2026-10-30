@@ -76,7 +76,7 @@ The stories assume a document has already been created and is in **Open** status
 
 1. On the document view, user reads through the text and identifies a passage they want to change.
 2. User clicks at the start of the passage and drags to the end to select it.
-3. User clicks **Propose** at the top of the proposal sidebar. A modal opens showing the selected text, the operation selector and three fields.
+3. A small bar floats on the selection as soon as the mouse button or finger lifts: **Propose**, and **Variant of #N** when the passage already has a proposal (above the selection with a mouse, below it on a phone). User clicks **Propose** there, or at the top of the proposal sidebar. A modal opens showing the selected text, the operation selector and three fields.
 4. User fills in:
    - **Title** — a short label, e.g. "Replace vague deadline with specific date"
    - **Proposed text** — the replacement wording
@@ -180,7 +180,7 @@ The stories assume a document has already been created and is in **Open** status
 
 ## Coverage map
 
-> All 10 stories have Playwright coverage as of 2026-10-22 (71 tests in `tests/e2e/`, incl. XSS and regression guard-rail specs, the site-role flows of UC-22 and the paged import of UC-23) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
+> All 10 stories have Playwright coverage as of 2026-10-22 (79 tests in `tests/e2e/`, incl. XSS and regression guard-rail specs, the site-role flows of UC-22, the paged import of UC-23 and the selection toolbar of UC-24 on desktop and in a Chromium phone project) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
 
 | Story | Playwright priority | Video segment |
 |-------|--------------------|-|

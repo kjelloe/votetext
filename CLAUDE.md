@@ -18,7 +18,7 @@ npm run seed-demo # tutorial-video demo data (four personas, four documents)
 npm run dev       # start with nodemon auto-reload → http://localhost:3000
 npm start         # production start
 npm test          # integration + unit + frontend-contract + migration + deploy-contract tests (isolated DBs, no email needed)
-npm run test:e2e  # Playwright browser tests (Firefox, own server on port 3001)
+npm run test:e2e  # Playwright browser tests (Firefox desktop + a Chromium phone project for mobile.spec.js, own server on port 3001)
 npm run test:deploy # scripts/deploy.sh against a local stand-in server (never touches the real server)
 npm run clean-db  # drop and reinitialise the database
 ./scripts/deploy.sh   # deploy the committed HEAD to production — only when the owner asks (settings in deploy.env)
@@ -61,6 +61,7 @@ public/
     app.js          — hash router (#/documents, #/variants/:id, …); all-role views; esc() for XSS
     auth.js         — viewLogin, showProfileModal, viewProfile (depends on app.js globals)
     review.js       — creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, document settings, status change
+    selection.js    — floating Propose / Variant toolbar on a text selection (wired from viewDocument), fork modal, variant chooser; Phase M sheets go here too (budget 600 lines)
     style.css       — CSS custom properties (--color-*, --font-*); mobile-first
 ```
 

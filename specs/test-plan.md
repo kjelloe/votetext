@@ -577,7 +577,7 @@ ownership test grants bob `creator` first.
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (71 tests). Run with `npm run test:e2e`.
+> Tests live in `tests/e2e/*.spec.js` (79 tests). Run with `npm run test:e2e`. Two Playwright projects: `firefox` (desktop, every spec except `mobile.spec.js`) and `mobile` (Chromium, 375 px, touch — `mobile.spec.js` only, since Firefox cannot emulate touch).
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -603,11 +603,14 @@ ownership test grants bob `creator` first.
 | `paged.spec.js` | UC-23 | Superadmin (root) pastes paged markdown → notice "4 pages, 11 numbered lines, 2 unnumbered lines skipped", *Auto* preselected, keep-checkbox visible → create → "Page 1 of 4" with the empty-page note on pages 1–2, page 3 starts at line 1 with the `#` heading kept, page 4 runs 7–11; a creator (alice) gets *Auto* preselected too and creates a 4-page document; on an auto document with a proposal on page 4 the hover link reads "↗ p.4" and jumps there, and **Copy** prefills paged markdown with *Auto* preselected → the copy has 4 pages, the copied proposal on line 9, page 3 starting at line 1 |
 | `document.spec.js` | UC-1, UC-6, UC-8 | Numbered-line detection and stripping; Copy prefills the modal; countdown banner appears and cancels; delete from the settings modal |
 | `fork.spec.js` | UC-16 | Fork → "based on #1" on the fork, "forked as #2" on the original |
+| `selection.spec.js` | US-4 via UC-24 | Mouse selection → floating bar above it (`data-placement="above"`, bar bottom ≤ selection top) → **Propose** → modal with "chars 0–6" → submit → proposal page, bar hidden; collapsing the selection hides the bar while `#propose-btn` stays; selection over one pending proposal → **Variant of #1** → fork modal prefilled → "based on #1"; over two → **Variant…** → chooser with both → fork modal of the chosen one; a selection right under the sticky header flips the bar below and Escape hides it; resolved document → no bar |
+| `mobile.spec.js` | UC-24 (phone) | Chromium `mobile` project: sidebar stacks below the text; programmatic selection + `touchend` → bar below the selection and inside the viewport → tap **Propose** → modal with the range; **Variant of #1** on a touch selection → fork modal |
 | `regression.spec.js` | guard rail | Bugs that only show on the second action in one page: Reply after the thread re-rendered; Change status touching a previously opened document; a document without overlapping proposals reaching final voting; selecting text inside a highlighted line; "Use different email" on the login form |
 | `xss.spec.js` | guard rail | Hostile `<img onerror>` / `<script>` payloads in document title, variant title/rationale/text, and comments render as inert text (`esc()` regression net for template changes) |
 
 ### Known limitations
 
+- **Touch selection handles** (UC-24) — Playwright cannot long-press-select or drag native handles; the specs build the `Range` themselves and dispatch `touchend`/`mouseup`. Real-phone behaviour (callout vs bar, handle dragging, keyboard) is on the manual list.
 - **Conflict drag-and-drop** (US-8 steps 6–7) — HTML5 DnD events are not reliably automatable; ordering is set via `PATCH /conflict-order` and the UI badges are asserted after reload. Drag itself remains a manual-checklist item.
 - *(resolved 2026-07-11)* Comment editing (US-3 step 7) now has full UI — inline Edit form, "edited" marker, reply-grace. Covered by Group Z and `comment.spec.js`.
 
@@ -682,3 +685,4 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Resolved text preview:** during final voting, after saving a passing tally, the Resolved text preview shows that change applied
 - [ ] **Withdraw only before voting:** own pending proposal on an `open` doc shows Edit and Withdraw; once the doc is `voting` both buttons are gone
 - [ ] **OTP attempt limit:** enter a wrong code five times → "Too many incorrect codes" and the emailed code no longer works; a newly requested code does
+- [ ] **Selection toolbar on a real phone (UC-24):** long-press a word, drag the handles → after lifting the finger the Propose bar sits below the selection, under the OS callout; tapping Propose opens the modal with the right range; scrolling keeps the bar on the selection

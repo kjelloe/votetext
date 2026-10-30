@@ -134,6 +134,19 @@ Two browsers: the document owner and an invited voter.
 - [x] **Copy** on the auto document → the modal shows paged markdown with *Auto* preselected → the copy has the same page count and line numbers; copied proposals sit on the same lines *(covered by `paged.spec.js`)*
 - [x] As a creator, the same file also offers *Auto* *(covered by `paged.spec.js`)*
 
+## Selection toolbar on a real phone (2026-10-29, UC-24)
+
+Playwright covers the toolbar with programmatic selections (Firefox mouse, Chromium touch); only a real phone shows the OS callout and handle dragging.
+
+- [ ] iPhone (Safari): long-press a word in a document you may propose on, drag the handles → after lifting the finger the Propose bar appears *below* the selection, under Safari's own callout, and stays inside the screen
+- [ ] Android (Chrome): same, with Chrome's callout above and the bar below
+- [ ] Tap **Propose** → the modal shows *Selected range: chars N–M* for the words that were selected (the selection may clear visually when the modal opens; the range must still be right)
+- [ ] Select across a highlighted passage → **Variant of #N** appears; tap → *Fork proposal* with the parent's text prefilled
+- [ ] Scroll with a selection active → the bar follows it; scroll it off-screen and back → still attached
+- [ ] Tap elsewhere to clear the selection → the bar disappears; the sidebar **Propose** button below the text still works
+- [ ] Desktop mouse: the bar appears *above* the selection; selecting the first line near the top of the viewport flips it below
+- [ ] Keyboard (desktop): Shift+arrow selection shows the bar after a short pause
+
 ## Deploy (`scripts/deploy.sh`)
 
 - [ ] `./scripts/deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing
@@ -167,4 +180,5 @@ Two browsers: the document owner and an invited voter.
 | UC-20 | | | |
 | Review fixes, phase 1 | | | |
 | Phase 3 UI | | | |
+| UC-24 (phone) | | | |
 | Deploy | | | |

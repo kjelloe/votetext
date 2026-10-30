@@ -14,7 +14,11 @@ module.exports = defineConfig({
         headless: true,
         trace: 'on-first-retry',
     },
-    projects: [{ name: 'firefox', use: { browserName: 'firefox' } }],
+    projects: [
+        { name: 'firefox', use: { browserName: 'firefox' }, testIgnore: /mobile\.spec\.js/ },
+        // Phone-sized Chromium with touch, for the selection toolbar and sheets (Firefox cannot emulate touch)
+        { name: 'mobile', use: { browserName: 'chromium', viewport: { width: 375, height: 667 }, isMobile: true, hasTouch: true }, testMatch: /mobile\.spec\.js/ },
+    ],
     globalSetup: './tests/e2e/global-setup.js',
     globalTeardown: './tests/e2e/global-teardown.js',
 });
