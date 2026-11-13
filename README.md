@@ -54,7 +54,8 @@ There is **no bundler, no transpiler, no framework**. The frontend is a single H
 - Three operations: **INSERT**, **REPLACE**, **DELETE**
 - Title and rationale fields for context
 - Proposals sidebar shows all proposals ordered by document position; sequential numbers, line ranges, and author tooltips (name + organisation)
-- **Sidebar filter** — All N / On-page N / Top buttons filter the list to all proposals, only those overlapping the current page, or the top `PROPOSALS_TOP_PERCENT`% ranked by total votes; filter is persisted per document
+- **Proposal list filter and order** — *All · This page · Not yet voted by me* and *Document order · Most discussed · Most voted · Newest*, remembered per device; the proposal page's Previous/Next follow the same order (and skip voted proposals under the voter filter)
+- **Phones** — a sticky bottom bar "N proposals · Propose" opens the list as a bottom sheet from any scroll position; every modal is a bottom sheet that follows the on-screen keyboard; after submitting, the reader stays on the document and a toast offers the new proposal's page
 - Hovering a proposal highlights its lines if on the current page; a go-to-page link is always shown, navigating and scrolling the line into view on click
 - Overlapping proposals show an overlap indicator (⊕ #N, #M) on hover; clicking it highlights all cards in the overlap group in amber
 - **Comment heatmap** — each proposal card shows a 💬 N comment count, coloured orange/red when the proposal holds a configurable share of all document comments (`COMMENT_HEAT_ORANGE` / `COMMENT_HEAT_RED`)
@@ -178,7 +179,7 @@ All data lives in a single SQLite file (`data/votetext.db`). The schema is defin
 #### Variants
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`    | `/api/documents/:id/variants` | List all variants for a document (each carries `proposal_num`, its stable creation-order number) |
+| `GET`    | `/api/documents/:id/variants` | List all variants for a document (each carries `proposal_num`, its stable creation-order number, and `my_vote`: the caller's ballot or `null`) |
 | `POST`   | `/api/documents/:id/variants` | Propose a new variant |
 | `GET`    | `/api/variants/:id` | Get variant details |
 | `PATCH`  | `/api/variants/:id` | Update variant (author only, while pending) |
@@ -317,7 +318,6 @@ All variables are optional in development. Production requires `SESSION_SECRET` 
 | `VARIANT_COOLDOWN_SECONDS` | `5` | Minimum interval between proposals per user |
 | `COMMENT_HEAT_ORANGE` | `10` | Heatmap: % of document comments for orange |
 | `COMMENT_HEAT_RED` | `25` | Heatmap: % of document comments for red |
-| `PROPOSALS_TOP_PERCENT` | `10` | Sidebar "Top" filter percentage |
 | `TOAST_DISMISS_SECONDS` | `30` | Toast notification auto-dismiss |
 | `VOTING_COUNTDOWN_DEFAULT_MINUTES` | `5` | Default countdown in the schedule-voting form |
 
@@ -506,7 +506,7 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
-- [x] Playwright e2e suite (`npm run test:e2e`) — 79 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Playwright e2e suite (`npm run test:e2e`) — 88 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
 - [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
@@ -521,4 +521,6 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] **Ops:** `votetext-ops` — separate private repository for deployment/ops files (filled-in cloud-init, ssh/deploy scripts, prompt log, server-hardening guide)
 - [x] Automatic page detection on import (2026-10-23, UC-23) — `lines_per_page: "auto"` keeps the source page and line numbers of paged markdown from `pdf2md.py`; opened to creators the same day
 - [ ] Hardened server layout and offsite backups on the live VM (in-place conversion, guide in the ops repository)
-- [ ] Proposing and browsing on phones (Phase M) — [x] M.1 selection toolbar (2026-10-29, UC-24, `public/selection.js`, Chromium phone project in Playwright); [ ] M.2 bottom-sheet modal and stay-in-place after submit; [ ] M.3 proposal sort/filter, sticky bottom bar, Previous/Next on the proposal page
+- [x] Proposing and browsing on phones (Phase M, 2026-10-29/30, UC-24/UC-25) — selection toolbar (`public/selection.js`, Chromium phone project in Playwright), bottom-sheet modals that follow the keyboard, stay on the document after submitting with a toast, proposal filter + order remembered per device with `my_vote` for *Not yet voted by me*, sticky bottom bar with the list as a sheet, Previous/Next in the chosen order
+- [ ] Tutorial video production (Phase V, designed 2026-11-10 in `plan-update.md`): Playwright-recorded clips per chapter with a drawn pointer and typed input, Azure neural narration per cue in EN and NO, ffmpeg assembly; V.1 + V.2 before the design pass, the full recording after it
+- [x] Modal keyboard and focus (Phase K, 2026-11-10): every modal is a `role="dialog"`, focus moves in and back, Escape closes, Tab wraps; on phones the sheet takes focus so the keyboard waits; toast placement without `:has()`

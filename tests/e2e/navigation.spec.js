@@ -30,16 +30,15 @@ test('lines covered by a proposal are highlighted', async ({ page }) => {
     await expect(page.locator('.line-highlighted-pending').first()).toBeVisible();
 });
 
-test('sidebar filter toggles between All and On-page', async ({ page }) => {
+test('sidebar filter toggles between All and This page', async ({ page }) => {
     await page.goto(`/#/documents/${docId}`);
-    const allBtn = page.locator('#filter-all-btn');
-    const pageBtn = page.locator('#filter-page-btn');
-    await expect(allBtn).toContainText('All 1');
-    await pageBtn.click();
-    await expect(pageBtn).toHaveClass(/btn-primary/);
+    const filter = page.locator('.doc-sidebar .proposal-filter');
+    await expect(filter.locator('option[value="all"]')).toHaveText('All (1)');
+    await filter.selectOption('page');
+    await expect(page.locator('.doc-sidebar .proposal-filter')).toHaveValue('page');
     await expect(page.locator('.variant-card')).toHaveCount(1); // variant is on page 1
-    await allBtn.click();
-    await expect(allBtn).toHaveClass(/btn-primary/);
+    await page.locator('.doc-sidebar .proposal-filter').selectOption('all');
+    await expect(page.locator('.doc-sidebar .proposal-filter')).toHaveValue('all');
 });
 
 test('clicking a proposal card opens the proposal detail page', async ({ page }) => {

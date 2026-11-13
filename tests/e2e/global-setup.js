@@ -82,6 +82,10 @@ module.exports = async function globalSetup() {
     fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
     // 2. Start server with the e2e DB
+    // Two runs sharing the port and the database wreck each other — refuse to start on a busy port
+    const busy = await fetch('http://localhost:3001/healthz').then(() => true).catch(() => false);
+    if (busy) throw new Error('Port 3001 is already in use: another e2e run, or a stray test server (pkill -f "src/server.js")');
+
     const server = spawn('node', ['src/server.js'], {
         env: {
             ...process.env,

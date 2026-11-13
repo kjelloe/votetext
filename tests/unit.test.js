@@ -273,3 +273,15 @@ test('paged: export → import round-trips lines, pages and offsets, including e
     assert.equal(again.total_pages, 4);
     assert.equal(again.text, r.text);
 });
+
+// ── Tutorial scripts (the [screen: …] cues are the beats of the scripted recording, plan-update.md § Phase V) ──
+
+test('tutorial scripts: the [screen: …] cues are identical and in the same order in the EN and NO files', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const cues = f => fs.readFileSync(path.join(__dirname, '..', 'specs', f), 'utf8').split('\n').filter(l => /^\[screen: .*\]$/.test(l));
+    const en = cues('tutorial-video-script.md');
+    const no = cues('tutorial-video-script.no.md');
+    assert.ok(en.length > 40, `expected the EN script to have its cues, found ${en.length}`);
+    assert.deepStrictEqual(no, en, 'the Norwegian script must carry exactly the English [screen: …] cues, in the same order — one action script drives both recordings');
+});

@@ -70,7 +70,7 @@ The lines-per-page selector auto-populates with the detected value. A `(detected
    - **Title** (required) and **Rationale** (optional).
    - **Grayed-out info row** just above "Submit proposal" shows the resolved character range (`chars N–M`).
 5. User chooses operation, fills in new text and title, clicks "Submit proposal".
-6. System posts to `POST /api/documents/:id/variants`; on success navigates to the new variant detail page.
+6. System posts to `POST /api/documents/:id/variants`; on success the modal closes and the reader stays on the document: the lines turn amber, the list and counts refresh in place, and a toast *Proposal #N added · Open* links to the proposal page (UC-24, since 2026-10-30; before that the app navigated to the proposal).
 
 ### Alternate flow — no selection
 
@@ -139,15 +139,9 @@ When the user hovers any proposal card:
 
 Clicking the **⊕** overlap indicator toggles an amber highlight on all cards in the overlap group (the current card plus every card it overlaps). The highlight persists across page navigation since all cards remain in the sidebar DOM. Clicking the indicator again (or clicking any indicator in the group) clears the highlight. Only one overlap group can be highlighted at a time — opening a new group automatically clears the previous one.
 
-### Sidebar filter
+### Filter and order
 
-Three filter buttons appear in the sidebar header next to "Proposals":
-
-- **All N** — shows every proposal for the document (default)
-- **On-page N** — shows only proposals whose char range overlaps the current page; the count updates automatically when the user navigates to a different page
-- **Top** — shows the top `ceil(count × PROPOSALS_TOP_PERCENT / 100)` proposals (minimum 1) ranked by total votes cast (for + against + abstain combined), highest first
-
-The active filter is highlighted (primary button style); inactive buttons are ghost. The selected filter is persisted per document in client state (`state.docFilterMode`) and restored when the user navigates back from a proposal detail page.
+Two selectors sit above the list (see UC-25): *filter* **All (N) · This page (N) · Not yet voted by me (N)** and *order* **Document order · Most discussed · Most voted · Newest**. *This page* counts proposals whose char range overlaps the current page and updates on page navigation. The choice is remembered per device (browser storage), not per document. *(Until 2026-10-30 the header had three buttons All / On-page / Top N %; Top folded into Most voted.)*
 
 ### Comment count heatmap
 
@@ -964,8 +958,8 @@ Text caps on every stored field, hourly quotas (documents, copies, invitations p
 
 1. The user selects a passage. When the mouse button or finger lifts (`pointerup`/`mouseup`/`touchend`, or 350 ms after the last `selectionchange` when native touch handles are dragged), a small floating bar appears on the selection: **Propose**, plus **Variant of #N** when the selection overlaps exactly one forkable proposal, or **Variant…** when it overlaps several.
 2. Mouse: the bar sits above the selection. Touch: below it, because iOS and Android draw their own callout above. Either placement flips when there is no room (the sticky header counts as no room), and the bar stays within the viewport horizontally. It follows the selection on scroll and resize.
-3. **Propose** opens the usual *Propose variant* modal (UC-2) with the captured range; the bar hides. Submitting still opens the new proposal's page (M.2 changes this to stay in place).
-4. **Variant of #N** loads that proposal and opens the *Fork proposal* modal (UC-16) with its text prefilled; the new proposal keeps the parent's lines (`based_on`). **Variant…** first shows a chooser listing the overlapping proposals, with the note that a variant keeps the proposal's lines and only changes the wording, and that different lines call for **Propose** instead.
+3. **Propose** opens the usual *Propose variant* modal (UC-2) with the captured range; the bar hides. While the modal is open the captured lines keep a blue mark (focusing the form collapses the native selection). After submitting, the reader stays on the document: the lines turn amber, the list and counts refresh in place, and a toast *Proposal #N added · Open* offers the proposal page. The same holds for the sidebar and bottom-bar **Propose** buttons, on desktop too.
+4. **Variant of #N** loads that proposal and opens the *Fork proposal* modal (UC-16) with the parent (number, title, text) shown above the form and its text prefilled; the new proposal keeps the parent's lines (`based_on`) and the reader stays on the document as in step 3. **Variant…** first shows a chooser listing the overlapping proposals, with the note that a variant keeps the proposal's lines and only changes the wording, and that different lines call for **Propose** instead.
 5. The bar hides when the selection collapses, on Escape, when the route changes, and when one of its buttons is used. Pressing a button does not clear the selection (the press is `preventDefault`ed and the captured range is snapshotted when the bar is shown).
 
 ### Alternative flows
@@ -974,7 +968,39 @@ Text caps on every stored field, hourly quotas (documents, copies, invitations p
 - **Variant** follows the proposal page's fork rule: pending/conflict proposals only; proposer+ while the document is `open`, supervisor+ during `voting`/`final_voting`. Outside that, only **Propose** is offered.
 - The sidebar **Propose** button remains as the keyboard and desktop path.
 
+### On a phone (≤ 768 px)
+
+Every modal is a bottom sheet: anchored to the bottom edge, rounded top, at most 85 % of the height, scrolling inside, padded for the home indicator, and sized to the visual viewport so it rides above the on-screen keyboard.
+
 **Tests:** `tests/e2e/selection.spec.js` (Firefox, mouse), `tests/e2e/mobile.spec.js` (Chromium phone project, touch). Playwright cannot drag native selection handles, so the specs build the selection with the DOM `Range` API and dispatch the lift event; real-phone checks are on the manual list.
+
+### Every dialog, desktop and phone (Phase K, 2026-11-10)
+
+Each modal is announced as a dialog with its title (`role="dialog"`, `aria-modal`, `aria-labelledby`). Opening moves keyboard focus to the first field on a desktop and to the sheet itself on a phone, so the on-screen keyboard waits for a tap. Escape closes, Tab and Shift+Tab stay inside, and closing returns focus to the button that opened the dialog. Escape and a click on the dim overlay discard what was typed, like Cancel (a confirm for non-empty text is planned as K.4 in `plan-update.md`).
+
+---
+
+## UC-25: Browse proposals in an order of your choice
+
+**Actor:** Any user with at least `viewer` access; the *Not yet voted by me* filter needs a signed-in voter on a document that still takes votes (draft, open, voting).
+**Entry point:** Document viewer — the controls above the proposal list (sidebar on desktop, the proposals sheet on phones) and the Previous/Next arrows on the proposal page.
+
+### Main flow
+
+1. The user picks a *filter* (**All · This page · Not yet voted by me**) and an *order* (**Document order · Most discussed · Most voted · Newest**). The list re-renders at once; each option shows its count.
+2. The choice is remembered on this device (browser storage) and applies to every document and to the proposal page.
+3. On the proposal page, **‹ Prev / Next ›** step through the proposals in that order. With *Not yet voted by me* active they skip proposals the user has already voted on, so a voter can walk the remaining set from any device.
+4. On a phone, the sticky bottom bar reads **N proposals · Propose**. **N proposals** opens the list as a bottom sheet with the same controls, from any scroll position; tapping a card closes the sheet and opens the proposal, whose **← Back to document** returns to its page and line. **Propose** behaves like the sidebar button.
+
+### Rules
+
+- `GET /documents/:id/variants` carries `my_vote` (the caller's ballot or `null`); *Not yet voted by me* lists proposals with `my_vote` null that are still votable (not withdrawn, rejected, not applicable or merged).
+- *Most voted* ranks by for + against + abstain, *Most discussed* by visible comments, *Newest* by creation; ties fall back to document order.
+- Once the document is in final voting, resolved or archived the server refuses ballots, so *Not yet voted by me* is not offered there; a stored choice falls back to **All** and Prev/Next walk every proposal again.
+- Changing a selector keeps keyboard focus on it, so the options can be stepped through with the arrow keys.
+- The former *Top N %* filter and its `PROPOSALS_TOP_PERCENT` setting are gone.
+
+**Tests:** group AE in `tests/api.test.js` (`my_vote`), `tests/e2e/browse.spec.js`, `tests/e2e/navigation.spec.js`, the sheet tests in `tests/e2e/mobile.spec.js`.
 
 ---
 

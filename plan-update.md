@@ -1,13 +1,13 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-10-29 (Phase M.1 implemented; header below is the 2026-10-03 review context)_
+_Last updated: 2026-11-10 (Phase M complete, Phase K built; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status on 2026-10-29: **359 node tests** and **79 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+Test status on 2026-11-10: **363 node tests** and **88 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
 At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
@@ -214,7 +214,7 @@ to match, and the first manual backup was taken with it.
 |---|---|---|---|---|
 | B.1 | **Offsite backup.** Nightly `rsync` of the backups to a Hetzner Storage Box; one restore rehearsed end to end. Step-by-step guide written 2026-10-22: `ops/notes/harden-live-vm.md` Part 4 | you | S–M | Both backups live on the VM today |
 | B.2 | **Dedicated service user.** Prepared 2026-10-03: `cloud-init-hardened-example.yaml` + `scripts/deploy.sh` support. Decision 2026-10-22: convert the live VM in place (two-day-old box, tiny DB, no DNS/cert churn) — step-by-step guide in `ops/notes/harden-live-vm.md` Parts 1–3 (admin account first, then service user + locked unit + limited sudoers, then drop the deploy user's full sudo) | you | M | The app runs as a passwordless-sudo user today |
-| B.3 | **CI.** Done 2026-10-03: `.github/workflows/ci.yml` runs `npm test`, then Playwright (Firefox) with the report uploaded on failure. Check the first run on GitHub after pushing | you (push, watch) | S | Tests only run when someone remembers |
+| B.3 | **CI.** Done 2026-10-03: `.github/workflows/ci.yml` runs `npm test`, the deploy harness, then Playwright (Firefox desktop + Chromium phone project since 2026-10-29) with the report uploaded on failure. Check the first run on GitHub after pushing | you (push, watch) | S | Tests only run when someone remembers |
 | B.4 | **Tracked deploy script** (Q9). Done 2026-10-03: `scripts/deploy.sh` is tracked, settings in the gitignored `deploy.env` (`deploy.env.example` tracked), `ssh-deploy.sh` is a one-line wrapper. Private files (`cloud-init.yaml`, `.env.prod`, `deploy.env`, `ssh-connect.sh`, `dev-prompts.md`) now live in the private `game-ops` repo under `votetext-ops/`, symlinked back via `ops/` (gitignored). Open: `game-ops/.gitignore` has `*.env`, which would drop `deploy.env` — add `!votetext-ops/server/deploy.env` | you | S | Private ops files have no history or backup |
 | B.5 | **Private `cloud-init.yaml`**: re-derive it from the hardened template (fill the placeholders) rather than patching the old copy | you | S | A rebuild would otherwise diverge |
 | B.6 | **Run `./scripts/deploy.sh --check`** after the first live deploy and after B.1–B.5; every line should be OK | you | S | The audit is the control that the above actually happened |
@@ -286,7 +286,7 @@ Effort: S1 ≈ M (one limits helper + rate-limit helper + nginx line), S2 ≈ S 
 
 ---
 
-## Phase M — Proposing and browsing on phones (designed 2026-10-23; Q19–Q25 decided as recommended; split and M.1 done, M.2 next)
+## Phase M — Proposing and browsing on phones (designed 2026-10-23; Q19–Q25 decided as recommended; M.1 committed dbdbeb2, M.2 + M.3 done 2026-10-30, uncommitted)
 
 **Trigger:** a user test with the Oslo Høyre programme (23 pages, 840 lines) on a phone. Reading works;
 proposing does not: the only **Propose** button sits in the sidebar, which on phones stacks *below* the
@@ -338,15 +338,19 @@ voter can walk the whole set on either device. Optional (Q23): a *Not yet voted 
 
 **M.1 done 2026-10-29:** `public/selection.js` (202 lines) — `wireSelectionToolbar` called from `viewDocument` under the `#propose-btn` rule; bar shown on pointer/finger lift or 350 ms after the last `selectionchange`, above for mouse, below for touch, flipped and clamped to the viewport, repositioned on scroll/resize, `data-placement` for tests; **Variant of #N** / **Variant…** chooser under the proposal page's `canFork` rule; `openForkModal` moved out of `viewVariant` (app.js 1 514 lines). Playwright gained a Chromium `mobile` project (375 px, touch) scoped to `mobile.spec.js`; CI installs chromium too. Tests: 359 node, 79 e2e (`selection.spec.js` 6, `mobile.spec.js` 2). Omission pass 2026-10-30: the flip respects the sticky header, pointer state is tracked on the document (a drag may start outside the text panel), Escape hides the bar, tutorial cues now show the floating bar. Submit still navigates to the proposal page — that changes in M.2.
 
+**M.2 + M.3 done 2026-10-30:** sheet mode by CSS below 768 px (`#modal-overlay` end-aligned, rounded 85 vh box with grab handle and safe-area padding), `wireSheetSupport()` in `selection.js` follows `visualViewport` and clears the `.line-selected` marks on close; `markSelectedLines()` keeps the captured lines blue while the propose/fork sheet is open; fork sheet shows the parent block; `openProposeModal`/`openForkModal` take `onCreated` → `viewDocument.onProposalCreated` re-fetches the list, rebuilds overlaps, re-renders lines + list in place and toasts "Proposal #N added · Open" (`showToast` accepts `{ href, label }`); the proposal page's Fork still navigates. M.3: `proposalPrefs()`/`sortProposals()`/`isUnvoted()` in `app.js`, two selects (filter All · This page · Not yet voted by me; order Document · Most discussed · Most voted · Newest) rendered into every `.proposal-controls-holder`, stored in `localStorage.vt_proposal_prefs`; `my_vote` added to `GET /documents/:id/variants` (group AE); phone `#doc-bottom-bar` ("N proposals" opens the list as a sheet, **Propose** under the `#propose-btn` rule); Prev/Next on the proposal page follow the stored order and skip voted ones under the voter filter. Retired: *Top N %* and `PROPOSALS_TOP_PERCENT` (server no longer returns `top_percent`). Decision taken on the way: selects on desktop as well as phones instead of segmented buttons — one control, keyboard-friendly, and the design pass restyles it. Noticed items from M.1 handled: a new selection outside the text panel now drops the captured range (sidebar button says "No text selected"); reduced-motion disables the bar/toast animation. app.js 1 584 lines, selection.js 255. Tests: 362 node, 84 e2e (`browse.spec.js` 3, `mobile.spec.js` 4). Still manual: keyboard/visualViewport behaviour and safe-area on real phones.
+
+**Omission passes after M.3 (2026-10-30 and 2026-11-06):** the viewport meta gained `viewport-fit=cover` (without it every `env(safe-area-inset-*)` is 0 on iPhones) and the bar/sheet got side insets; a print rule hides the fixed overlays; a contract test ties both down. `votingOpen(doc)` in `app.js` is now the one client rule for "this user can still vote here" (signed-in voter+, document draft/open/voting — the server's rule on `POST /variants/:id/vote`): it gates the vote buttons, the *Not yet voted by me* option and the Prev/Next skip, which were previously offered on final-voting and resolved documents too. Changing a selector no longer drops keyboard focus (the controls are re-rendered; focus is handed back). The skills count tests from the runners instead of grep. app.js 1 592 lines. Tests: 362 node, 85 e2e (`browse.spec.js` 4).
+
 **Q25 done 2026-10-23:** `openCreateDocModal`, `openDocSettingsModal`, `openStatusModal` moved to `review.js` unchanged (app.js 1 900 → 1 541 lines); its own commit; suites green.
 
-**M.4 Ship.** New `public/selection.js` (toolbar, sheet positioning, toast), `review.js` takes the
+**M.4 Ship — done 2026-10-30, as listed:** new `public/selection.js` (toolbar, sheet positioning, toast), `review.js` takes the
 editor-only views out of `app.js` first, CSS for bar/sheet/sticky bar, API `my_vote` if Q23 says yes.
 Tests: e2e for the toolbar with programmatic selection (as `proposal.spec.js` does) at desktop and
 375 px viewports, the sheet flow end to end, sort/filter, Prev/Next; a Chromium mobile project for touch
 if Q22 says yes. Docs: UC-24, user story US-4 amended, test-plan rows, manual rows for real-phone checks
 with the programme. Order: M.1 → M.2 → M.3, each behind the full suite; the visual design pass (phase 4)
-then restyles the new DOM rather than the old one.
+then restyles the new DOM rather than the old one. Left to the owner: commit, deploy Phase P + M together, then the real-phone rows in `specs/manual-validation.md`.
 
 ### Decisions (Q19–Q25, all as recommended on 2026-10-23)
 
@@ -497,14 +501,205 @@ Effort: S.A M, S.B M, S.C S, S.D S, S.E S, S.F S, S.G S — about two working se
 
 ---
 
+## Phase K — Modal keyboard and focus (noticed after Phase M, designed 2026-11-09, K.1 + K.2 built 2026-11-10, uncommitted)
+
+Three items noticed during the Phase M omission passes, analysed here. K.1 and K.2 are
+small, behaviour-only and belong *before* the design pass (phase 4), whose gate is the e2e
+suite and which should restyle finished behaviour. K.3 folds into the design pass itself.
+
+### What exists today
+
+- `openModal(html, title)` in `app.js` swaps in a fresh `#modal-content`, shows `#modal-overlay`
+  and wires three ways to close: the × button, a click on the overlay, `.modal-cancel`. There is
+  no Escape, no `role="dialog"`, focus stays on the button behind the overlay, and Tab walks the
+  page underneath. Thirteen callers (`app.js` 5, `review.js` 5, `selection.js` 2, `auth.js` 1)
+  rely only on `openModal`/`closeModal`, so the change is confined to those two functions.
+- `selection.js` already hides the floating bar on Escape; the bar is hidden before any modal opens.
+- `#toast-container` moves above the phone bottom bar through `body:has(.doc-bottom-bar)`;
+  Firefox < 121 (ESR 115) ignores `:has()` and shows the toast under the bar.
+- The two proposal-list selectors are rebuilt on every `renderVariantList()`; focus is handed back
+  by class name (2026-11-06).
+
+### Design
+
+**K.1 Keyboard and focus for every modal (S, ~40 lines in `app.js`).** `openModal` records
+`document.activeElement` as the opener, sets `role="dialog"`, `aria-modal="true"` and
+`aria-labelledby` (the `.modal-title` gets an id) on `#modal-box`, then moves focus: on a fine
+pointer to the first field or button in the content that is not `.modal-cancel`, on a coarse
+pointer (phone sheet) to `#modal-box` itself (`tabindex="-1"`) so the on-screen keyboard does not
+jump up before the reader has seen the sheet. One document-level `keydown` listener, wired once:
+Escape while the overlay is visible → `closeModal()`; Tab/Shift+Tab at the last/first focusable
+element inside `#modal-box` wraps around (focus trap). `closeModal` returns focus to the opener
+when it is still in the document, otherwise to `#app-main`. The destructive confirmations
+(withdraw, hide, delete comment, resolve) use `confirm()`, and document delete is a two-step inside
+the settings modal, so Escape can only cancel, never skip a confirmation.
+Tests: new `tests/e2e/modal.spec.js` (3 tests, Firefox): Propose → focus is in the form → Escape
+closes and focus is back on `#propose-btn`; Tab from the last button wraps to the first field;
+`mobile.spec.js` gains an assertion that the sheet opens with focus on `#modal-box` and no field
+focused. Docs: ARCHITECTURE § Frontend (modal paragraph), `specs/test-plan.md` row, manual rows
+for VoiceOver/TalkBack announcing the dialog title.
+
+**K.2 Toast placement without `:has()` (S, 3 lines).** `setMain()` toggles
+`document.body.classList` `has-bottom-bar` from whether the new view contains `.doc-bottom-bar`;
+the CSS rule becomes `body.has-bottom-bar #toast-container`. Covered by the existing
+`mobile.spec.js` toast-above-bar assertion. Same commit as K.1.
+
+**K.3 Build the list controls once (S, inside phase 4).** `renderVariantList()` creates the two
+selectors on first render per holder and afterwards only rewrites option labels (counts) and
+values, which removes the focus hand-back. Do it when the design pass restyles the controls
+(and decides whether desktop gets segments), not before — the e2e assertions stay the same.
+
+**Owner items, unchanged:** commit the working tree; deploy Phase P + M + K together and run the
+real-phone rows in `specs/manual-validation.md`; D1 (`howot-host-service.md`, `resume.txt`).
+
+**Order:** K.1 + K.2 (one commit, full suite) → K.4 → owner deploy → phase 4 with K.3.
+
+**K.1 + K.2 done 2026-11-10:** `openModal`/`closeModal`/`wireModalKeys` in `app.js` as designed (`MODAL_FOCUSABLE`, `modalOpener`; one document keydown listener; coarse pointer → focus on `#modal-box`); `#modal-box:focus, #app-main:focus { outline: none }`; `setMain()` toggles `body.has-bottom-bar`, CSS rule renamed. Tests: `tests/e2e/modal.spec.js` (2 tests: focus in + dialog attributes + Escape returns focus; Tab/Shift+Tab wrap + × returns focus) and a phone assertion in `mobile.spec.js`. app.js 1 631 lines. Tests: 363 node (incl. the tutorial-cue contract), 87 e2e. K.3 stays in phase 4.
+
+**Omission pass after K (2026-11-10, later the same day):** the *Manage access* modal replaces its
+content after the data loads and lost the `id="modal-title"` the dialog's `aria-labelledby` points at
+(fixed in `review.js`, both the loaded and the error branch; third test in `modal.spec.js`, which also
+checks Escape from a `<select>`). UC-2 step 6 still said submit navigates to the proposal page; it
+now describes the stay-in-place flow. Checked and fine: every one of the thirteen callers passes a
+title; the selection toolbar never takes focus (its `mousedown` is prevented), so focus on close
+returns to what had it before the bar was pressed; Escape in `selection.js` only hides the bar.
+88 e2e.
+
+**K.4 Keep typed text on an accidental close (S, ~15 lines in `app.js`, before the design pass).**
+Six modals take free text (Propose, Fork, Edit proposal, New document, Document settings, Profile).
+Three ways out are deliberate (×, Cancel, submit); two are easy to hit by accident: Escape, and a
+click or tap on the dim overlay — on a phone the overlay is the whole area above the sheet, so a tap
+meant to scroll the document throws away a half-written proposal. Design: `openModal` snapshots the
+value of every text input and textarea in the fresh content; `modalDirty()` compares; Escape and the
+overlay click go through `requestClose()`, which asks `confirm('Discard what you typed?')` only when
+something changed. × and Cancel stay immediate (they are explicit), submit paths call `closeModal()`
+directly as today. Chooser → fork (two `openModal` calls while open) simply re-snapshots. Test:
+`modal.spec.js` — type in *New text*, Escape with the confirm dismissed → the dialog stays and the text
+is kept; Escape with it accepted → closed. Docs: UC-2 note, ARCHITECTURE modal paragraph, manual row
+for the phone overlay tap. Recommendation: build in the next round together with any further K items,
+one commit with K.1–K.2.
+
+## Phase V — Tutorial video production (analysed and designed 2026-11-10, not started)
+
+**Ask:** short clips with voice-over, a visible pointer that moves and clicks, and typing that the
+viewer can follow — in English and Norwegian — showing how VoteText works.
+
+### What exists today
+
+- `specs/tutorial-video-script.md` / `.no.md`: 14 chapters (0–13, ~12 min), each a sequence of
+  `[screen: …]` cues followed by the narration spoken over that cue; the cues are identical in both
+  files (enforced by convention, checked in the vt-docs round). `npm run seed-demo` builds the cast
+  (four personas with printed session cookies) and four documents frozen at open / voting /
+  final_voting / resolved. Chapters are independent and restart from the seeded state.
+- Playwright (`@playwright/test`, already a devDependency; Firefox + Chromium installed) can drive a
+  real browser, type with a per-key delay, record each page to WebM (`recordVideo`), and emulate a
+  phone (`devices['iPhone 13']`). Its recording does **not** show an OS cursor.
+- `ffmpeg` is installed (`/usr/bin/ffmpeg`). `db.js` honours `DATABASE_PATH`, so a tutorial database
+  can live beside the e2e one. The e2e global setup already shows how to boot the server on a spare
+  port against its own database and read OTP codes straight from SQLite.
+- No text-to-speech on the machine (`edge_tts` is not installed; Python 3 and Node 22 are).
+
+### Options
+
+| | Approach | Pros | Cons |
+|---|---|---|---|
+| A | **Scripted recording** — one Playwright script per chapter drives the browser against seed-demo data, records WebM, overlays a drawn cursor, types with a human delay; narration is synthesised per cue; ffmpeg mixes audio and video and concatenates | Re-recordable with one command after every UI change (the design pass is next); EN and NO from one action script; exact timing of voice to screen; the same scripts double as living documentation of the flows | Up-front toolkit (M); synthetic voice unless replaced; a drawn cursor, not the OS one |
+| B | **Manual recording** — OBS or the OS recorder, the owner clicks and reads the script | Zero code, natural voice and pointer | 12 minutes × 2 languages of takes, redone after the design pass and after every later UI change; timing drifts between the two languages |
+| C | **Hybrid** — A for the screen (video + cue timeline), owner records the voice per cue into the same file slots, ffmpeg assembles | Natural voice, automated screen | The owner still records ~25 minutes of speech, once per revision of the script text |
+
+**Verdict: A, built so that C is a drop-in later.** The pipeline is file-based (`audio/<lang>/<chapter>-<beat>.mp3`);
+synthesised files can be replaced by recorded ones per beat without touching the scripts.
+
+### Design
+
+**Layout.** `tutorial/` at the repo root (not under `tests/`, so Playwright's test runner ignores it):
+
+```
+tutorial/
+  record.js            # node tutorial/record.js <chapter|all> --lang en|no [--phone]
+  lib/server.js        # boots src/server.js on port 3002 with DATABASE_PATH=data/tutorial_votetext.db, runs seed-demo, returns cookies + doc ids
+  lib/script.js        # parses the chapter's [screen: …] cues + narration paragraphs out of the .md (both languages)
+  lib/stage.js         # the acting primitives: glide(sel), click(sel), type(sel, text), spotlight(sel), beat(id)
+  lib/cursor.js        # addInitScript: draws #tutorial-cursor (SVG arrow / touch dot) that follows mousemove, ripple on mousedown
+  lib/tts.js           # Azure AI Speech REST → mp3 per beat, cached by text hash; returns durations
+  lib/assemble.js      # ffmpeg: beat audio placed on the timeline → one track; mux with the WebM → mp4; SRT; title card; concat
+  chapters/ch01-signin.js … ch13-outro.js   # one action script per chapter, cue ids match the .md order
+  out/                 # gitignored: webm, mp3, mp4, srt, timeline.json
+```
+
+**Beats.** A chapter script is a list of `beat(n, async () => { …actions… })`. The toolkit looks up
+cue *n* of that chapter in the script file for the chosen language, has the audio for its narration
+(generated beforehand, so its duration is known), starts the clock, runs the actions, then holds the
+screen for `max(0, audioDuration − elapsed) + 400 ms`. Every beat's actual start offset is written to
+`timeline.json`; assembly puts each audio file at its offset (`adelay` + `amix` in one ffmpeg call),
+so the voice starts exactly when the cue starts even if an action was slower than expected. One
+action script serves both languages because the cues are identical; only the hold times differ.
+
+**Pointer and typing.** `cursor.js` is injected with `context.addInitScript`: a fixed-position SVG
+arrow that follows `mousemove` (Playwright's `mouse.move` dispatches real events) with a click ripple
+on `mousedown`; the phone variant is a translucent touch dot. `glide(sel)` moves in ~25 steps with
+ease-in-out over 500–700 ms to the element's centre; `spotlight(sel)` pulses a ring around an element
+for the duration of a beat ("pointing"); `type(sel, text)` uses `pressSequentially` with 45–70 ms
+per key and a longer pause after punctuation. Text selection for the propose chapter uses
+`mouse.down` → `glide` → `mouse.up` across the sentence, so the floating bar appears exactly as in
+UC-24.
+
+**Voice.** Azure AI Speech (the owner already has Azure): REST `cognitiveservices/v1` with SSML,
+`en-GB-RyanNeural` / `nb-NO-FinnNeural` (or Sonia / Pernille), 24 kHz MP3, word-boundary events for
+subtitle timing. Key and region in `.env` as `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` (added to
+`.env.example`; never in the repo). ~12 000 characters per language per full run, inside the free
+tier. Cached by text hash, so unchanged narration is not re-synthesised. Alternatives if Azure is not
+wanted: `edge-tts` (same voices, no key, Python package — needs a pip install, so ask first) or
+Piper (offline, weaker Norwegian).
+
+**Output.** Per chapter: `chNN-<lang>.mp4` (1280×800 H.264 + AAC, 3 s title card from an HTML slide
+rendered in the same browser, burnt-in subtitles optional, sidecar `.srt` always) — the "short
+clips". Plus `votetext-tutorial-<lang>.mp4`: all chapters concatenated with MP4 chapter markers.
+A phone clip (`--phone`, iPhone viewport at 2× → 750×1334) for chapter 6 proposing from a phone.
+Nothing under `tutorial/out/` is tracked (the root `.gitignore` already ignores any `out` directory; `data/*` covers the tutorial database).
+
+**Server and data.** `lib/server.js` mirrors `tests/e2e/global-setup.js` (busy-port guard, health
+wait) on port 3002 with its own database; `seed-demo` runs against it; chapter 1's OTP is read from
+the database as the tests do. Chapter 9 changes the Budget document's status, so `all` records it
+last and the seed is rebuilt before each chapter anyway (seeding takes well under a second).
+
+### Phases
+
+| Phase | Content | Effort |
+|---|---|---|
+| V.1 | Toolkit without audio: server boot + seed, cursor overlay, stage primitives, script parser, timeline; chapter 6 (proposing) recorded in EN as a silent clip for review of pace and pointer | M |
+| V.2 | Voice and assembly: `tts.js` (Azure), `assemble.js` (mix, mux, SRT, title card), chapter 6 in EN and NO with voice; `.env.example` keys; README/ARCHITECTURE/tutorial production notes | M |
+| V.3 | All 14 chapters + the phone clip; `all` mode with concat and chapter markers; a `npm run tutorial` script if the owner wants one (package.json `scripts` only, no dependency) | L |
+| V.4 | After the design pass: re-record everything with one command; owner review; optional C (own voice per beat) | S |
+
+**Tests.** The toolkit is not part of `npm test`. `tests/unit.test.js` already asserts (since
+2026-11-10) that the `[screen: …]` cues of the EN and NO scripts are identical and in the same order —
+the contract one action script per chapter depends on; V.1 extends it to the parser (one beat per cue
+per chapter). Recording runs are manual and local.
+
+**Order.** V.1 and V.2 can be built now against the current UI (the toolkit is UI-independent apart
+from selectors, and chapter 6 exercises the Phase M bar). V.3 waits for the design pass, so the
+remaining twelve scripts are written once against the final DOM. The existing plan item "record
+after the design pass" (Phase 6) becomes V.4.
+
+### Decisions needed (Q26–Q29)
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q26 | Voice: Azure neural TTS, `edge-tts`, Piper, or the owner's own recording? | Azure for every draft and probably the release; keep C open |
+| Q27 | Resolution and ratio: 1280×800 (the script's recommended viewport) or 1920×1080? | 1280×800 layout, delivered at 1920×1200. Caveat found 2026-11-10: Playwright's `recordVideo` captures the screencast at its `size` option in CSS pixels and is not expected to honour `deviceScaleFactor` the way screenshots do, so V.1 first checks whether a 2× context gives crisp frames; the fallback is a 1920×1200 viewport with `zoom: 1.5` injected on `html` (Chromium only, which is the recording browser anyway) so the UI keeps the script's proportions |
+| Q28 | Subtitles burnt in, sidecar only, or both? | Both: sidecar `.srt` always, a burnt-in variant for channels without caption support |
+| Q29 | Build V.1 + V.2 before the design pass? | Yes — the toolkit is ready the day the design lands, and chapter 6 gives an early look at pace and voice |
+
 ## Remaining work packages
 
 ### Phase 4 — Visual design pass
 
-Now the next step. Agree direction first (palette, typography, density, light/dark),
-then tokens → components → responsive, with the full e2e suite (68 tests, incl. the XSS
-and regression specs) as the gate. The phone layout fixes from phase 3 are functional
-only; the design pass should revisit them.
+Next after K.4 (K.3 goes in here). Agree direction first (palette, typography, density, light/dark),
+then tokens → components → responsive, with the full e2e suite (88 tests, incl. the XSS
+and regression specs and the Chromium phone project) as the gate. The phone layout fixes from
+phase 3 and the Phase M bar, sheet and list controls are functional only; the design pass
+should revisit them (the two `<select>`s may become segments on desktop).
 
 ### Phase 5 — Manual validation
 
@@ -513,7 +708,7 @@ for the review fixes, phase 3 and the deploy.
 
 ### Phase 6 — Tutorial video
 
-Both scripts match the app as of 2026-10-03. Record after the design pass.
+Both scripts match the app as of 2026-10-30 (floating bar, filter/order selects, stay-in-place toast). Production is designed as Phase V above: V.1 + V.2 (toolkit, chapter 6 with voice) can start now; V.3 after the design pass; V.4 is the final recording.
 
 ### Phase 7 — Launch
 

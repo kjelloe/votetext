@@ -273,3 +273,15 @@ test('ACCESS_LEVELS order is identical in public/app.js and src/middleware/acces
     assert.ok(front && back, 'both files must define ACCESS_LEVELS');
     assert.equal(front.replace(/\s+/g, ''), back.replace(/\s+/g, ''), 'hasLevel() in the browser must rank levels exactly like the server');
 });
+
+test('safe-area padding needs viewport-fit=cover, and fixed overlays stay out of print', () => {
+    const css = fs.readFileSync(path.join(PUBLIC, 'style.css'), 'utf8');
+    const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+    if (/env\(safe-area-inset/.test(css)) {
+        assert.match(html, /<meta name="viewport" content="[^"]*viewport-fit=cover/, 'env(safe-area-inset-*) is 0 on iPhones unless the viewport meta declares viewport-fit=cover');
+    }
+    const print = (css.match(/@media print \{([\s\S]*?)\n\}/) || [])[1] || '';
+    for (const sel of ['.doc-bottom-bar', '.selection-toolbar', '#toast-container', '#modal-overlay']) {
+        assert.ok(print.includes(sel), `${sel} is position: fixed and must be hidden in the print stylesheet`);
+    }
+});

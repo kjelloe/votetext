@@ -46,7 +46,10 @@ cookie in a separate browser profile (or container tab):
   or reseed before retakes of earlier chapters.
 
 **Before recording** — record after the visual design pass so the video shows the
-final look. Every cue below matches the app as of 2026-10-03.
+final look. Every cue below matches the app as of 2026-10-30. Production is scripted
+(Playwright recording with a drawn pointer, synthesised narration per cue, ffmpeg assembly) —
+see `plan-update.md` § Phase V; the `[screen: …]` cues are the beats, so keep them identical in
+both language files and in the same order.
 
 Document text cannot be edited after creation. If a pasted draft is wrong, use **Copy**
 and correct the text in the new document.
@@ -157,10 +160,10 @@ proposed so far.
 Amber lines already have proposals attached. Hover one and you see which proposals
 touch that line.
 
-[screen: click "All", then "On-page" in the sidebar filter]
+[screen: pick "This page" in the filter above the proposal list, then "All"; open the order selector and pick "Most voted", then back to "Document order"]
 
 The sidebar follows you as you read — showing proposals for the page you're on, or
-the whole document if you prefer.
+the whole document, in the order you prefer: as written, most discussed, most voted, or newest.
 
 [screen: hover a proposal card — click the ↗ link that appears: the page jumps to the line; then click the card itself]
 
@@ -197,9 +200,10 @@ The proposal form asks for three things: a short title, the new wording, and —
 importantly — *why*. A good rationale is what turns a change request into an argument
 the group can weigh.
 
-[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the new proposal's page opens]
+[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the sheet closes, the lines turn amber, a toast "Proposal #N added · Open" appears; click "Open"]
 
-Submitted. The proposal is instantly visible to every participant.
+Submitted. Bjørn is still on the document: the lines are amber, the card is in the list, and
+a small message offers the proposal's page. He opens it.
 
 [screen: on the proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
 
@@ -208,7 +212,8 @@ entirely if the discussion changes his mind.
 
 [screen: click "← Back to document" — the new card in the sidebar, the selected lines now amber]
 
-Back on the document, the proposal sits attached to the exact lines it would change.
+Back on the document, the proposal sits attached to the exact lines it would change —
+and on a phone the same flow runs from a bar that floats on the selected words.
 
 ## Chapter 7 — Voting *(0:45)* — Clara, "Clarify the dog rule" proposal
 

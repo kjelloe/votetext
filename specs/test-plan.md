@@ -1,7 +1,7 @@
 # VoteText — Test Plan
 
 > Automated: `npm test` runs four files — `tests/api.test.js` (integration, isolated SQLite DB on port 3099),
-> `tests/unit.test.js` (pure helpers in `src/lib/text.js`), `tests/frontend.test.js` (cross-file JS contracts) and
+> `tests/unit.test.js` (pure helpers in `src/lib/text.js`, plus the tutorial-script cue contract), `tests/frontend.test.js` (cross-file JS contracts) and
 > `tests/migrate.test.js` (schema migration from historical snapshots).
 > Browser: `npm run test:e2e` runs the Playwright suite (own server on port 3001).
 > Manual UI: open `http://localhost:3000` after `npm run dev` and follow the flows below.
@@ -522,6 +522,15 @@
 
 Unit (`tests/unit.test.js`): `importPagedText` pages/skips/markers/offsets; `keepUnnumbered`; refusals and CRLF; `exportPagedText` → `importPagedText` round-trip equality.
 
+## Group AE — `my_vote` in the proposal list (2026-10-30, UC-25)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| AE1 | Owner lists proposals before and after voting | `my_vote` `null`, then `1` after `POST /vote { vote_value: 1 }` |
+| AE2 | A second voter (invited as `voter`) lists them | `null` until they vote, then `-1`; the owner's list still shows `1` (per user, never another's ballot) |
+
+Also changed: the variants-list test no longer expects `top_percent` (setting retired).
+
 Also changed: "cross-document relation" now expects 404 (no existence oracle); the copy-data
 ownership test grants bob `creator` first.
 
@@ -538,7 +547,7 @@ ownership test grants bob `creator` first.
 - `applyVariantsToText` tie-break — an insert at the start of a replaced range is applied regardless of input order
 - Inserts are points — an insert proposed over a selected range keeps the selected text, and only a change spanning the insertion point overlaps it
 - `escapeHtml` — markup and quotes neutralised, null tolerated
-- `tests/frontend.test.js` (12 tests) additionally asserts: the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
+- `tests/frontend.test.js` (14 tests) additionally asserts: `selection.js` declares `wireSelectionToolbar`/`openForkModal` and the route table never references them; `env(safe-area-inset-*)` in `style.css` is matched by `viewport-fit=cover` in `index.html` (otherwise the insets are 0 on iPhones) and every fixed overlay (`.doc-bottom-bar`, `.selection-toolbar`, `#toast-container`, `#modal-overlay`) is hidden in the print stylesheet; the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
 
 ---
 
@@ -577,20 +586,22 @@ ownership test grants bob `creator` first.
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (79 tests). Run with `npm run test:e2e`. Two Playwright projects: `firefox` (desktop, every spec except `mobile.spec.js`) and `mobile` (Chromium, 375 px, touch — `mobile.spec.js` only, since Firefox cannot emulate touch).
+> Tests live in `tests/e2e/*.spec.js` (88 tests). Run with `npm run test:e2e`. Two Playwright projects: `firefox` (desktop, every spec except `mobile.spec.js`) and `mobile` (Chromium, 375 px, touch — `mobile.spec.js` only, since Firefox cannot emulate touch).
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
+> The global setup refuses to start when port 3001 is busy: two runs share the port and the database and wreck each other (seen 2026-10-30).
 
 ### Coverage by file
 
 | File | Story | Flows covered |
 |------|-------|---------------|
 | `crossfile.spec.js` | US-1 + smoke | Login page, full OTP login flow, profile page, unauth redirect, review/conflicts/final-vote/resolved-text render |
+| `modal.spec.js` | all modals (Phase K) | `#propose-btn` by keyboard → `#modal-box` has `role="dialog"`, `aria-modal`, `aria-labelledby="modal-title"` and the first field is focused → Escape closes and focus is back on the opener; fork modal: Tab from Cancel wraps to the × button and Shift+Tab back, × returns focus to the Fork button; Manage access (content loaded after the dialog opened) keeps `#modal-title` so the label still resolves, Escape from a select returns focus to the opener |
 | `profile.spec.js` | US-1 | Profile completion modal: Save and continue stores the name; Skip proceeds (display name blanked in the DB first — see plan Q1) |
-| `navigation.spec.js` | US-2 | Doc list → open doc → line highlights → sidebar All/On-page filter → card click → detail → back button |
+| `navigation.spec.js` | US-2 | Doc list → open doc → line highlights → filter select All (1) / This page → card click → detail → back button |
 | `comment.spec.js` | US-3 | Post comment (author + "just now") → indented reply → edit own comment (edited marker asserted, UC-20) → delete own reply |
-| `proposal.spec.js` | US-4, US-5 | Programmatic text selection → propose modal → submit → card + highlight; submit disabled without selection; edit title/rationale; withdraw with confirm; Edit and Withdraw gone once voting starts |
+| `proposal.spec.js` | US-4, US-5 | Programmatic text selection → propose modal → submit → stays on the document with card + amber line + toast "Proposal #1 added" → toast **Open** → proposal page; submit disabled without selection; edit title/rationale; withdraw with confirm; Edit and Withdraw gone once voting starts |
 | `vote.spec.js` | US-6 | Cast For → change to Against → click again retracts → Abstain; sidebar tally reflects votes |
 | `share.spec.js` | US-7 | Enable anonymous share via checkbox (persists) → anonymous visitor sees read-only proposal + login button → blocked after disable |
 | `review-flow.spec.js` | US-8 | Review cards + overlap badge; CONFLICT/NOT VOTING buttons; unresolved group gates Ready (alert); ordering (via API — HTML5 DnD not automatable) turns Ready green → transitions to final_voting |
@@ -603,8 +614,9 @@ ownership test grants bob `creator` first.
 | `paged.spec.js` | UC-23 | Superadmin (root) pastes paged markdown → notice "4 pages, 11 numbered lines, 2 unnumbered lines skipped", *Auto* preselected, keep-checkbox visible → create → "Page 1 of 4" with the empty-page note on pages 1–2, page 3 starts at line 1 with the `#` heading kept, page 4 runs 7–11; a creator (alice) gets *Auto* preselected too and creates a 4-page document; on an auto document with a proposal on page 4 the hover link reads "↗ p.4" and jumps there, and **Copy** prefills paged markdown with *Auto* preselected → the copy has 4 pages, the copied proposal on line 9, page 3 starting at line 1 |
 | `document.spec.js` | UC-1, UC-6, UC-8 | Numbered-line detection and stripping; Copy prefills the modal; countdown banner appears and cancels; delete from the settings modal |
 | `fork.spec.js` | UC-16 | Fork → "based on #1" on the fork, "forked as #2" on the original |
-| `selection.spec.js` | US-4 via UC-24 | Mouse selection → floating bar above it (`data-placement="above"`, bar bottom ≤ selection top) → **Propose** → modal with "chars 0–6" → submit → proposal page, bar hidden; collapsing the selection hides the bar while `#propose-btn` stays; selection over one pending proposal → **Variant of #1** → fork modal prefilled → "based on #1"; over two → **Variant…** → chooser with both → fork modal of the chosen one; a selection right under the sticky header flips the bar below and Escape hides it; resolved document → no bar |
-| `mobile.spec.js` | UC-24 (phone) | Chromium `mobile` project: sidebar stacks below the text; programmatic selection + `touchend` → bar below the selection and inside the viewport → tap **Propose** → modal with the range; **Variant of #1** on a touch selection → fork modal |
+| `selection.spec.js` | US-4 via UC-24 | Mouse selection → floating bar above it (`data-placement="above"`, bar bottom ≤ selection top) → **Propose** → modal with "chars 0–6" and the selected line marked `.line-selected` → submit → stays on the document, mark gone, card + toast, bar hidden; collapsing the selection hides the bar while `#propose-btn` stays, and a later selection outside the text panel drops the captured range for the sidebar button too ("No text selected"); selection over one pending proposal → **Variant of #1** → fork modal with the parent block and text prefilled → stays on the document, toast "Proposal #2 added" → **Open** → "based on #1"; over two → **Variant…** → chooser with both → fork modal of the chosen one; a selection right under the sticky header flips the bar below and Escape hides it; resolved document → no bar |
+| `mobile.spec.js` | UC-24, UC-25 (phone) | Chromium `mobile` project: sidebar stacks below the text; programmatic selection + `touchend` → bar below the selection and inside the viewport → tap **Propose** → modal with the range; **Variant of #1** on a touch selection → fork modal; the modal is a bottom sheet (anchored to the bottom, full width, rounded, focused itself rather than a field) with the selected line marked → submit → stays on the document, toast above the bottom bar, bar reads "1 proposal"; sticky bottom bar fixed at the bottom reads "2 proposals" → sheet lists both, *Newest* reorders → tapping a card closes the sheet and opens the proposal; bottom-bar **Propose** opens the modal |
+| `browse.spec.js` | UC-25 | Three proposals (one voted, one commented): order *Most voted* / *Most discussed* / *Newest* reorder the sidebar and *Newest* survives a reload; *Not yet voted by me (2)* hides the voted one; proposal page Next/Prev follow *Newest*, and under the voter filter Next skips the voted proposal; changing a selector keeps keyboard focus on it; once the document is in final voting the *Not yet voted by me* option is gone and a stored choice falls back to *All* |
 | `regression.spec.js` | guard rail | Bugs that only show on the second action in one page: Reply after the thread re-rendered; Change status touching a previously opened document; a document without overlapping proposals reaching final voting; selecting text inside a highlighted line; "Use different email" on the login form |
 | `xss.spec.js` | guard rail | Hostile `<img onerror>` / `<script>` payloads in document title, variant title/rationale/text, and comments render as inert text (`esc()` regression net for template changes) |
 
@@ -633,7 +645,7 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] Login flow: enter email → receive code → enter code → redirected to document list
 - [ ] Create document: paste multi-page text → line numbers visible, correct page count
 - [ ] Document view: lines highlighted when a variant targets them
-- [ ] Variant sidebar: defaults to All; On-page shows only variants overlapping the current page
+- [ ] Proposal list: defaults to All, document order; This page shows only proposals overlapping the current page; the chosen order and filter are still set after a reload and on another document
 - [ ] Propose variant: fill form → appears in sidebar on document view
 - [ ] Vote buttons: clicking For/Against/Abstain updates count immediately
 - [ ] Changing vote: count adjusts correctly
@@ -686,3 +698,6 @@ Run `npm run dev` then open `http://localhost:3000`.
 - [ ] **Withdraw only before voting:** own pending proposal on an `open` doc shows Edit and Withdraw; once the doc is `voting` both buttons are gone
 - [ ] **OTP attempt limit:** enter a wrong code five times → "Too many incorrect codes" and the emailed code no longer works; a newly requested code does
 - [ ] **Selection toolbar on a real phone (UC-24):** long-press a word, drag the handles → after lifting the finger the Propose bar sits below the selection, under the OS callout; tapping Propose opens the modal with the right range; scrolling keeps the bar on the selection
+- [ ] **Bottom sheet with the keyboard (UC-24):** on a real phone tap into the proposal form → the sheet rises above the keyboard and the Submit button stays reachable; rotate the phone → the sheet refits
+- [ ] **Bottom bar (UC-25):** scrolled deep into a long document, the bar stays visible; "N proposals" opens the sheet; the footer is not hidden behind the bar when scrolled to the end; in landscape on a notched phone neither the bar nor the sheet sits under the notch
+- [ ] **Dialogs with a screen reader (Phase K):** VoiceOver (iOS/macOS) and TalkBack announce the modal title when it opens; Escape (hardware keyboard) closes it; the next focus is on the button that opened it

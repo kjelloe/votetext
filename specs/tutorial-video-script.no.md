@@ -113,10 +113,10 @@ foreslått så langt.
 Ravgule linjer har allerede forslag knyttet til seg. Hold pekeren over en av dem, og
 du ser hvilke forslag som berører linjen.
 
-[screen: click "All", then "On-page" in the sidebar filter]
+[screen: pick "This page" in the filter above the proposal list, then "All"; open the order selector and pick "Most voted", then back to "Document order"]
 
 Sidepanelet følger deg mens du leser — det viser forslagene for siden du står på,
-eller hele dokumentet om du heller vil det.
+eller hele dokumentet, i den rekkefølgen du vil: som skrevet, mest diskutert, flest stemmer eller nyest.
 
 [screen: hover a proposal card — click the ↗ link that appears: the page jumps to the line; then click the card itself]
 
@@ -153,9 +153,10 @@ Forslagsskjemaet ber om tre ting: en kort tittel, den nye formuleringen, og — 
 viktigste — *hvorfor*. En god begrunnelse er det som gjør et endringsønske til et
 argument gruppen kan veie.
 
-[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the new proposal's page opens]
+[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the sheet closes, the lines turn amber, a toast "Proposal #N added · Open" appears; click "Open"]
 
-Sendt inn. Forslaget er umiddelbart synlig for alle deltakere.
+Sendt inn. Bjørn står fortsatt i dokumentet: linjene er ravgule, kortet ligger i listen, og
+en liten melding tilbyr forslagssiden. Han åpner den.
 
 [screen: on the proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
 
@@ -164,7 +165,8 @@ forslaget helt, hvis diskusjonen får ham på andre tanker.
 
 [screen: click "← Back to document" — the new card in the sidebar, the selected lines now amber]
 
-Tilbake i dokumentet er forslaget festet til nøyaktig de linjene det ville endre.
+Tilbake i dokumentet er forslaget festet til nøyaktig de linjene det ville endre —
+og på mobil går samme flyt fra en knapperad som flyter på de markerte ordene.
 
 ## Kapittel 7 — Stemme *(0:45)* — Clara, forslaget «Clarify the dog rule»
 

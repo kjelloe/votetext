@@ -47,7 +47,7 @@ The stories assume a document has already been created and is in **Open** status
 3. The document view opens: paginated text on the left, a proposal sidebar on the right.
 4. Lines covered by proposals are highlighted in amber. Hovering a highlighted line shows a tooltip with the overlapping proposal numbers; clicking it opens the first of them.
 5. User scrolls through the text. The sidebar lists every proposal in the document, in document order.
-6. User clicks **On-page** in the sidebar filter bar to see only the proposals that overlap the current page; clicks **All** to return to the full list.
+6. User picks **This page** in the filter above the list to see only the proposals that overlap the current page, and an order (**Most voted**, **Newest** …) if document order is not what they want; both are remembered on this device. On a phone the list opens as a sheet from the sticky **N proposals** bar.
 7. User hovers a proposal card and clicks the **↗ p.N** link that appears — the page jumps to the relevant line.
 8. User clicks the proposal card to open the full proposal detail page.
 9. User clicks the browser **Back** button (or the **← Document** link) to return to the document, scrolled back to the proposal's line.
@@ -81,7 +81,7 @@ The stories assume a document has already been created and is in **Open** status
    - **Title** — a short label, e.g. "Replace vague deadline with specific date"
    - **Proposed text** — the replacement wording
    - **Rationale** — why this change is needed
-5. User clicks **Submit proposal**. The new proposal's detail page opens; back on the document its card is in the sidebar and the selected lines are amber.
+5. User clicks **Submit proposal**. The reader stays on the document: the selected lines turn amber, the card appears in the list, and a toast *Proposal #N added · Open* leads to the proposal page when wanted.
 6. The proposal begins in **Pending** status. Other participants can now see it, vote on it, and comment.
 
 ---
@@ -180,7 +180,7 @@ The stories assume a document has already been created and is in **Open** status
 
 ## Coverage map
 
-> All 10 stories have Playwright coverage as of 2026-10-22 (79 tests in `tests/e2e/`, incl. XSS and regression guard-rail specs, the site-role flows of UC-22, the paged import of UC-23 and the selection toolbar of UC-24 on desktop and in a Chromium phone project) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
+> All 10 stories have Playwright coverage as of 2026-11-10 (88 tests in `tests/e2e/`, incl. XSS and regression guard-rail specs, the site-role flows of UC-22, the paged import of UC-23, the selection toolbar and sheets of UC-24 and the proposal order/filter of UC-25 on desktop and in a Chromium phone project) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
 
 | Story | Playwright priority | Video segment |
 |-------|--------------------|-|

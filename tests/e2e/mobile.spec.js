@@ -63,3 +63,56 @@ test('phone: "Variant of #1" on a touch selection opens the fork modal', async (
     await variantBtn.tap();
     await expect(page.locator('#fork-title')).toHaveValue('Your variant of UC-24 phone parent');
 });
+
+test('phone: the modal is a bottom sheet; submitting stays on the document with a toast above the bottom bar', async ({ page }) => {
+    const docId = await createDoc('UC-24 phone sheet doc', TEXT);
+    await page.goto(`/#/documents/${docId}`);
+    await expect(page.locator('#doc-lines-container')).toBeVisible();
+    await selectWithTouch(page, 0, 6);
+    await page.locator('#sel-propose-btn').tap();
+
+    const sheet = await page.evaluate(() => {
+        const box = document.getElementById('modal-box').getBoundingClientRect();
+        return { anchoredBottom: Math.abs(box.bottom - window.innerHeight) < 2, fullWidth: box.width >= window.innerWidth - 2, rounded: parseFloat(getComputedStyle(document.getElementById('modal-box')).borderTopLeftRadius) > 0 };
+    });
+    expect(sheet).toEqual({ anchoredBottom: true, fullWidth: true, rounded: true });
+    await expect(page.locator('.line-text.line-selected')).toHaveCount(1);
+    // The sheet itself takes focus, so the on-screen keyboard does not open before the reader has seen it
+    await expect(page.locator('#modal-box')).toBeFocused();
+
+    await page.locator('#new-text').fill('Choose');
+    await page.locator('#var-title').fill('UC-24 phone proposal');
+    await page.locator('#propose-submit').tap();
+    await expect(page).toHaveURL(new RegExp(`#/documents/${docId}$`));
+    await expect(page.locator('.toast', { hasText: 'Proposal #1 added' })).toBeVisible();
+    await expect(page.locator('#bottom-proposals-btn')).toHaveText('1 proposal');
+    const toastAboveBar = await page.evaluate(() =>
+        document.querySelector('.toast').getBoundingClientRect().bottom <= document.getElementById('doc-bottom-bar').getBoundingClientRect().top);
+    expect(toastAboveBar).toBe(true);
+});
+
+test('phone: sticky bottom bar opens the proposal list as a sheet; a card opens the proposal; Propose works from the bar', async ({ page }) => {
+    const docId = await createDoc('UC-25 phone list doc', TEXT);
+    await createVariant(docId, { char_start: 0, char_end: 6, new_text: 'Pick', title: 'UC-25 phone first' });
+    const second = await createVariant(docId, { char_start: 7, char_end: 11, new_text: 'that', title: 'UC-25 phone second' });
+    await page.goto(`/#/documents/${docId}`);
+    await expect(page.locator('#doc-lines-container')).toBeVisible();
+
+    const bar = page.locator('#doc-bottom-bar');
+    await expect(bar).toBeVisible();
+    const fixedAtBottom = await page.evaluate(() => Math.abs(document.getElementById('doc-bottom-bar').getBoundingClientRect().bottom - window.innerHeight) < 2);
+    expect(fixedAtBottom).toBe(true);
+    await expect(page.locator('#bottom-proposals-btn')).toHaveText('2 proposals');
+
+    await page.locator('#bottom-proposals-btn').tap();
+    await expect(page.locator('#variants-list-sheet .variant-card')).toHaveCount(2);
+    await page.locator('#modal-content .proposal-sort').selectOption('newest');
+    await expect(page.locator('#variants-list-sheet .variant-card').first()).toContainText('UC-25 phone second');
+    await page.locator(`#variants-list-sheet .variant-card[data-id="${second}"]`).tap();
+    await expect(page).toHaveURL(new RegExp(`#/variants/${second}$`));
+    await expect(page.locator('#modal-overlay')).toBeHidden();
+
+    await page.goto(`/#/documents/${docId}`);
+    await page.locator('#bottom-propose-btn').tap();
+    await expect(page.getByText(/No text selected/)).toBeVisible();
+});

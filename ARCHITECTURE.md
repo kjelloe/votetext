@@ -74,7 +74,7 @@ votetext/
 │   ├── app.js              — client router + all-role views (< 2000 lines)
 │   ├── auth.js             — login, profile completion modal, profile page
 │   ├── review.js           — creator/supervisor/editor/admin views and modals: review, conflict resolution, final voting, resolved text, moderation, user admin, new document, settings, status
-│   ├── selection.js        — floating Propose / Variant toolbar on a text selection, fork modal, variant chooser (Phase M)
+│   ├── selection.js        — floating Propose / Variant toolbar on a text selection, fork modal, variant chooser, selected-line marks, keyboard-aware bottom sheet (Phase M)
 │   └── style.css           — design tokens + all component styles
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
@@ -374,7 +374,7 @@ Boot is deferred to `DOMContentLoaded` so `auth.js`/`review.js` are guaranteed t
 - **`esc(str)`** — HTML-escapes all user-supplied values before inserting into innerHTML
 - **`el(tag, attrs, ...children)`** — creates DOM nodes programmatically for dynamic content
 - **Event delegation** — one listener on a container, not per-item
-- **Minimal client state** — `state.user`, `state.config` (server-delivered config: `toast_dismiss_seconds`, `voting_countdown_default_minutes`), `state.docLines` (line cache per document), `state.docCache`, `state.docFilterMode` (sidebar filter per document), `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page), `state.lastActivityTime` (newest activity event seen, for toast deduplication), `state.votingBannerInterval` (live countdown setInterval handle), `state.activityUnread` (unread badge count), `state.activitySeenTime` (ISO timestamp of last activity page visit, loaded from localStorage). Fresh fetch on every view render except review (variants mutated in-place after each action)
+- **Minimal client state** — `state.user`, `state.config` (server-delivered config: `toast_dismiss_seconds`, `voting_countdown_default_minutes`), `state.docLines` (line cache per document), `state.docCache`, `state.pendingVariantJump` (back-to-doc scroll target), `state.commentSort` / `state.commentAuthorId` (comment sort mode + author id for variant page), `state.lastActivityTime` (newest activity event seen, for toast deduplication), `state.votingBannerInterval` (live countdown setInterval handle), `state.activityUnread` (unread badge count), `state.activitySeenTime` (ISO timestamp of last activity page visit, loaded from localStorage). The proposal list's filter and order live in `localStorage.vt_proposal_prefs`, not in `state`. Fresh fetch on every view render except review (variants mutated in-place after each action)
 
 ### Proposals sidebar
 
@@ -384,20 +384,18 @@ Cards are ordered by `char_start ASC, created_at ASC` so overlapping proposals a
 - **All variants on hover**: shows a `↗ p.N` goto-link in the card footer. Clicking calls `navigatePage(N, lineStart)` — if already on page N the API fetch is skipped and only the scroll is performed; otherwise the page is fetched, rendered, then scrolled via `scrollIntoView({ behavior: 'smooth', block: 'center' })` on the target `.doc-line[data-line-num]`.
 - **Overlapping variants on hover**: shows a `⊕ #N, #M` overlap indicator to the left of the goto-link. Overlaps are computed client-side with an O(n²) char-range intersection pass after variants load and stored in `overlapMap: { id → [{id, num}] }`. Clicking the indicator toggles `.overlap-highlight` (amber border + cream background) on all cards in the overlap group; clicking again or opening a different group clears it.
 
-**Sidebar filter** — three buttons in the header: **All N**, **On-page N**, and **Top**. Active filter stored in `state.docFilterMode[docId]`; restored when the user navigates back. `renderVariantList()` is an inner function called after every page navigation and on filter toggle; it updates button labels, styles, and re-renders the list.
+**Filter and order (UC-25, 2026-10-30)** — two `<select>`s above the list, rendered by `controlsHtml()` into every `.proposal-controls-holder` (the sidebar and, on phones, the proposals sheet): *filter* **All (N) · This page (N) · Not yet voted by me (N)** (the last only where `votingOpen(doc)` holds: signed-in voter+ on a draft, open or voting document, the same rule as the vote buttons and `POST /variants/:id/vote`) and *order* **Document order · Most discussed · Most voted · Newest**. The choice is stored per device in `localStorage.vt_proposal_prefs` (`proposalPrefs()` / `saveProposalPrefs()`), so it survives navigation and reloads and also drives the proposal page's Previous/Next. `sortProposals(list, mode)` is the single ordering function (document order = `char_start, created_at`; most discussed = `comment_count`; most voted = for + against + abstain; newest = `id` desc), `isUnvoted(v)` the single filter predicate (`my_vote` null and the proposal still votable). The former *Top N %* filter and `PROPOSALS_TOP_PERCENT` were retired: *Most voted* covers it. `renderVariantList()` is an inner function called after every page navigation, on every control change and after a new proposal; it re-renders the controls (handing keyboard focus back to the selector that had it), both lists and the bottom bar's count.
 
-- **All N** — all proposals, document-position order
-- **On-page N** — proposals whose char range overlaps the current page
-- **Top** — top `ceil(count × PROPOSALS_TOP_PERCENT / 100)` proposals ranked by total votes (for + against + abstain)
+**Phone bottom bar and sheet** — `#doc-bottom-bar` ("N proposals" + **Propose** under the same rule as `#propose-btn`) is `position: fixed` below 768 px and `display: none` above. "N proposals" opens the list in the modal (`#variants-list-sheet`) with the same controls; a tapped card closes the sheet and navigates.
 
 `GET /api/documents/:id/variants` enriches each row with:
 - `proposer_org` (joined from `users`)
 - `line_start` / `line_end` — correlated `MIN`/`MAX` subqueries on `document_lines` matching the variant's char range
 - `comment_count` — correlated `COUNT(*)` of non-hidden comments for the variant
+- `my_vote` — the caller's `vote_value` on that proposal, `null` when they have not voted or are anonymous (drives *Not yet voted by me* and the Previous/Next walk)
 
-The response also includes two config objects read from env vars:
+The response also includes one config object read from env vars:
 - `comment_heat: { orange, red }` — percentage thresholds for comment heatmap colouring (`COMMENT_HEAT_ORANGE`, `COMMENT_HEAT_RED`)
-- `top_percent` — percentage for the Top filter (`PROPOSALS_TOP_PERCENT`)
 
 **Comment count heatmap** — each card shows a 💬 N bubble. `renderVariantCard` computes the proposal's share of total document comments and applies `comment-heat-orange` or `comment-heat-red` CSS classes at the configured thresholds.
 
@@ -432,7 +430,9 @@ Each rendered line span (`<span class="line-text">`) carries `data-char-start` a
 
 The resolved `{ char_start, char_end, text }` is stored in `pendingSelection` and passed to `openProposeModal`. The modal shows the raw selected text in a collapsible `<details>` panel and disables submit if no selection is present.
 
-**Selection toolbar (`public/selection.js`, UC-24, 2026-10-29).** `viewDocument` calls `wireSelectionToolbar({ doc, linesContainer, variants, getSelection })` whenever it rendered `#propose-btn`, so the bar follows the same proposer/status rule. One `#selection-toolbar` element lives in `<body>` (`position: fixed`, z-index below the modal). It is shown after `pointerup`/`mouseup`/`touchend` in the text panel, or 350 ms after the last `selectionchange` while no pointer is down (native touch handles fire no pointer events), and hidden on collapse, Escape, `hashchange` or a button press. Placement: above the selection rectangle for a mouse, below for touch (`pointerType`, falling back to `(pointer: coarse)`), flipped when there is no room (the sticky header's bottom edge is the top limit), clamped horizontally; repositioned on capture-phase `scroll` and `resize`. `data-placement` carries the result for tests. The bar renders **Propose** and, when the range overlaps forkable proposals under the proposal page's `canFork` rule, **Variant of #N** (one) or **Variant…** (chooser modal). Pressing a button is `preventDefault`ed and the captured range is snapshotted on show, so a collapsing native selection cannot empty the modal. `openForkModal(v)` moved here from `viewVariant` and is shared by the proposal page's Fork button and the toolbar (which first fetches `GET /variants/:id` for the parent's text).
+**Selection toolbar (`public/selection.js`, UC-24, 2026-10-29).** `viewDocument` calls `wireSelectionToolbar({ doc, linesContainer, variants, getSelection })` whenever it rendered `#propose-btn`, so the bar follows the same proposer/status rule. One `#selection-toolbar` element lives in `<body>` (`position: fixed`, z-index below the modal). It is shown after `pointerup`/`mouseup`/`touchend` in the text panel, or 350 ms after the last `selectionchange` while no pointer is down (native touch handles fire no pointer events), and hidden on collapse, Escape, `hashchange` or a button press. Placement: above the selection rectangle for a mouse, below for touch (`pointerType`, falling back to `(pointer: coarse)`), flipped when there is no room (the sticky header's bottom edge is the top limit), clamped horizontally; repositioned on capture-phase `scroll` and `resize`. `data-placement` carries the result for tests. The bar renders **Propose** and, when the range overlaps forkable proposals under the proposal page's `canFork` rule, **Variant of #N** (one) or **Variant…** (chooser modal). Pressing a button is `preventDefault`ed and the captured range is snapshotted on show, so a collapsing native selection cannot empty the modal. `openForkModal(v, onCreated)` moved here from `viewVariant` and is shared by the proposal page's Fork button and the toolbar (which first fetches `GET /variants/:id` for the parent's text); it shows the parent (number, title, text) above the form.
+
+**Sheets and staying in place (M.2, 2026-10-30).** Below 768 px the modal is a bottom sheet by CSS alone (`#modal-overlay` aligns to the end, `#modal-box` gets rounded top corners, 85 vh, safe-area padding and a grab handle; the viewport meta carries `viewport-fit=cover`, without which `env(safe-area-inset-*)` is 0 on iPhones, and a print rule hides every fixed overlay). `wireSheetSupport()` in `selection.js` runs at load: a `MutationObserver` on the overlay's class clears the `.line-selected` marks when it closes, and `visualViewport` resize/scroll events size and offset the overlay so the sheet rides above the on-screen keyboard (`fitSheetToViewport()`, no-op on desktop widths). `markSelectedLines(range)` keeps the captured lines highlighted while the propose or fork sheet is open, because focusing a textarea collapses the native selection. `openProposeModal(doc, selection, onCreated)` and `openForkModal(v, onCreated)` take an optional callback: `viewDocument` passes `onProposalCreated`, which re-fetches the list, rebuilds the overlap map, re-renders the current page's lines and the list in place (scroll position kept) and shows a toast "Proposal #N added · Open" (`showToast(msg, { href, label })`). Without the callback (the proposal page's Fork button) the app navigates to the new proposal as before.
 
 See `specs/use-cases.md` for full user-facing flows.
 
@@ -442,7 +442,7 @@ See `specs/use-cases.md` for full user-facing flows.
 
 ### Session and modal hygiene
 
-`api()` clears `state.user` and routes to `#/login` on any 401, so an expired session cannot leave the app looking signed in. `startSession()` (config, unread badge, 30-second activity polling) runs at boot and again after an in-tab login. `openModal()` replaces `#modal-content` with a fresh node, so listeners from a previous modal never fire for the next one; cancel buttons use the `.modal-cancel` class instead of inline handlers (the CSP forbids them). Text selection is captured on `selectionchange` (works for touch and for releases outside the text panel); element-anchored selections (triple-click) resolve to line boundaries.
+`api()` clears `state.user` and routes to `#/login` on any 401, so an expired session cannot leave the app looking signed in. `startSession()` (config, unread badge, 30-second activity polling) runs at boot and again after an in-tab login. `openModal()` replaces `#modal-content` with a fresh node, so listeners from a previous modal never fire for the next one; cancel buttons use the `.modal-cancel` class instead of inline handlers (the CSP forbids them). Text selection is captured on `selectionchange` (works for touch and for releases outside the text panel); element-anchored selections (triple-click) resolve to line boundaries. Since Phase K (2026-11-10) every modal is a dialog: `#modal-box` carries `role="dialog"`, `aria-modal` and `aria-labelledby` → `#modal-title`; `openModal()` remembers the opener and moves focus to the first field or button (on a coarse pointer to the sheet itself, so the on-screen keyboard does not open before the reader has seen it); one document-level `keydown` listener closes on Escape and wraps Tab/Shift+Tab inside the box; `closeModal()` returns focus to the opener, or to `#app-main` when the view was re-rendered. `setMain()` toggles `body.has-bottom-bar` so the toast moves above the phone bar without `:has()`.
 
 ### Security headers
 
@@ -680,14 +680,14 @@ All six mutations log to `activity_log` (`variant_hidden`/`variant_unhidden`, `c
 
 ### `app.js` split strategy
 
-`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,514 lines after the 2026-10-23 move of the creator/editor modals to `review.js` and the 2026-10-29 move of the fork modal to `selection.js`):
+`app.js` is capped at 2000 lines (enforced by `tests/frontend.test.js`). The current split (1,631 lines after the 2026-10-23 move of the creator/editor modals to `review.js`, the 2026-10-29 move of the fork modal to `selection.js` and the 2026-10-30 proposal filter/order + bottom bar in `app.js`):
 
 | File | Contents | Audience |
 |---|---|---|
 | `app.js` | Router, helpers, document/variant/comment/activity/access views | all roles, every session |
 | `auth.js` | `viewLogin`, `showProfileModal`, `viewProfile` | once per session / infrequent |
 | `review.js` | `viewDocumentReview`, `viewConflictResolution`, `viewFinalVoting`, `viewResolvedText`, `viewModeration`, `viewUserAdmin`, `openCreateDocModal`, `openDocSettingsModal`, `openStatusModal`, manage-access modal | creators, supervisors, editors, admins |
-| `selection.js` | `wireSelectionToolbar`, `openForkModal`, variant chooser; Phase M sheets and toast to follow (budget 600 lines) | proposers, on the document page |
+| `selection.js` | `wireSelectionToolbar`, `openForkModal`, variant chooser, `markSelectedLines`, `wireSheetSupport` (keyboard-aware bottom sheet) | proposers, on the document page |
 
 ⚠ Route handlers defined in `auth.js`/`review.js`/`selection.js` and referenced from the `routes` array in `app.js` **must be wrapped in arrow functions** (`() => viewLogin()`), never referenced bare — `app.js` executes before the other files load, so a bare reference throws a `ReferenceError` that kills the entire script. This broke the app in real browsers after the initial split; the e2e smoke suite now guards it.
 

@@ -654,6 +654,7 @@ mark.preview-ins {
 }
 .modal-close-btn:hover { background: rgba(15, 23, 42, 0.08); color: var(--color-text); }
 .modal-title { font-size: 1.125rem; font-weight: 900; margin-bottom: 1.25rem; letter-spacing: -0.01em; }
+#modal-box:focus, #app-main:focus { outline: none; }
 
 /* ===== Profile ===== */
 .profile-container { max-width: 480px; margin: 0 auto; padding: 2rem 1.5rem; }
@@ -843,6 +844,21 @@ mark.preview-ins {
 }
 .sel-variant-choices { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.75rem 0 1rem; }
 .sel-variant-choice { justify-content: flex-start; text-align: left; gap: 0.5rem; }
+
+/* Lines of the captured range stay marked while the propose / fork sheet is open */
+.line-text.line-selected { background: rgba(37, 99, 235, 0.14); box-shadow: inset 3px 0 0 var(--color-primary); border-radius: 4px; }
+
+/* Parent proposal shown above the fork form */
+.fork-parent { border: 1px solid var(--color-border); border-radius: 12px; padding: 0.6rem 0.75rem; margin-bottom: 1rem; background: var(--color-bg-secondary); }
+.fork-parent-head { font-size: 0.8125rem; font-weight: 800; margin-bottom: 0.35rem; }
+.fork-parent pre { white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 0.8125rem; margin: 0; max-height: 8rem; overflow: auto; }
+.fork-parent-note { font-size: 0.75rem; margin-top: 0.35rem; }
+
+/* Proposal list controls: filter + order (sidebar and the phone sheet) */
+.proposal-controls { display: flex; gap: 0.5rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--color-border); background: rgba(246,248,251,0.65); }
+.proposal-controls select { flex: 1; min-width: 0; font-size: 0.8125rem; font-weight: 600; padding: 0.35rem 0.5rem; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text); }
+.sheet-list { max-height: 60vh; overflow-y: auto; padding-top: 0.75rem; }
+.doc-bottom-bar { display: none; }
 
 /* ===== Voting countdown banner ===== */
 .voting-banner {
@@ -1142,8 +1158,33 @@ mark.preview-ins {
 @media (max-width: 768px) {
     .doc-layout {
         grid-template-columns: 1fr;
-        padding: 1rem;
+        padding: 1rem 1rem 5.5rem;
     }
+    .doc-bottom-bar {
+        display: flex;
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        z-index: 120;
+        gap: 0.5rem;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem calc(1rem + env(safe-area-inset-right)) calc(0.6rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left));
+        background: rgba(255,255,255,0.92);
+        backdrop-filter: blur(8px);
+        border-top: 1px solid var(--color-border);
+        box-shadow: 0 -8px 24px rgba(16, 24, 40, 0.08);
+    }
+    /* Modal becomes a bottom sheet */
+    #modal-overlay { align-items: flex-end; padding: 0; }
+    #modal-box {
+        max-width: none;
+        max-height: 85vh;
+        border-radius: 18px 18px 0 0;
+        padding: 1rem calc(1rem + env(safe-area-inset-right)) calc(1.25rem + env(safe-area-inset-bottom)) calc(1rem + env(safe-area-inset-left));
+    }
+    #modal-box::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--color-border); margin: 0 auto 0.9rem; }
+    #toast-container { left: 1rem; right: 1rem; max-width: none; }
+    body.has-bottom-bar #toast-container { bottom: calc(4.75rem + env(safe-area-inset-bottom)); }
     .doc-sidebar { position: static; top: auto; }
     .header-inner { padding: 0 1rem; gap: 1rem; }
     #app-nav .nav-link { padding: 0.4rem 0.55rem; font-size: 0.8125rem; }
@@ -1170,4 +1211,10 @@ mark.preview-ins {
 /* ===== Reduce motion ===== */
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; scroll-behavior: auto !important; }
+    .selection-toolbar, .toast { animation: none !important; }
+}
+
+/* Fixed overlays repeat on every printed page */
+@media print {
+    .doc-bottom-bar, .selection-toolbar, #toast-container, #modal-overlay { display: none !important; }
 }

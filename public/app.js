@@ -6,7 +6,6 @@ const state = {
     config: {},
     docLines: {},        // docId → { page → lines[] }
     docCache: {},        // docId → document
-    docFilterMode: {},   // docId → 'all' | 'page'
     pendingVariantJump: null,  // { docId, page, lineStart } — consumed once by viewDocument
     commentSort: 'chrono',     // sort mode for comment thread on variant page
     commentAuthorId: null,     // user_id of the variant proposer (for Author's filter)
@@ -107,6 +106,7 @@ function setMain(node) {
     const main = document.getElementById('app-main');
     main.innerHTML = '';
     main.append(typeof node === 'string' ? (() => { const d = document.createElement('div'); d.innerHTML = node; return d; })() : node);
+    document.body.classList.toggle('has-bottom-bar', !!main.querySelector('.doc-bottom-bar'));
 }
 
 function showError(container, msg) {
@@ -116,14 +116,19 @@ function showError(container, msg) {
     container.prepend(alert);
 }
 
-function showToast(msg, docId, dismissSeconds) {
+// link: a document id (renders "View") or { href, label }
+function showToast(msg, link, dismissSeconds) {
     const container = document.getElementById('toast-container');
     if (!container) return;
     const id = 'toast-' + Date.now();
     const toast = el('div', { class: 'toast', id });
-    toast.innerHTML = `<span>${esc(msg)}</span>${docId ? ` <a href="#/documents/${esc(docId)}" class="toast-link">View</a>` : ''}<button class="toast-dismiss" title="Dismiss">×</button>`;
+    const linkHtml = link && typeof link === 'object' ? ` <a href="${esc(link.href)}" class="toast-link">${esc(link.label || 'Open')}</a>`
+        : link ? ` <a href="#/documents/${esc(link)}" class="toast-link">View</a>` : '';
+    toast.innerHTML = `<span>${esc(msg)}</span>${linkHtml}<button class="toast-dismiss" title="Dismiss">×</button>`;
     container.append(toast);
     toast.querySelector('.toast-dismiss').addEventListener('click', () => toast.remove());
+    const a = toast.querySelector('.toast-link');
+    if (a) a.addEventListener('click', () => toast.remove());
     setTimeout(() => { if (toast.parentNode) toast.remove(); }, (dismissSeconds || 30) * 1000);
 }
 
@@ -153,22 +158,94 @@ async function pollActivity() {
     } catch {}
 }
 
+/* ===== Proposal list order and filter (remembered per device) ===== */
+function proposalPrefs() {
+    const prefs = { filter: 'all', sort: 'doc' };
+    try { Object.assign(prefs, JSON.parse(localStorage.getItem('vt_proposal_prefs') || '{}')); } catch {}
+    if (!['all', 'page', 'unvoted'].includes(prefs.filter)) prefs.filter = 'all';
+    if (!['doc', 'discussed', 'voted', 'newest'].includes(prefs.sort)) prefs.sort = 'doc';
+    return prefs;
+}
+
+function saveProposalPrefs(prefs) {
+    try { localStorage.setItem('vt_proposal_prefs', JSON.stringify(prefs)); } catch {}
+}
+
+function sortProposals(list, mode) {
+    const byDoc = (a, b) => a.char_start !== b.char_start ? a.char_start - b.char_start : new Date(a.created_at) - new Date(b.created_at);
+    const votes = v => (v.votes_for || 0) + (v.votes_against || 0) + (v.votes_abstain || 0);
+    const sorted = [...list];
+    if (mode === 'discussed') sorted.sort((a, b) => (b.comment_count || 0) - (a.comment_count || 0) || byDoc(a, b));
+    else if (mode === 'voted') sorted.sort((a, b) => votes(b) - votes(a) || byDoc(a, b));
+    else if (mode === 'newest') sorted.sort((a, b) => b.id - a.id);
+    else sorted.sort(byDoc);
+    return sorted;
+}
+
+// A proposal still open to votes that the signed-in voter has not voted on
+function isUnvoted(v) {
+    return v.my_vote == null && !['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(v.status);
+}
+
+// Mirrors POST /variants/:id/vote: a signed-in voter on a document that still takes ballots
+function votingOpen(doc) {
+    return !!state.user && hasLevel(doc, 'voter') && ['draft', 'open', 'voting'].includes(doc.status);
+}
+
 /* ===== Modal ===== */
+// Every modal is a dialog: focus moves in on open and back to the opener on close, Escape cancels, Tab wraps (Phase K)
+const MODAL_FOCUSABLE = 'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+let modalOpener = null;
+let modalKeysWired = false;
+
 function openModal(contentHtml, title = '') {
     const overlay = document.getElementById('modal-overlay');
+    const box = document.getElementById('modal-box');
     // Fresh node per modal: listeners a previous modal attached to the content must not fire for this one
     const content = document.getElementById('modal-content').cloneNode(false);
     document.getElementById('modal-content').replaceWith(content);
-    content.innerHTML = title ? `<div class="modal-title">${esc(title)}</div>${contentHtml}` : contentHtml;
+    content.innerHTML = title ? `<div class="modal-title" id="modal-title">${esc(title)}</div>${contentHtml}` : contentHtml;
+    if (overlay.classList.contains('hidden')) modalOpener = document.activeElement;
     overlay.classList.remove('hidden');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('tabindex', '-1');
+    if (title) box.setAttribute('aria-labelledby', 'modal-title'); else box.removeAttribute('aria-labelledby');
     document.getElementById('modal-close').onclick = closeModal;
     overlay.onclick = e => { if (e.target === overlay) closeModal(); };
     content.addEventListener('click', e => { if (e.target.closest('.modal-cancel')) closeModal(); });
+    wireModalKeys();
+    // Phone sheet: focus the sheet itself so the on-screen keyboard does not open before the reader has seen it
+    const coarse = window.matchMedia('(pointer: coarse)').matches;
+    const first = coarse ? null : [...content.querySelectorAll(MODAL_FOCUSABLE)].find(n => !n.classList.contains('modal-cancel'));
+    (first || box).focus();
 }
 
 function closeModal() {
     document.getElementById('modal-overlay').classList.add('hidden');
     document.getElementById('modal-content').innerHTML = '';
+    const opener = modalOpener;
+    modalOpener = null;
+    if (opener && opener !== document.body && document.contains(opener)) opener.focus();
+    else { const main = document.getElementById('app-main'); if (main) { main.setAttribute('tabindex', '-1'); main.focus(); } }
+}
+
+function wireModalKeys() {
+    if (modalKeysWired) return;
+    modalKeysWired = true;
+    document.addEventListener('keydown', e => {
+        const overlay = document.getElementById('modal-overlay');
+        if (!overlay || overlay.classList.contains('hidden')) return;
+        if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+        if (e.key !== 'Tab') return;
+        const box = document.getElementById('modal-box');
+        const nodes = [...box.querySelectorAll(MODAL_FOCUSABLE)].filter(n => n.offsetParent !== null);
+        if (!nodes.length) { e.preventDefault(); box.focus(); return; }
+        const first = nodes[0], last = nodes[nodes.length - 1], active = document.activeElement;
+        if (e.shiftKey && (active === first || active === box)) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+        else if (!box.contains(active)) { e.preventDefault(); first.focus(); }
+    });
 }
 
 /* ===== Header ===== */
@@ -281,21 +358,25 @@ async function viewDocument(docId) {
     const doc = docData.document;
     const rawVariants = variantData.variants || [];
     const heatConfig = variantData.comment_heat || { orange: 10, red: 25 };
-    const topPercent = variantData.top_percent || 10;
     const variants = rawVariants;
+    const canPropose = hasLevel(doc, 'proposer') && !['resolved', 'archived'].includes(doc.status);
 
-    // Build overlap map: variantId → [{id, num}] for all pairs whose char ranges intersect
+    // Overlap map: variantId → [{id, num}] for all pairs whose char ranges intersect (rebuilt after a new proposal)
     const overlapMap = {};
-    for (let i = 0; i < variants.length; i++) {
-        const a = variants[i];
-        for (let j = i + 1; j < variants.length; j++) {
-            const b = variants[j];
-            if (a.char_start < b.char_end && a.char_end > b.char_start) {
-                (overlapMap[a.id] = overlapMap[a.id] || []).push({ id: b.id, num: b.proposal_num });
-                (overlapMap[b.id] = overlapMap[b.id] || []).push({ id: a.id, num: a.proposal_num });
+    function rebuildOverlaps() {
+        for (const k of Object.keys(overlapMap)) delete overlapMap[k];
+        for (let i = 0; i < variants.length; i++) {
+            const a = variants[i];
+            for (let j = i + 1; j < variants.length; j++) {
+                const b = variants[j];
+                if (a.char_start < b.char_end && a.char_end > b.char_start) {
+                    (overlapMap[a.id] = overlapMap[a.id] || []).push({ id: b.id, num: b.proposal_num });
+                    (overlapMap[b.id] = overlapMap[b.id] || []).push({ id: a.id, num: a.proposal_num });
+                }
             }
         }
     }
+    rebuildOverlaps();
     state.docCache[docId] = doc;
 
     let currentPage = 1;
@@ -349,8 +430,10 @@ async function viewDocument(docId) {
     `;
 
 
-    // Variants sidebar — all proposals, filterable by page
-    let varFilterMode = state.docFilterMode[docId] || 'all';
+    // Proposal list: filter (All · This page · Not yet voted by me) and order, remembered per device.
+    // Rendered into the sidebar and, on phones, into the proposals sheet opened from the bottom bar.
+    const prefs = proposalPrefs();
+    const canFilterUnvoted = votingOpen(doc);
 
     function getPageVariants() {
         const pageLines = state.docLines[docId][currentPage] || [];
@@ -360,58 +443,66 @@ async function viewDocument(docId) {
         return variants.filter(v => v.char_start < pageEnd && v.char_end > pageStart);
     }
 
-    function getTopVariants() {
-        const n = Math.max(1, Math.ceil(variants.length * topPercent / 100));
-        return [...variants]
-            .sort((a, b) => (b.votes_for + b.votes_against + b.votes_abstain) - (a.votes_for + a.votes_against + a.votes_abstain))
-            .slice(0, n);
+    function activeFilter() { return prefs.filter === 'unvoted' && !canFilterUnvoted ? 'all' : prefs.filter; }
+
+    function controlsHtml() {
+        return `<div class="proposal-controls">
+            <select class="proposal-filter" aria-label="Show">
+                <option value="all">All (${variants.length})</option>
+                <option value="page">This page (${getPageVariants().length})</option>
+                ${canFilterUnvoted ? `<option value="unvoted">Not yet voted by me (${variants.filter(isUnvoted).length})</option>` : ''}
+            </select>
+            <select class="proposal-sort" aria-label="Order">
+                <option value="doc">Document order</option>
+                <option value="discussed">Most discussed</option>
+                <option value="voted">Most voted</option>
+                <option value="newest">Newest</option>
+            </select>
+        </div>`;
     }
 
     function renderVariantList() {
-        const list = document.getElementById('variants-list');
-        const allBtn = document.getElementById('filter-all-btn');
-        const pageBtn = document.getElementById('filter-page-btn');
-        const topBtn = document.getElementById('filter-top-btn');
-        if (!list) return;
-        const pageVariants = getPageVariants();
-        const topVariants = getTopVariants();
-        if (allBtn) {
-            allBtn.textContent = `All ${variants.length}`;
-            allBtn.className = `btn btn-sm ${varFilterMode === 'all' ? 'btn-primary' : 'btn-ghost'}`;
-        }
-        if (pageBtn) {
-            pageBtn.textContent = `On-page ${pageVariants.length}`;
-            pageBtn.className = `btn btn-sm ${varFilterMode === 'page' ? 'btn-primary' : 'btn-ghost'}`;
-        }
-        if (topBtn) {
-            topBtn.textContent = 'Top';
-            topBtn.className = `btn btn-sm ${varFilterMode === 'top' ? 'btn-primary' : 'btn-ghost'}`;
-        }
-        const displayed = varFilterMode === 'page' ? pageVariants : varFilterMode === 'top' ? topVariants : variants;
+        const filter = activeFilter();
+        const base = filter === 'page' ? getPageVariants() : filter === 'unvoted' ? variants.filter(isUnvoted) : variants;
+        const displayed = sortProposals(base, prefs.sort);
         const totalComments = variants.reduce((s, v) => s + (v.comment_count || 0), 0);
-        list.innerHTML = displayed.length === 0
-            ? '<p class="text-muted">No proposals on this page.</p>'
+        const emptyText = filter === 'page' ? 'No proposals on this page.' : filter === 'unvoted' ? 'You have voted on every open proposal.' : 'No proposals yet.';
+        const html = displayed.length === 0
+            ? `<p class="text-muted">${emptyText}</p>`
             : displayed.map(v => renderVariantCard(v, overlapMap[v.id] || [], totalComments, heatConfig)).join('');
+        const focused = document.activeElement && document.activeElement.closest('.proposal-controls') ? document.activeElement : null;
+        const focusHolder = focused && focused.closest('.proposal-controls-holder');
+        for (const holder of document.querySelectorAll('.proposal-controls-holder')) {
+            holder.innerHTML = controlsHtml();
+            if (holder === focusHolder) holder.querySelector(`.${focused.className}`).focus();
+            const filterSel = holder.querySelector('.proposal-filter');
+            const sortSel = holder.querySelector('.proposal-sort');
+            filterSel.value = filter;
+            sortSel.value = prefs.sort;
+            filterSel.addEventListener('change', () => { prefs.filter = filterSel.value; saveProposalPrefs(prefs); renderVariantList(); });
+            sortSel.addEventListener('change', () => { prefs.sort = sortSel.value; saveProposalPrefs(prefs); renderVariantList(); });
+        }
+        for (const list of document.querySelectorAll('#variants-list, #variants-list-sheet')) list.innerHTML = html;
+        const bottomBtn = document.getElementById('bottom-proposals-btn');
+        if (bottomBtn) bottomBtn.textContent = `${variants.length} proposal${variants.length === 1 ? '' : 's'}`;
     }
 
     const varSection = el('div', { class: 'sidebar-section' });
     varSection.innerHTML = `
         <div class="sidebar-header">
             <span>Proposals</span>
-            <div class="flex gap-1 items-center">
-                <div style="display:flex;gap:0.25rem">
-                    <button id="filter-all-btn" class="btn btn-sm btn-primary">All ${variants.length}</button>
-                    <button id="filter-page-btn" class="btn btn-sm btn-ghost">On-page 0</button>
-                    <button id="filter-top-btn" class="btn btn-sm btn-ghost">Top</button>
-                </div>
-                ${hasLevel(doc, 'proposer') && !['resolved', 'archived'].includes(doc.status) ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
-            </div>
+            ${canPropose ? `<button class="btn btn-primary btn-sm" id="propose-btn">Propose</button>` : ''}
         </div>
+        <div class="proposal-controls-holder"></div>
         <div class="sidebar-body" id="variants-list"></div>
     `;
 
+    // Phone-only sticky bar: the sidebar stacks below the whole text on narrow screens
+    const bottomBar = el('div', { class: 'doc-bottom-bar', id: 'doc-bottom-bar' });
+    bottomBar.innerHTML = `<button class="btn btn-ghost" id="bottom-proposals-btn">${esc(variants.length)} proposals</button>${canPropose ? '<button class="btn btn-primary" id="bottom-propose-btn">Propose</button>' : ''}`;
+
     sidebar.append(metaSection, varSection);
-    wrap.append(textPanel, sidebar);
+    wrap.append(textPanel, sidebar, bottomBar);
     setMain(wrap);
 
     // Voting countdown banner
@@ -549,10 +640,6 @@ async function viewDocument(docId) {
         }
     }
 
-    varSection.querySelector('#filter-all-btn').addEventListener('click', () => { varFilterMode = 'all'; state.docFilterMode[docId] = 'all'; renderVariantList(); });
-    varSection.querySelector('#filter-page-btn').addEventListener('click', () => { varFilterMode = 'page'; state.docFilterMode[docId] = 'page'; renderVariantList(); });
-    varSection.querySelector('#filter-top-btn').addEventListener('click', () => { varFilterMode = 'top'; state.docFilterMode[docId] = 'top'; renderVariantList(); });
-
     paginationEl.addEventListener('click', async e => {
         const btn = e.target.closest('button[data-page]');
         if (btn) { await navigatePage(parseInt(btn.dataset.page)); return; }
@@ -597,7 +684,9 @@ async function viewDocument(docId) {
     const linesContainer = textPanel.querySelector('#doc-lines-container');
     const captureSelection = () => {
         const sel = window.getSelection();
-        if (!sel || sel.rangeCount === 0 || !linesContainer.contains(sel.anchorNode)) return;
+        if (!sel || sel.rangeCount === 0) return;
+        // A collapse (e.g. the mousedown on a button) keeps the captured range; a new selection elsewhere drops it
+        if (!linesContainer.contains(sel.anchorNode)) { if (!sel.isCollapsed) pendingSelection = null; return; }
         if (sel.isCollapsed || !sel.toString().trim()) { pendingSelection = null; return; }
         const anchor = resolveSelectionOffset(sel.anchorNode, sel.anchorOffset);
         let focus = resolveSelectionOffset(sel.focusNode, sel.focusOffset);
@@ -619,10 +708,36 @@ async function viewDocument(docId) {
     document.addEventListener('selectionchange', captureSelection);
     linesContainer.addEventListener('mouseup', captureSelection);
 
-    // Propose button
+    // After a proposal or variant is created the reader stays put: refresh highlights + list, offer the page in a toast
+    async function onProposalCreated(created) {
+        try {
+            const vd = await api('GET', `/documents/${docId}/variants`);
+            variants.length = 0;
+            variants.push(...(vd.variants || []));
+            rebuildOverlaps();
+        } catch {}
+        renderLines(linesContainer, state.docLines[docId][currentPage] || [], variants);
+        renderVariantList();
+        const mine = variants.find(x => x.id === created.id);
+        showToast(`Proposal #${mine ? mine.proposal_num : created.id} added`, { href: `#/variants/${created.id}`, label: 'Open' });
+    }
+
+    // Propose: sidebar button, phone bottom bar, and the floating selection toolbar (selection.js)
     const proposeBtn = varSection.querySelector('#propose-btn');
-    if (proposeBtn) proposeBtn.addEventListener('click', () => openProposeModal(doc, pendingSelection));
-    if (proposeBtn) wireSelectionToolbar({ doc, linesContainer, variants, getSelection: () => pendingSelection });
+    if (proposeBtn) proposeBtn.addEventListener('click', () => openProposeModal(doc, pendingSelection, onProposalCreated));
+    if (proposeBtn) wireSelectionToolbar({ doc, linesContainer, variants, getSelection: () => pendingSelection, onCreated: onProposalCreated });
+    const bottomProposeBtn = bottomBar.querySelector('#bottom-propose-btn');
+    if (bottomProposeBtn) bottomProposeBtn.addEventListener('click', () => openProposeModal(doc, pendingSelection, onProposalCreated));
+
+    // Phone: the proposal list as a sheet with the same filter and order controls
+    bottomBar.querySelector('#bottom-proposals-btn').addEventListener('click', () => {
+        openModal('<div class="proposal-controls-holder"></div><div id="variants-list-sheet" class="sheet-list"></div>', 'Proposals');
+        renderVariantList();
+        document.getElementById('modal-content').addEventListener('click', e => {
+            const card = e.target.closest('.variant-card[data-id]');
+            if (card) { closeModal(); location.hash = `#/variants/${card.dataset.id}`; }
+        });
+    });
 
     // Consume back-from-variant scroll target
     const jump = state.pendingVariantJump;
@@ -741,7 +856,7 @@ function resolveSelectionOffset(node, nodeOffset) {
     return isNaN(cs) ? null : cs;
 }
 
-function openProposeModal(doc, selection) {
+function openProposeModal(doc, selection, onCreated) {
     const hasSelection = !!(selection && selection.char_start < selection.char_end);
     const selInfo = hasSelection
         ? `Selected range: chars ${selection.char_start}–${selection.char_end}`
@@ -783,6 +898,7 @@ function openProposeModal(doc, selection) {
             <button class="btn btn-ghost modal-cancel">Cancel</button>
         </div>
     `, 'Propose variant');
+    if (hasSelection) markSelectedLines(selection);
 
     document.getElementById('op-type').addEventListener('change', e => {
         document.getElementById('new-text-group').style.display = e.target.value === 'delete' ? 'none' : '';
@@ -805,7 +921,8 @@ function openProposeModal(doc, selection) {
                 operation, new_text, title, rationale
             });
             closeModal();
-            location.hash = `#/variants/${data.variant.id}`;
+            if (onCreated) await onCreated(data.variant);
+            else location.hash = `#/variants/${data.variant.id}`;
         } catch (err) {
             errEl.textContent = err.message; errEl.style.display = '';
             if (err.status === 429 && err.data && err.data.retry_after) {
@@ -845,10 +962,10 @@ async function viewVariant(variantId) {
     const rawVariants = allVariantsData.variants || [];
     const proposalNum = v.proposal_num;
 
-    // Document-position order (same as sidebar listing) for prev/next
-    const docOrdered = [...rawVariants].sort((a, b) =>
-        a.char_start !== b.char_start ? a.char_start - b.char_start : new Date(a.created_at) - new Date(b.created_at)
-    );
+    // Prev/next walk the proposals in the order chosen on the document page; with "Not yet voted by me" they skip voted ones
+    const prefs = proposalPrefs();
+    const ordered = sortProposals(rawVariants, prefs.sort);
+    const docOrdered = prefs.filter === 'unvoted' && votingOpen(doc) ? ordered.filter(vv => vv.id === variantId || isUnvoted(vv)) : ordered;
     const posIdx = docOrdered.findIndex(vv => vv.id === variantId);
     const prevV = posIdx > 0 ? docOrdered[posIdx - 1] : null;
     const nextV = posIdx < docOrdered.length - 1 ? docOrdered[posIdx + 1] : null;
@@ -884,7 +1001,7 @@ async function viewVariant(variantId) {
     const canFork = ['pending', 'conflict'].includes(v.status) &&
         (doc && doc.status === 'open' ? hasLevel(doc, 'proposer') : ['voting', 'final_voting'].includes(doc && doc.status) && hasLevel(doc, 'supervisor'));
     const variantOpen = !['withdrawn', 'rejected', 'not_applicable', 'merged'].includes(v.status);
-    const canVote = hasLevel(doc, 'voter') && ['draft', 'open', 'voting'].includes(doc.status) && variantOpen;
+    const canVote = votingOpen(doc) && variantOpen;
     const voteNote = !state.user ? 'Log in to vote' : canVote ? '' : (!variantOpen ? 'This proposal is no longer open for voting' : hasLevel(doc, 'voter') ? 'Voting on proposals is closed' : 'Voter access is required to vote');
     const numOf = id => { const m = rawVariants.find(x => x.id === id); return m ? `#${m.proposal_num}` : ''; };
     const basedOn = (relData.relations || []).filter(r => r.relation_type === 'based_on' && r.from_variant_id === variantId);

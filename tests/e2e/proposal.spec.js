@@ -42,14 +42,15 @@ test('US-4: select text → propose modal → submit → proposal appears', asyn
     await page.locator('#var-rationale').fill('Clearer verb');
     await page.locator('#propose-submit').click();
 
-    // Success navigates to the new proposal detail page
-    await expect(page).toHaveURL(/#\/variants\/\d+$/);
-    await expect(page.getByText('US-4 proposed change').first()).toBeVisible();
-
-    // Back on the document, the sidebar shows the new card and the line is amber
-    await page.goto(`/#/documents/${docId}`);
+    // The reader stays on the document: the sidebar shows the new card, the line is amber, a toast offers the page
+    await expect(page).toHaveURL(new RegExp(`#/documents/${docId}$`));
     await expect(page.locator('.variant-card', { hasText: 'US-4 proposed change' })).toBeVisible();
     await expect(page.locator('.line-highlighted-pending').first()).toBeVisible();
+    const toast = page.locator('.toast', { hasText: 'Proposal #1 added' });
+    await expect(toast).toBeVisible();
+    await toast.locator('.toast-link').click();
+    await expect(page).toHaveURL(/#\/variants\/\d+$/);
+    await expect(page.getByText('US-4 proposed change').first()).toBeVisible();
 });
 
 test('US-4: propose modal without selection keeps submit disabled', async ({ page }) => {

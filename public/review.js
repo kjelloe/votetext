@@ -980,7 +980,7 @@ function openAccessModal(docId) {
         const currentDefault = data.default_access || '';
         const mc = document.getElementById('modal-content');
         mc.innerHTML = `
-            <div class="modal-title">Manage access</div>
+            <div class="modal-title" id="modal-title">Manage access</div>
             ${canEditSettings ? `
             <p class="mb-1" style="font-weight:600">Default access</p>
             <div class="flex items-center gap-1 mb-1">
@@ -1118,7 +1118,7 @@ function openAccessModal(docId) {
         });
     }).catch(err => {
         const mc = document.getElementById('modal-content');
-        if (mc) mc.innerHTML = `<div class="modal-title">Manage access</div><div class="alert alert-error">${esc(err.message)}</div>`;
+        if (mc) mc.innerHTML = `<div class="modal-title" id="modal-title">Manage access</div><div class="alert alert-error">${esc(err.message)}</div>`;
     });
 }
 

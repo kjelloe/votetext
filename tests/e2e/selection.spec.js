@@ -53,9 +53,13 @@ test('toolbar appears above a mouse selection; Propose opens the modal with the 
     await expect(page.locator('#propose-submit')).toBeEnabled();
     await page.locator('#new-text').fill('Choose');
     await page.locator('#var-title').fill('UC-24 from toolbar');
+    // While the modal is open the selected line keeps a highlight (the native selection collapses on focus)
+    await expect(page.locator('.line-text.line-selected')).toHaveCount(1);
     await page.locator('#propose-submit').click();
-    await expect(page).toHaveURL(/#\/variants\/\d+$/);
-    await expect(page.getByText('UC-24 from toolbar').first()).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`#/documents/${docId}$`));
+    await expect(page.locator('.line-text.line-selected')).toHaveCount(0);
+    await expect(page.locator('.variant-card', { hasText: 'UC-24 from toolbar' })).toBeVisible();
+    await expect(page.locator('.toast', { hasText: 'Proposal #1 added' })).toBeVisible();
     await expect(page.locator('#selection-toolbar')).toBeHidden();
 });
 
@@ -80,6 +84,10 @@ test('collapsing the selection hides the toolbar; a selection outside the text p
     });
     await page.waitForTimeout(600);
     await expect(page.locator('#selection-toolbar')).toBeHidden();
+    // …and the sidebar button no longer carries the earlier range either
+    await page.locator('#propose-btn').click();
+    await expect(page.locator('#propose-submit')).toBeDisabled();
+    await expect(page.getByText(/No text selected/)).toBeVisible();
 });
 
 test('a selection right under the sticky header flips the bar below it', async ({ page }) => {
@@ -115,8 +123,14 @@ test('selection over one pending proposal offers "Variant of #1" → fork modal 
     await variantBtn.click();
     await expect(page.locator('#fork-title')).toHaveValue('Your variant of UC-24 parent');
     await expect(page.locator('#fork-text')).toHaveValue('Pick');
+    await expect(page.locator('.fork-parent')).toContainText('Variant of #1 UC-24 parent');
     await page.locator('#fork-text').fill('Take');
     await page.locator('#fork-submit-btn').click();
+    await expect(page).toHaveURL(new RegExp(`#/documents/${docId}$`));
+    const toast = page.locator('.toast', { hasText: 'Proposal #2 added' });
+    await expect(toast).toBeVisible();
+    await expect(page.locator('.variant-card')).toHaveCount(2);
+    await toast.locator('.toast-link').click();
     await expect(page).toHaveURL(/#\/variants\/\d+$/);
     await expect(page.locator('#variant-relations')).toContainText('based on #1 UC-24 parent');
 });

@@ -147,6 +147,18 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 - [ ] Desktop mouse: the bar appears *above* the selection; selecting the first line near the top of the viewport flips it below
 - [ ] Keyboard (desktop): Shift+arrow selection shows the bar after a short pause
 
+## Sheets, bottom bar and browsing on a real phone (2026-10-30, UC-24/UC-25)
+
+- [ ] iPhone (Safari) and Android (Chrome): tap **Propose** on the bar → the form rises as a bottom sheet; tap the *New text* field → the sheet sits above the keyboard and **Submit proposal** is reachable without closing the keyboard; the selected lines stay marked blue behind the sheet
+- [ ] Submit → the sheet closes, the lines turn amber, the toast *Proposal #N added · Open* sits above the bottom bar and does not cover it; the page did not scroll
+- [ ] Select across a highlighted passage → **Variant of #N** → the sheet shows the parent proposal's text above the form
+- [ ] Scroll to the middle of the programme → the bottom bar is still there; **N proposals** opens the list sheet; change the order to *Most voted* → the list reorders; tap a card → proposal page; **← Back to document** returns to its page and line
+- [ ] On the proposal page, set *Not yet voted by me* on the document first, vote on a proposal, then **Next ›** skips it
+- [ ] Scroll to the very end of a document → the footer text is readable above the bottom bar (safe-area padding on a phone with a home indicator)
+- [ ] Turn the phone to landscape on a notched iPhone → the bottom bar's buttons and the sheet's form sit clear of the notch on both sides (`viewport-fit=cover` + `env(safe-area-inset-left/right)`)
+- [ ] Screen reader (VoiceOver/TalkBack): opening **Propose** announces "Propose variant, dialog"; the keyboard does not open until a field is tapped; Escape on a hardware keyboard closes the sheet
+- [ ] Desktop: the filter and order chosen on one document are still selected on another document and after a reload
+
 ## Deploy (`scripts/deploy.sh`)
 
 - [ ] `./scripts/deploy.sh --dry-run` prints the commit, the server's current version (or "unknown") and changes nothing
@@ -181,4 +193,6 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 | Review fixes, phase 1 | | | |
 | Phase 3 UI | | | |
 | UC-24 (phone) | | | |
+| UC-25 (phone + desktop) | | | |
+| Phase K dialogs (screen reader) | | | |
 | Deploy | | | |

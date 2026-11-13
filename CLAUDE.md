@@ -61,7 +61,7 @@ public/
     app.js          — hash router (#/documents, #/variants/:id, …); all-role views; esc() for XSS
     auth.js         — viewLogin, showProfileModal, viewProfile (depends on app.js globals)
     review.js       — creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, document settings, status change
-    selection.js    — floating Propose / Variant toolbar on a text selection (wired from viewDocument), fork modal, variant chooser; Phase M sheets go here too (budget 600 lines)
+    selection.js    — floating Propose / Variant toolbar on a text selection (wired from viewDocument), fork modal, variant chooser, selected-line marks while a sheet is open, visualViewport tracking for the phone bottom sheet (budget 600 lines)
     style.css       — CSS custom properties (--color-*, --font-*); mobile-first
 ```
 
@@ -116,7 +116,8 @@ location.hash = '#/documents/5';
 ${hasLevel(doc, 'supervisor') ? '<button id="doc-status-btn">Change status</button>' : ''}
 
 // openModal() gives each modal a fresh #modal-content node — attach listeners after opening,
-// never to the overlay or document. Re-render the current view with runRoute(), not by calling it.
+// never to the overlay or document. It also moves focus in, closes on Escape and returns focus on
+// closeModal(); do not add per-modal key handlers. Re-render the current view with runRoute(), not by calling it.
 ```
 
 ---
@@ -151,7 +152,7 @@ Any transition to `resolved` goes through `resolveBlocker()` in `documents.js`: 
 
 ## Testing
 
-`npm test` runs five files under `node:test` (no extra deps): `tests/api.test.js` (integration, groups A–AB — see `specs/test-plan.md`), `tests/unit.test.js` (pure helpers in `src/lib/text.js`), `tests/frontend.test.js` (cross-file contracts in `public/`) `tests/migrate.test.js` (upgrades databases built from the historical schemas in `tests/fixtures/` — never edit those) and `tests/deploy.test.js` (every `sudo` in `scripts/deploy.sh` must be allowed by the hardened sudoers; the cloud-init templates' embedded scripts must parse). Browser tests are in `tests/e2e/` (`npm run test:e2e`). Key conventions:
+`npm test` runs five files under `node:test` (no extra deps): `tests/api.test.js` (integration, groups A–AE — see `specs/test-plan.md`), `tests/unit.test.js` (pure helpers in `src/lib/text.js`, plus the EN/NO tutorial-cue contract), `tests/frontend.test.js` (cross-file contracts in `public/`) `tests/migrate.test.js` (upgrades databases built from the historical schemas in `tests/fixtures/` — never edit those) and `tests/deploy.test.js` (every `sudo` in `scripts/deploy.sh` must be allowed by the hardened sudoers; the cloud-init templates' embedded scripts must parse). Browser tests are in `tests/e2e/` (`npm run test:e2e`). Key conventions:
 
 - **Never mock the database** — tests run against a real (ephemeral) SQLite file.
 - OTPs are retrieved directly from the test DB (`db.prepare(...).get()`), so SMTP is not required.

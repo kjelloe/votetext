@@ -11,10 +11,10 @@ wc -l public/app.js public/review.js public/auth.js public/selection.js
 
 **2. Test counts**
 ```bash
-grep -c "^test(" tests/api.test.js tests/unit.test.js tests/frontend.test.js tests/migrate.test.js
-grep -c "^test(" tests/e2e/*.spec.js | awk -F: '{s+=$2} END {print "e2e:", s}'
+npm test 2>&1 | grep -E "^# (tests|pass|fail)"
+npx playwright test --list 2>&1 | tail -1
 ```
-Report each. Cross-check against the counts in `plan-update.md`, `README.md` (Roadmap), `specs/test-plan.md` and memory/project-votetext.md and flag any that differ. Do not trust a number written in this file.
+Report both totals (the runners are authoritative; `grep -c "^test("` undercounts because some tests are nested). Cross-check against the counts in `plan-update.md`, `README.md` (Roadmap), `specs/test-plan.md` and memory/project-votetext.md and flag any that differ. Do not trust a number written in this file.
 
 **3. Tests passing**
 ```bash

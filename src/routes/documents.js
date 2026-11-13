@@ -516,18 +516,18 @@ router.get('/:id/variants', (req, res, next) => {
                 (SELECT MIN(dl.page_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as page_start,
                 (SELECT MAX(dl.page_num) FROM document_lines dl WHERE dl.document_id = v.document_id AND dl.char_offset_start < v.char_end AND dl.char_offset_end > v.char_start) as page_end,
                 (SELECT COUNT(*) FROM comments c WHERE c.variant_id = v.id AND c.is_hidden = 0) as comment_count,
-                (SELECT COUNT(*) FROM variants x WHERE x.document_id = v.document_id AND x.id <= v.id) as proposal_num
+                (SELECT COUNT(*) FROM variants x WHERE x.document_id = v.document_id AND x.id <= v.id) as proposal_num,
+                (SELECT vt.vote_value FROM votes vt WHERE vt.variant_id = v.id AND vt.user_id = ?) as my_vote
              FROM variants v JOIN users u ON u.id = v.proposed_by
              WHERE v.document_id = ? AND v.is_hidden = 0 AND v.status != 'withdrawn'
              ORDER BY v.char_start ASC, v.created_at ASC`,
-            [doc.id]
+            [req.user ? req.user.id : null, doc.id]
         );
         const comment_heat = {
             orange: parseInt(process.env.COMMENT_HEAT_ORANGE || '10'),
             red: parseInt(process.env.COMMENT_HEAT_RED || '25'),
         };
-        const top_percent = parseInt(process.env.PROPOSALS_TOP_PERCENT || '10');
-        res.json({ variants, comment_heat, top_percent });
+        res.json({ variants, comment_heat });
     } catch (err) {
         next(err);
     }

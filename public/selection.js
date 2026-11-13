@@ -1,9 +1,10 @@
 'use strict';
 
-/* ===== Selection toolbar (Phase M.1, 2026-10-29) =====
+/* ===== Selection toolbar and sheets (Phase M, 2026-10-29/30) =====
    A floating Propose / Variant bar anchored to the text selection in the document reader,
-   so a proposer on a phone never has to scroll down to the sidebar's Propose button.
-   Depends on app.js globals: el, esc, api, openModal, closeModal, hasLevel, openProposeModal. */
+   the fork modal, the temporary highlight of the selected lines while a sheet is open, and
+   the phone sheet following the visual viewport when the keyboard opens.
+   Depends on app.js globals: el, esc, api, openModal, closeModal, hasLevel, openProposeModal, showToast. */
 
 const SEL_TOOLBAR_GAP = 8;
 const SEL_TOUCH_DEBOUNCE_MS = 350;
@@ -27,7 +28,7 @@ function selectionToolbarEl() {
         if (!btn || !selCtx) return;
         const snapshot = selCtx.snapshot;
         hideSelectionToolbar();
-        if (btn.dataset.action === 'propose') openProposeModal(selCtx.doc, snapshot);
+        if (btn.dataset.action === 'propose') openProposeModal(selCtx.doc, snapshot, selCtx.onCreated);
         else if (btn.dataset.action === 'variant') openForkFromSelection(parseInt(btn.dataset.variantId));
         else if (btn.dataset.action === 'choose') openVariantChooser(snapshot);
     });
@@ -149,7 +150,7 @@ function positionSelectionToolbar() {
 async function openForkFromSelection(variantId) {
     try {
         const data = await api('GET', `/variants/${variantId}`);
-        openForkModal(data.variant);
+        openForkModal(data.variant, selCtx && selCtx.onCreated);
     } catch (err) {
         showToast(err.message || 'Could not load the proposal');
     }
@@ -173,9 +174,16 @@ function openVariantChooser(selection) {
 }
 
 /* ===== Fork modal (moved from viewVariant in app.js 2026-10-29; also opened from the toolbar) ===== */
-function openForkModal(v) {
+// onCreated: given on the document page (stay put, refresh, toast); absent on the proposal page (navigate)
+function openForkModal(v, onCreated) {
     const defaultTitle = `Your variant of ${v.title || v.operation}`;
+    const parent = `<div class="fork-parent">
+            <div class="fork-parent-head">Variant of ${v.proposal_num ? `#${esc(v.proposal_num)} ` : ''}${esc(v.title || v.operation)}</div>
+            <pre>${esc(v.new_text || '')}</pre>
+            <div class="text-muted fork-parent-note">Same lines, your wording. Both go to the vote.</div>
+        </div>`;
     openModal(`
+        ${parent}
         <div class="form-group"><label>Title</label><input type="text" id="fork-title" value="${esc(defaultTitle)}"></div>
         <div class="form-group"><label>Proposed text</label><textarea id="fork-text" class="comment-form" rows="4"></textarea></div>
         <div class="form-group"><label>Rationale</label><textarea id="fork-rationale" class="comment-form" rows="2" placeholder="Why does this variant differ?"></textarea></div>
@@ -186,6 +194,7 @@ function openForkModal(v) {
         </div>
     `, 'Fork proposal');
     document.getElementById('fork-text').value = v.new_text;
+    if (v.char_start != null && v.char_end != null) markSelectedLines(v);
     document.getElementById('fork-submit-btn').addEventListener('click', async () => {
         const errEl = document.getElementById('fork-err');
         errEl.style.display = 'none';
@@ -196,7 +205,51 @@ function openForkModal(v) {
                 rationale: document.getElementById('fork-rationale').value.trim(),
             });
             closeModal();
-            location.hash = `#/variants/${d.variant.id}`;
+            if (onCreated) await onCreated(d.variant);
+            else location.hash = `#/variants/${d.variant.id}`;
         } catch (e) { errEl.textContent = e.message; errEl.style.display = ''; }
     });
 }
+
+/* ===== Sheets (Phase M.2) =====
+   Below 768 px the modal is a bottom sheet (CSS). While it is open the lines of the captured
+   range keep a highlight, because focusing the textarea collapses the native selection; and the
+   overlay follows the visual viewport so the sheet is not hidden behind the on-screen keyboard. */
+function markSelectedLines(range) {
+    document.querySelectorAll('#doc-lines-container .line-text').forEach(span => {
+        const cs = parseInt(span.dataset.charStart), ce = parseInt(span.dataset.charEnd);
+        span.classList.toggle('line-selected', cs < range.char_end && ce > range.char_start);
+    });
+}
+
+function clearSelectedLines() {
+    document.querySelectorAll('.line-selected').forEach(span => span.classList.remove('line-selected'));
+}
+
+function fitSheetToViewport() {
+    const overlay = document.getElementById('modal-overlay');
+    if (!overlay) return;
+    const vv = window.visualViewport;
+    if (overlay.classList.contains('hidden') || !vv || window.innerWidth > 768) {
+        overlay.style.height = '';
+        overlay.style.top = '';
+        return;
+    }
+    overlay.style.height = `${Math.round(vv.height)}px`;
+    overlay.style.top = `${Math.round(vv.offsetTop)}px`;
+}
+
+function wireSheetSupport() {
+    const overlay = document.getElementById('modal-overlay');
+    if (!overlay) return;
+    new MutationObserver(() => {
+        if (overlay.classList.contains('hidden')) clearSelectedLines();
+        fitSheetToViewport();
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', fitSheetToViewport);
+        window.visualViewport.addEventListener('scroll', fitSheetToViewport);
+    }
+}
+
+wireSheetSupport();

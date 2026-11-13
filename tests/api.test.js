@@ -962,13 +962,13 @@ test('POST /auth/request-otp — 6th request in window → 429', async () => {
 
 // ── COMMENT / VARIANT COOLDOWN (NODE_ENV=test skips enforcement) ──────────────
 
-test('GET /documents/:id/variants — includes comment_heat and top_percent → 200', async () => {
+test('GET /documents/:id/variants — includes comment_heat; top_percent retired with the Most voted order → 200', async () => {
     const r = await req('GET', `/documents/${docId}/variants`, { cookie: sessionCookie });
     assert.equal(r.status, 200);
     assert.ok(r.data.comment_heat, 'comment_heat present');
     assert.equal(typeof r.data.comment_heat.orange, 'number');
     assert.equal(typeof r.data.comment_heat.red, 'number');
-    assert.equal(typeof r.data.top_percent, 'number');
+    assert.equal(r.data.top_percent, undefined);
 });
 
 test('GET /documents/:id/variants — each variant has comment_count → 200', async () => {
@@ -3334,4 +3334,41 @@ test('POST /auth/logout — clears session → 200', async () => {
     // Session should now be invalid
     const meR = await req('GET', '/auth/me', { cookie: tempCookie });
     assert.equal(meR.status, 401);
+});
+
+// ============================================================================
+// Group AE — my_vote in the proposal list (Phase M.3, "Not yet voted by me")
+// ============================================================================
+
+let aeDocId, aeVarId, aeVoterCookie;
+
+test('AE1: the proposal list carries my_vote — null before voting, the value after', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AE my_vote', text: 'Line one.\nLine two.' }, cookie: sessionCookie });
+    assert.equal(d.status, 201);
+    aeDocId = d.data.document.id;
+    await req('POST', `/documents/${aeDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    const v = await req('POST', `/documents/${aeDocId}/variants`, { body: { char_start: 0, char_end: 4, operation: 'replace', new_text: 'Row', title: 'AE v' }, cookie: sessionCookie });
+    assert.equal(v.status, 201);
+    aeVarId = v.data.variant.id;
+
+    let list = await req('GET', `/documents/${aeDocId}/variants`, { cookie: sessionCookie });
+    assert.equal(list.data.variants[0].my_vote, null);
+
+    const vote = await req('POST', `/variants/${aeVarId}/vote`, { body: { vote_value: 1 }, cookie: sessionCookie });
+    assert.equal(vote.status, 200, JSON.stringify(vote.data));
+    list = await req('GET', `/documents/${aeDocId}/variants`, { cookie: sessionCookie });
+    assert.equal(list.data.variants[0].my_vote, 1);
+});
+
+test('AE2: my_vote is per user — another voter sees null until they vote, and never the owner\'s ballot', async () => {
+    aeVoterCookie = await loginAs('ae-voter@test.com');
+    const inv = await req('POST', `/documents/${aeDocId}/access`, { body: { email: 'ae-voter@test.com', access_level: 'voter' }, cookie: sessionCookie });
+    assert.equal(inv.status, 201, JSON.stringify(inv.data));
+    let list = await req('GET', `/documents/${aeDocId}/variants`, { cookie: aeVoterCookie });
+    assert.equal(list.data.variants[0].my_vote, null);
+    await req('POST', `/variants/${aeVarId}/vote`, { body: { vote_value: -1 }, cookie: aeVoterCookie });
+    list = await req('GET', `/documents/${aeDocId}/variants`, { cookie: aeVoterCookie });
+    assert.equal(list.data.variants[0].my_vote, -1);
+    const owner = await req('GET', `/documents/${aeDocId}/variants`, { cookie: sessionCookie });
+    assert.equal(owner.data.variants[0].my_vote, 1);
 });

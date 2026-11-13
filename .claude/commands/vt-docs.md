@@ -8,7 +8,7 @@ Update all documentation artifacts after a VoteText feature is completed. Work t
 
 ## 2. specs/test-plan.md
 - Add a new Group with a table of test scenarios — check the current last group letter in test-plan.md (do not trust this file's mapping to be complete) and use the letter matching the new group in tests/api.test.js
-- Group mapping for reference: A=auth, B=docs, C=variants, D=relations, E=voting, F=comments, G=access, H=status, I=activity, J=config, K=review-view, L=final-voting, M=gap-fixes, N=auto-assign, O=share, P=draft-restriction, Q=final-vote-log, R=resolved-text, S=copy-data, T=thresholds, U=fork, W=supervisor, V=hmac-sessions, X=moderation, Y=access-matrix+expiry, Z=comment-editing, AA=2026-10 review fixes, AB=activity-log actions (after Z the letters double)
+- Group mapping for reference: A=auth, B=docs, C=variants, D=relations, E=voting, F=comments, G=access, H=status, I=activity, J=config, K=review-view, L=final-voting, M=gap-fixes, N=auto-assign, O=share, P=draft-restriction, Q=final-vote-log, R=resolved-text, S=copy-data, T=thresholds, U=fork, W=supervisor, V=hmac-sessions, X=moderation, Y=access-matrix+expiry, Z=comment-editing, AA=2026-10 review fixes, AB=activity-log actions, AC=security hardening (roles, caps), AD=paged import, AE=my_vote in the proposal list (after Z the letters double)
 - Every row must have a non-empty Expected column — fill it even if it seems obvious
 - Add any new manual UI checklist items at the bottom of the checklist section
 
@@ -33,20 +33,20 @@ Update all documentation artifacts after a VoteText feature is completed. Work t
 - `plan-update.md` — move the item to "Done", adjust the remaining phases and the test counts
 - `specs/user-stories.md` — if a browser flow changed; keep the coverage map's e2e count right
 - `specs/manual-validation.md` — add a walkthrough and a sign-off row for anything not covered by e2e
-- `specs/tutorial-video-script.md` AND `specs/tutorial-video-script.no.md` — the `[screen: …]` cues are identical in both; change them together and translate the narration
+- `specs/tutorial-video-script.md` AND `specs/tutorial-video-script.no.md` — the `[screen: …]` cues are identical in both (a unit test fails otherwise); change them together and translate the narration; each cue is a beat of the scripted recording (plan-update.md § Phase V)
 - `.env.example` and the README configuration table — for every new or removed `process.env` variable
 - `.claude/commands/vt-*.md` — if the feature changes what a skill tells you to do
 - `cloud-init-example.yaml`, `cloud-init-hardened-example.yaml`, `deploy.env.example` and `scripts/deploy.sh` — for anything that changes how the server is provisioned or deployed; keep the two templates' headers in step and run `npm run test:deploy`
 - `ops/notes/*.md` (private, outside the repo) — the server-hardening and offsite-backup guide must still match the templates and `scripts/deploy.sh --check` after any change to them
 
 ## 4. memory/project-votetext.md
-- Update the test counts (run `grep -c "^test(" tests/*.test.js tests/e2e/*.spec.js` to get the real numbers)
+- Update the test counts from the runners, not from grep (nested `test(` calls make grep undercount): `npm test 2>&1 | grep -E "^# (tests|pass)"` for node and `npx playwright test --list 2>&1 | tail -1` for e2e
 - Add a short description of the new feature under a new bold heading
 - Update the Status line to reflect what's done and what's next
 - Update the Next major feature pointer
 
 ## Rules
-- Verify the actual test count by running the grep command — do not guess
+- Verify the actual test counts with the two runner commands above — do not guess and do not trust grep
 - Check K14/K15-style table rows: if Expected column is blank, fill it
 - After updating memory, do NOT also update MEMORY.md index unless the memory file itself was created or renamed
 - Do not create new memory files for feature details — update project-votetext.md in place
