@@ -1,6 +1,6 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-11-10 (Phase M complete, Phase K built; header below is the 2026-10-03 review context)_
+_Last updated: 2026-11-13 (Phase M + K committed as 1220fd9; Phase V voice decided; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
@@ -286,7 +286,7 @@ Effort: S1 ≈ M (one limits helper + rate-limit helper + nginx line), S2 ≈ S 
 
 ---
 
-## Phase M — Proposing and browsing on phones (designed 2026-10-23; Q19–Q25 decided as recommended; M.1 committed dbdbeb2, M.2 + M.3 done 2026-10-30, uncommitted)
+## Phase M — Proposing and browsing on phones (designed 2026-10-23; Q19–Q25 decided as recommended; M.1 committed dbdbeb2, M.2 + M.3 done 2026-10-30, committed 1220fd9 on 2026-11-13)
 
 **Trigger:** a user test with the Oslo Høyre programme (23 pages, 840 lines) on a phone. Reading works;
 proposing does not: the only **Propose** button sits in the sidebar, which on phones stacks *below* the
@@ -364,7 +364,7 @@ then restyles the new DOM rather than the old one. Left to the owner: commit, de
 | Q24 | Which statuses accept the toolbar? Today the sidebar button shows for proposer+ unless resolved/archived; the server decides the rest | Keep the same rule; the bar simply mirrors `#propose-btn` |
 | Q25 | Do the `app.js` split (editor views → `review.js`) as the first step of this phase, or as its own commit before it? | Own commit first — pure move, full suite green, then M.1 |
 
-## Phase P — Automatic page detection on import (2026-10-23, uncommitted)
+## Phase P — Automatic page detection on import (2026-10-23, committed 1220fd9)
 
 After a user test with the Oslo Høyre programme (variable numbered lines per page: title and
 contents pages, 21 lines on page 3, 40 on page 4 …) the fixed `lines_per_page` import produced
@@ -501,7 +501,7 @@ Effort: S.A M, S.B M, S.C S, S.D S, S.E S, S.F S, S.G S — about two working se
 
 ---
 
-## Phase K — Modal keyboard and focus (noticed after Phase M, designed 2026-11-09, K.1 + K.2 built 2026-11-10, uncommitted)
+## Phase K — Modal keyboard and focus (noticed after Phase M, designed 2026-11-09, K.1 + K.2 built 2026-11-10, committed 1220fd9)
 
 Three items noticed during the Phase M omission passes, analysed here. K.1 and K.2 are
 small, behaviour-only and belong *before* the design pass (phase 4), whose gate is the e2e
@@ -579,7 +579,7 @@ is kept; Escape with it accepted → closed. Docs: UC-2 note, ARCHITECTURE modal
 for the phone overlay tap. Recommendation: build in the next round together with any further K items,
 one commit with K.1–K.2.
 
-## Phase V — Tutorial video production (analysed and designed 2026-11-10, not started)
+## Phase V — Tutorial video production (analysed and designed 2026-11-10, voice decided 2026-11-13, not started)
 
 **Ask:** short clips with voice-over, a visible pointer that moves and clicks, and typing that the
 viewer can follow — in English and Norwegian — showing how VoteText works.
@@ -607,7 +607,7 @@ viewer can follow — in English and Norwegian — showing how VoteText works.
 | B | **Manual recording** — OBS or the OS recorder, the owner clicks and reads the script | Zero code, natural voice and pointer | 12 minutes × 2 languages of takes, redone after the design pass and after every later UI change; timing drifts between the two languages |
 | C | **Hybrid** — A for the screen (video + cue timeline), owner records the voice per cue into the same file slots, ffmpeg assembles | Natural voice, automated screen | The owner still records ~25 minutes of speech, once per revision of the script text |
 
-**Verdict: A, built so that C is a drop-in later.** The pipeline is file-based (`audio/<lang>/<chapter>-<beat>.mp3`);
+**Verdict: A, built so that C is a drop-in later.** The pipeline is file-based (`audio/<lang>/<chapter>-<beat>.wav`);
 synthesised files can be replaced by recorded ones per beat without touching the scripts.
 
 ### Design
@@ -621,10 +621,10 @@ tutorial/
   lib/script.js        # parses the chapter's [screen: …] cues + narration paragraphs out of the .md (both languages)
   lib/stage.js         # the acting primitives: glide(sel), click(sel), type(sel, text), spotlight(sel), beat(id)
   lib/cursor.js        # addInitScript: draws #tutorial-cursor (SVG arrow / touch dot) that follows mousemove, ripple on mousedown
-  lib/tts.js           # Azure AI Speech REST → mp3 per beat, cached by text hash; returns durations
+  lib/tts.js           # kokoro-js (EN) / Piper or recorded files (NO) → wav per beat, cached by text hash; returns durations
   lib/assemble.js      # ffmpeg: beat audio placed on the timeline → one track; mux with the WebM → mp4; SRT; title card; concat
   chapters/ch01-signin.js … ch13-outro.js   # one action script per chapter, cue ids match the .md order
-  out/                 # gitignored: webm, mp3, mp4, srt, timeline.json
+  out/                 # gitignored: webm, wav, mp4, srt, timeline.json
 ```
 
 **Beats.** A chapter script is a list of `beat(n, async () => { …actions… })`. The toolkit looks up
@@ -644,13 +644,21 @@ per key and a longer pause after punctuation. Text selection for the propose cha
 `mouse.down` → `glide` → `mouse.up` across the sentence, so the floating bar appears exactly as in
 UC-24.
 
-**Voice.** Azure AI Speech (the owner already has Azure): REST `cognitiveservices/v1` with SSML,
-`en-GB-RyanNeural` / `nb-NO-FinnNeural` (or Sonia / Pernille), 24 kHz MP3, word-boundary events for
-subtitle timing. Key and region in `.env` as `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION` (added to
-`.env.example`; never in the repo). ~12 000 characters per language per full run, inside the free
-tier. Cached by text hash, so unchanged narration is not re-synthesised. Alternatives if Azure is not
-wanted: `edge-tts` (same voices, no key, Python package — needs a pip install, so ask first) or
-Piper (offline, weaker Norwegian).
+**Voice (decided 2026-11-13: Kokoro).** Narration is synthesised at build time with
+[kokoro-js](https://www.npmjs.com/package/kokoro-js) (Apache-2.0, the 82M Kokoro model as ONNX,
+runs on the CPU in Node, nothing in the request path and no key). `tts.js` loads the model once per
+run, renders one WAV per beat (24 kHz) and caches by text hash; the model weights (~300 MB
+quantised) download on first use into the package cache, which stays out of the repo. English voice:
+`bm_george` or `bf_emma` (British) — the owner picks after hearing chapter 6. Cost: one devDependency
+(`kokoro-js`), which the owner adds himself or approves before V.2.
+**Norwegian gap:** Kokoro v1.0 covers eight languages (American/British English, Spanish, French,
+Hindi, Italian, Brazilian Portuguese, Japanese, Mandarin) and no Norwegian; kokoro-js also phonemises
+everything with English rules. The NO track therefore needs one of: (a) **Piper** offline voice
+`no_NO-talesyntese-medium` (free, ONNX, a standalone binary release — no pip needed, downloaded into
+`tutorial/bin/`, gitignored; quality is plain but clear), (b) the owner's own recording per beat (option
+C, the file slots are the same), (c) Azure `nb-NO-FinnNeural` (rejected 2026-11-13 in favour of a
+local voice). Recommendation: (a) for every draft, (b) for the release if the Piper voice is not good
+enough. Decision Q30 below.
 
 **Output.** Per chapter: `chNN-<lang>.mp4` (1280×800 H.264 + AAC, 3 s title card from an HTML slide
 rendered in the same browser, burnt-in subtitles optional, sidecar `.srt` always) — the "short
@@ -668,7 +676,7 @@ last and the seed is rebuilt before each chapter anyway (seeding takes well unde
 | Phase | Content | Effort |
 |---|---|---|
 | V.1 | Toolkit without audio: server boot + seed, cursor overlay, stage primitives, script parser, timeline; chapter 6 (proposing) recorded in EN as a silent clip for review of pace and pointer | M |
-| V.2 | Voice and assembly: `tts.js` (Azure), `assemble.js` (mix, mux, SRT, title card), chapter 6 in EN and NO with voice; `.env.example` keys; README/ARCHITECTURE/tutorial production notes | M |
+| V.2 | Voice and assembly: `tts.js` (kokoro-js for EN, Piper or recorded files for NO), `assemble.js` (mix, mux, SRT, title card), chapter 6 in EN and NO with voice; README/ARCHITECTURE/tutorial production notes | M |
 | V.3 | All 14 chapters + the phone clip; `all` mode with concat and chapter markers; a `npm run tutorial` script if the owner wants one (package.json `scripts` only, no dependency) | L |
 | V.4 | After the design pass: re-record everything with one command; owner review; optional C (own voice per beat) | S |
 
@@ -682,11 +690,12 @@ from selectors, and chapter 6 exercises the Phase M bar). V.3 waits for the desi
 remaining twelve scripts are written once against the final DOM. The existing plan item "record
 after the design pass" (Phase 6) becomes V.4.
 
-### Decisions needed (Q26–Q29)
+### Decisions needed (Q26–Q30)
 
 | # | Question | Recommendation |
 |---|---|---|
-| Q26 | Voice: Azure neural TTS, `edge-tts`, Piper, or the owner's own recording? | Azure for every draft and probably the release; keep C open |
+| Q26 | Voice: Azure neural TTS, `edge-tts`, Piper, or the owner's own recording? | **Decided 2026-11-13: Kokoro (kokoro-js) at build time** — a local, keyless voice; C stays open per beat |
+| Q30 | Norwegian voice, since Kokoro has none: Piper `no_NO-talesyntese-medium`, own recording, or Azure? | Piper for drafts, own recording for the release if Piper is not good enough |
 | Q27 | Resolution and ratio: 1280×800 (the script's recommended viewport) or 1920×1080? | 1280×800 layout, delivered at 1920×1200. Caveat found 2026-11-10: Playwright's `recordVideo` captures the screencast at its `size` option in CSS pixels and is not expected to honour `deviceScaleFactor` the way screenshots do, so V.1 first checks whether a 2× context gives crisp frames; the fallback is a 1920×1200 viewport with `zoom: 1.5` injected on `html` (Chromium only, which is the recording browser anyway) so the UI keeps the script's proportions |
 | Q28 | Subtitles burnt in, sidecar only, or both? | Both: sidecar `.srt` always, a burnt-in variant for channels without caption support |
 | Q29 | Build V.1 + V.2 before the design pass? | Yes — the toolkit is ready the day the design lands, and chapter 6 gives an early look at pace and voice |
