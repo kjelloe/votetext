@@ -180,7 +180,7 @@ The stories assume a document has already been created and is in **Open** status
 
 ## Coverage map
 
-> All 10 stories have Playwright coverage as of 2026-11-10 (88 tests in `tests/e2e/`, incl. XSS and regression guard-rail specs, the site-role flows of UC-22, the paged import of UC-23, the selection toolbar and sheets of UC-24 and the proposal order/filter of UC-25 on desktop and in a Chromium phone project) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
+> All 10 stories have Playwright coverage as of 2026-11-16 (89 tests in `tests/e2e/`, incl. XSS and regression guard-rail specs, the site-role flows of UC-22, the paged import of UC-23, the selection toolbar and sheets of UC-24 and the proposal order/filter of UC-25 on desktop and in a Chromium phone project) — see the Playwright section of `test-plan.md` for the story→spec-file mapping and known limitations (conflict drag-and-drop, comment edit UI).
 
 | Story | Playwright priority | Video segment |
 |-------|--------------------|-|

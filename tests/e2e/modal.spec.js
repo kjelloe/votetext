@@ -60,3 +60,35 @@ test('a dialog whose content is loaded later keeps its title label; Escape works
     await expect(page.locator('#modal-overlay')).toBeHidden();
     await expect(page.locator('#access-btn')).toBeFocused();
 });
+
+test('Escape with typed text asks before discarding; Cancel and an untouched form close at once', async ({ page }) => {
+    const docId = await createDoc('Phase K discard doc', TEXT);
+    await page.goto(`/#/documents/${docId}`);
+    await page.locator('#propose-btn').click();
+    await page.locator('#var-title').fill('Half-written');
+
+    page.once('dialog', d => { expect(d.message()).toBe('Discard what you typed?'); d.dismiss(); });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal-overlay')).toBeVisible();
+    await expect(page.locator('#var-title')).toHaveValue('Half-written');
+
+    // Clicking the dim overlay asks the same question
+    page.once('dialog', d => d.dismiss());
+    await page.locator('#modal-overlay').click({ position: { x: 5, y: 5 } });
+    await expect(page.locator('#modal-overlay')).toBeVisible();
+
+    page.once('dialog', d => d.accept());
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal-overlay')).toBeHidden();
+
+    // Cancel is explicit: no question even with text typed (Playwright would dismiss a confirm and the modal would stay)
+    await page.locator('#propose-btn').click();
+    await page.locator('#var-title').fill('Half-written again');
+    await page.locator('#modal-box .modal-cancel').click();
+    await expect(page.locator('#modal-overlay')).toBeHidden();
+
+    // Nothing typed: Escape closes without asking
+    await page.locator('#propose-btn').click();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#modal-overlay')).toBeHidden();
+});

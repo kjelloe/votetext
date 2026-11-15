@@ -976,7 +976,7 @@ Every modal is a bottom sheet: anchored to the bottom edge, rounded top, at most
 
 ### Every dialog, desktop and phone (Phase K, 2026-11-10)
 
-Each modal is announced as a dialog with its title (`role="dialog"`, `aria-modal`, `aria-labelledby`). Opening moves keyboard focus to the first field on a desktop and to the sheet itself on a phone, so the on-screen keyboard waits for a tap. Escape closes, Tab and Shift+Tab stay inside, and closing returns focus to the button that opened the dialog. Escape and a click on the dim overlay discard what was typed, like Cancel (a confirm for non-empty text is planned as K.4 in `plan-update.md`).
+Each modal is announced as a dialog with its title (`role="dialog"`, `aria-modal`, `aria-labelledby`). Opening moves keyboard focus to the first field on a desktop and to the sheet itself on a phone, so the on-screen keyboard waits for a tap. Escape closes, Tab and Shift+Tab stay inside, and closing returns focus to the button that opened the dialog. Escape and a click on the dim overlay ask *Discard what you typed?* when a text field was changed, because both are easy to hit by accident (on a phone the overlay is the whole area above the sheet); the ×, Cancel and submit close without asking.
 
 ---
 

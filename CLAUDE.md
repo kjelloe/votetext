@@ -116,7 +116,7 @@ location.hash = '#/documents/5';
 ${hasLevel(doc, 'supervisor') ? '<button id="doc-status-btn">Change status</button>' : ''}
 
 // openModal() gives each modal a fresh #modal-content node — attach listeners after opening,
-// never to the overlay or document. It also moves focus in, closes on Escape and returns focus on
+// never to the overlay or document. It also moves focus in, closes on Escape (asking first when text was typed) and returns focus on
 // closeModal(); do not add per-modal key handlers. Re-render the current view with runRoute(), not by calling it.
 ```
 

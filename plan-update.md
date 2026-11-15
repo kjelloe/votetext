@@ -7,7 +7,7 @@ with no UI, and a tutorial script describing behaviour the app does not have. Ph
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status on 2026-11-10: **363 node tests** and **88 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+Test status on 2026-11-16: **363 node tests** and **89 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
 At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
@@ -552,7 +552,7 @@ values, which removes the focus hand-back. Do it when the design pass restyles t
 **Owner items, unchanged:** commit the working tree; deploy Phase P + M + K together and run the
 real-phone rows in `specs/manual-validation.md`; D1 (`howot-host-service.md`, `resume.txt`).
 
-**Order:** K.1 + K.2 (one commit, full suite) → K.4 → owner deploy → phase 4 with K.3.
+**Order:** K.1 + K.2 (one commit, full suite) → K.4 (done) → owner deploy → phase 4 with K.3.
 
 **K.1 + K.2 done 2026-11-10:** `openModal`/`closeModal`/`wireModalKeys` in `app.js` as designed (`MODAL_FOCUSABLE`, `modalOpener`; one document keydown listener; coarse pointer → focus on `#modal-box`); `#modal-box:focus, #app-main:focus { outline: none }`; `setMain()` toggles `body.has-bottom-bar`, CSS rule renamed. Tests: `tests/e2e/modal.spec.js` (2 tests: focus in + dialog attributes + Escape returns focus; Tab/Shift+Tab wrap + × returns focus) and a phone assertion in `mobile.spec.js`. app.js 1 631 lines. Tests: 363 node (incl. the tutorial-cue contract), 87 e2e. K.3 stays in phase 4.
 
@@ -578,6 +578,8 @@ directly as today. Chooser → fork (two `openModal` calls while open) simply re
 is kept; Escape with it accepted → closed. Docs: UC-2 note, ARCHITECTURE modal paragraph, manual row
 for the phone overlay tap. Recommendation: build in the next round together with any further K items,
 one commit with K.1–K.2.
+
+**K.4 done 2026-11-16:** `MODAL_TEXT`, `modalInitial` (node → value at open) and `requestCloseModal()` in `app.js`; Escape and the overlay click use it, ×/Cancel/submit call `closeModal()` directly. Fourth test in `modal.spec.js` (dismiss keeps dialog and text, overlay click asks too, accept closes, Cancel and an untouched form never ask). app.js 1 642 lines. 89 e2e.
 
 ## Phase V — Tutorial video production (analysed and designed 2026-11-10, voice decided 2026-11-13, not started)
 
@@ -704,8 +706,8 @@ after the design pass" (Phase 6) becomes V.4.
 
 ### Phase 4 — Visual design pass
 
-Next after K.4 (K.3 goes in here). Agree direction first (palette, typography, density, light/dark),
-then tokens → components → responsive, with the full e2e suite (88 tests, incl. the XSS
+Now the next UI step (K.3 goes in here); Phase V V.1 + V.2 run in parallel. Agree direction first (palette, typography, density, light/dark),
+then tokens → components → responsive, with the full e2e suite (89 tests, incl. the XSS
 and regression specs and the Chromium phone project) as the gate. The phone layout fixes from
 phase 3 and the Phase M bar, sheet and list controls are functional only; the design pass
 should revisit them (the two `<select>`s may become segments on desktop).

@@ -586,7 +586,7 @@ ownership test grants bob `creator` first.
 
 ## Playwright E2E Suite
 
-> Tests live in `tests/e2e/*.spec.js` (88 tests). Run with `npm run test:e2e`. Two Playwright projects: `firefox` (desktop, every spec except `mobile.spec.js`) and `mobile` (Chromium, 375 px, touch — `mobile.spec.js` only, since Firefox cannot emulate touch).
+> Tests live in `tests/e2e/*.spec.js` (89 tests). Run with `npm run test:e2e`. Two Playwright projects: `firefox` (desktop, every spec except `mobile.spec.js`) and `mobile` (Chromium, 375 px, touch — `mobile.spec.js` only, since Firefox cannot emulate touch).
 > Requires system libs (`sudo npx playwright install-deps`) the first time; uses Firefox.
 > The suite manages its own server lifecycle and isolated DB — does not touch `votetext.db`.
 > Specs create their own documents via the API (`tests/e2e/helpers.js`) so they stay order-independent.
@@ -597,7 +597,7 @@ ownership test grants bob `creator` first.
 | File | Story | Flows covered |
 |------|-------|---------------|
 | `crossfile.spec.js` | US-1 + smoke | Login page, full OTP login flow, profile page, unauth redirect, review/conflicts/final-vote/resolved-text render |
-| `modal.spec.js` | all modals (Phase K) | `#propose-btn` by keyboard → `#modal-box` has `role="dialog"`, `aria-modal`, `aria-labelledby="modal-title"` and the first field is focused → Escape closes and focus is back on the opener; fork modal: Tab from Cancel wraps to the × button and Shift+Tab back, × returns focus to the Fork button; Manage access (content loaded after the dialog opened) keeps `#modal-title` so the label still resolves, Escape from a select returns focus to the opener |
+| `modal.spec.js` | all modals (Phase K) | `#propose-btn` by keyboard → `#modal-box` has `role="dialog"`, `aria-modal`, `aria-labelledby="modal-title"` and the first field is focused → Escape closes and focus is back on the opener; fork modal: Tab from Cancel wraps to the × button and Shift+Tab back, × returns focus to the Fork button; Manage access (content loaded after the dialog opened) keeps `#modal-title` so the label still resolves, Escape from a select returns focus to the opener; typed text → Escape and an overlay click ask `Discard what you typed?` (dismiss keeps the dialog and the text, accept closes), Cancel and an untouched form close without asking |
 | `profile.spec.js` | US-1 | Profile completion modal: Save and continue stores the name; Skip proceeds (display name blanked in the DB first — see plan Q1) |
 | `navigation.spec.js` | US-2 | Doc list → open doc → line highlights → filter select All (1) / This page → card click → detail → back button |
 | `comment.spec.js` | US-3 | Post comment (author + "just now") → indented reply → edit own comment (edited marker asserted, UC-20) → delete own reply |

@@ -194,9 +194,11 @@ function votingOpen(doc) {
 
 /* ===== Modal ===== */
 // Every modal is a dialog: focus moves in on open and back to the opener on close, Escape cancels, Tab wraps (Phase K)
+const MODAL_TEXT = 'input:not([type]), input[type="text"], textarea';
 const MODAL_FOCUSABLE = 'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 let modalOpener = null;
 let modalKeysWired = false;
+let modalInitial = new Map();
 
 function openModal(contentHtml, title = '') {
     const overlay = document.getElementById('modal-overlay');
@@ -212,8 +214,9 @@ function openModal(contentHtml, title = '') {
     box.setAttribute('tabindex', '-1');
     if (title) box.setAttribute('aria-labelledby', 'modal-title'); else box.removeAttribute('aria-labelledby');
     document.getElementById('modal-close').onclick = closeModal;
-    overlay.onclick = e => { if (e.target === overlay) closeModal(); };
+    overlay.onclick = e => { if (e.target === overlay) requestCloseModal(); };
     content.addEventListener('click', e => { if (e.target.closest('.modal-cancel')) closeModal(); });
+    modalInitial = new Map([...content.querySelectorAll(MODAL_TEXT)].map(n => [n, n.value]));
     wireModalKeys();
     // Phone sheet: focus the sheet itself so the on-screen keyboard does not open before the reader has seen it
     const coarse = window.matchMedia('(pointer: coarse)').matches;
@@ -221,7 +224,15 @@ function openModal(contentHtml, title = '') {
     (first || box).focus();
 }
 
+// Escape and a click on the dim overlay are easy to hit by accident; ask before dropping typed text (K.4)
+function requestCloseModal() {
+    const dirty = [...modalInitial].some(([n, v]) => document.contains(n) && n.value !== v);
+    if (dirty && !confirm('Discard what you typed?')) return;
+    closeModal();
+}
+
 function closeModal() {
+    modalInitial = new Map();
     document.getElementById('modal-overlay').classList.add('hidden');
     document.getElementById('modal-content').innerHTML = '';
     const opener = modalOpener;
@@ -236,7 +247,7 @@ function wireModalKeys() {
     document.addEventListener('keydown', e => {
         const overlay = document.getElementById('modal-overlay');
         if (!overlay || overlay.classList.contains('hidden')) return;
-        if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); requestCloseModal(); return; }
         if (e.key !== 'Tab') return;
         const box = document.getElementById('modal-box');
         const nodes = [...box.querySelectorAll(MODAL_FOCUSABLE)].filter(n => n.offsetParent !== null);

@@ -158,6 +158,7 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 - [ ] Turn the phone to landscape on a notched iPhone → the bottom bar's buttons and the sheet's form sit clear of the notch on both sides (`viewport-fit=cover` + `env(safe-area-inset-left/right)`)
 - [ ] Screen reader (VoiceOver/TalkBack): opening **Propose** announces "Propose variant, dialog"; the keyboard does not open until a field is tapped; Escape on a hardware keyboard closes the sheet
 - [ ] Desktop: the filter and order chosen on one document are still selected on another document and after a reload
+- [ ] Phone: start a proposal in the sheet, type a few words, tap the dimmed document above the sheet → *Discard what you typed?*; Cancel keeps the sheet and the text, OK closes it
 
 ## Deploy (`scripts/deploy.sh`)
 
@@ -195,4 +196,5 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 | UC-24 (phone) | | | |
 | UC-25 (phone + desktop) | | | |
 | Phase K dialogs (screen reader) | | | |
+| K.4 discard guard (phone) | | | |
 | Deploy | | | |
