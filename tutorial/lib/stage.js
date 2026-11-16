@@ -7,10 +7,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const ease = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
 class Stage {
-    constructor(page, { audio = {}, log = () => {} } = {}) {
+    constructor(page, { audio = {}, log = () => {}, touch = false } = {}) {
         this.page = page;
         this.audio = audio;
         this.log = log;
+        this.touch = touch;
         this.t0 = Date.now();
         this.timeline = [];
         this.pos = { x: 40, y: 40 };
@@ -64,6 +65,43 @@ class Stage {
         await sleep(300);
     }
 
+    async hover(sel, ms = 900) {
+        await this.glide(sel);
+        await sleep(ms);
+    }
+
+    // Long text goes in as one paste, the way the cue says ("paste the text from Appendix A")
+    async paste(sel, text) {
+        await this.click(sel);
+        await this.page.keyboard.insertText(text);
+        await sleep(400);
+    }
+
+    // Native <select> popups are not part of the recording, so the choice is made directly after the pointer lands on it
+    async select(sel, value) {
+        await this.click(sel);
+        await this.page.locator(sel).first().selectOption(value);
+        await sleep(500);
+    }
+
+    async scroll(dy, ms = 1500) {
+        const steps = Math.max(4, Math.round(ms / 80));
+        for (let i = 0; i < steps; i++) { await this.page.mouse.wheel(0, dy / steps); await sleep(ms / steps); }
+    }
+
+    // HTML5 drag and drop with real mouse events (Chromium emits dragstart/dragover/drop for a mouse-driven drag)
+    async drag(fromSel, toSel) {
+        await this.glide(fromSel);
+        await sleep(150);
+        await this.page.mouse.down();
+        const { x, y } = await this.target(toSel);
+        await this.moveTo(this.pos.x + 4, this.pos.y + 4, 120);
+        await this.moveTo(x, y, 900);
+        await sleep(200);
+        await this.page.mouse.up();
+        await sleep(500);
+    }
+
     // Drag-select [from, to) inside the text node of a line, as a reader would with the mouse
     async selectText(lineSel, from, to) {
         const loc = this.page.locator(lineSel).first();
@@ -77,6 +115,18 @@ class Stage {
         }, [from, to]);
         await this.moveTo(rects.sx, rects.sy);
         await sleep(150);
+        if (this.touch) {
+            // A finger cannot drag native selection handles through Playwright: the range is set directly and the
+            // finger lift dispatched, exactly as tests/e2e/mobile.spec.js does; the dot still travels along the words
+            await loc.evaluate((el, [a, b]) => {
+                const range = document.createRange();
+                range.setStart(el.firstChild, a); range.setEnd(el.firstChild, b);
+                const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+            }, [from, to]);
+            await this.moveTo(rects.ex, rects.ey, 900);
+            await loc.evaluate(el => el.closest('#doc-lines-container').dispatchEvent(new TouchEvent('touchend', { bubbles: true })));
+            return;
+        }
         await this.page.mouse.down();
         await this.moveTo(rects.ex, rects.ey, 900);
         await sleep(120);

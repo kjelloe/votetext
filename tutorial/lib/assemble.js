@@ -78,4 +78,32 @@ function mux({ video, timeline, totalMs, out, trackFile, srt, burn, size }) {
     return [out];
 }
 
-module.exports = { writeSrt, writeAss, cueBlocks, mux, ffmpeg };
+function probeDurationMs(file) {
+    const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`ffprobe failed on ${file}`);
+    return Math.round(parseFloat(r.stdout) * 1000);
+}
+
+// The chapters as one video: an ffconcat list and ffmetadata chapter markers; every clip shares the encoder
+// settings, so the streams are copied, not re-encoded
+function concatPlan(items) {
+    const list = ['ffconcat version 1.0', ...items.map(i => `file '${i.file.replace(/'/g, "'\\''")}'`)].join('\n') + '\n';
+    const meta = [';FFMETADATA1'];
+    let t = 0;
+    for (const i of items) {
+        meta.push('[CHAPTER]', 'TIMEBASE=1/1000', `START=${t}`, `END=${t + i.durationMs}`, `title=${i.title.replace(/[=;#\\\n]/g, m => '\\' + m)}`);
+        t += i.durationMs;
+    }
+    return { list, meta: meta.join('\n') + '\n', totalMs: t };
+}
+
+function concat(items, out) {
+    const { list, meta } = concatPlan(items);
+    const listFile = out.replace(/\.mp4$/, '.ffconcat'), metaFile = out.replace(/\.mp4$/, '.ffmeta');
+    fs.writeFileSync(listFile, list);
+    fs.writeFileSync(metaFile, meta);
+    ffmpeg(['-f', 'concat', '-safe', '0', '-i', listFile, '-i', metaFile, '-map_metadata', '1', '-c', 'copy', '-movflags', '+faststart', out]);
+    return out;
+}
+
+module.exports = { writeSrt, writeAss, cueBlocks, mux, ffmpeg, probeDurationMs, concatPlan, concat };

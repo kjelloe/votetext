@@ -1,6 +1,6 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-11-16 (Phase K complete incl. K.4; Phase V.1 + V.2 built for English; Phase 4 design pass done; header below is the 2026-10-03 review context)_
+_Last updated: 2026-11-16 (Phase K complete incl. K.4; Phase V.1–V.3 built for English; Phase 4 design pass done; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
@@ -679,8 +679,8 @@ last and the seed is rebuilt before each chapter anyway (seeding takes well unde
 |---|---|---|
 | V.1 | **Done 2026-11-16.** Toolkit without audio: server boot + seed, cursor overlay, stage primitives, script parser, timeline; chapter 6 (proposing) recorded in EN as a silent clip for review of pace and pointer | M |
 | V.2 | **Done 2026-11-16 (EN).** Voice and assembly: `tts.js` (kokoro-js for EN; recorded files for NO), `assemble.js` (track, mux, SRT, burnt-in copy), chapter 6 in EN with voice; README/ARCHITECTURE/CLAUDE.md/tutorial production notes | M |
-| V.3 | **Next.** All 14 chapters + the phone clip (`devices['iPhone 13']`, touch dot pointer, chapter 6 only); `all` mode with concat and chapter markers; owner review of the `bm_george` voice against `bf_emma`. **Done early (2026-11-16):** `--list-beats` and the per-beat recorded takes (`out/audio/<lang>/chNN-<beat>.wav`) for the owner's Norwegian recordings | L |
-| V.4 | After the design pass: re-record everything with one command; owner review; optional C (own voice per beat) | S |
+| V.3 | **Done 2026-11-16.** All 14 chapters, the phone clip (`--phone`, chapter 6), `all` mode with concat and chapter markers, `--list-beats` and per-beat recorded takes for the Norwegian track. Open: owner review of the `bm_george` voice against `bf_emma` | L |
+| V.4 | **Next.** Owner review of the full English video, fixes to pace or wording, the Norwegian takes; then `npm run tutorial -- all --burn` and `-- all --lang no` once more for the release | S |
 
 **Tests.** The toolkit is not part of `npm test`. `tests/unit.test.js` already asserts (since
 2026-11-10) that the `[screen: …]` cues of the EN and NO scripts are identical and in the same order —
@@ -688,9 +688,9 @@ the contract one action script per chapter depends on; V.1 extends it to the par
 per chapter). Recording runs are manual and local.
 
 **Order.** V.1 and V.2 can be built now against the current UI (the toolkit is UI-independent apart
-from selectors, and chapter 6 exercises the Phase M bar). V.3 waits for the design pass, so the
-remaining twelve scripts are written once against the final DOM. The existing plan item "record
-after the design pass" (Phase 6) becomes V.4.
+from selectors, and chapter 6 exercises the Phase M bar). V.3 followed the design pass the same day, so
+the remaining scripts were written once against the final DOM. The existing plan item "record after the
+design pass" (Phase 6) became V.4: the owner's review of the full video and the release recording.
 
 ### V.1 + V.2 done 2026-11-16 (English)
 
@@ -724,6 +724,24 @@ Found on the way: the burnt-in subtitles were stretched sideways (libass lays a 
 reference frame, the clip is 16:10) and touched the toast in the corner; the burnt-in copy now renders from
 a generated `.ass` with the real picture size (Liberation Sans, 3 % of the height, translucent box, 8 %
 bottom margin).
+
+### V.3 done 2026-11-16 (all chapters, phone clip, one video)
+
+One action script per chapter in `tutorial/chapters/` (0–13, one function per cue; the unit test keeps them
+in step with both scripts). `npm run tutorial -- all --burn` records every chapter against a fresh seed and
+joins them into `out/votetext-tutorial-en.mp4` with MP4 chapter markers (ffconcat + ffmetadata, streams
+copied). `--phone` records the iPhone 13 viewport with touch emulation: the selection is set as the phone
+e2e test sets it (Playwright cannot drag native handles) and the toolbar lands below the words as in UC-24;
+`out/ch06-en.phone.mp4`. The first full English run: 14 chapters, 11.1 minutes (the script's estimate was ~12), chapter 6 the longest at 105 s. New helpers the chapters needed: `server.latestOtp()` (chapter 1 types the real
+code from the database) and `server.signUp()` (chapter 3 invites Erik, who exists only after chapter 1, so
+the chapter creates him through the OTP flow first; `SIGNUP_MODE=open` is forced for the tutorial server),
+`signIn(persona)` for chapters 8 and 12 (the signed-out view and Clara's view of the hidden comment are the
+same recorded page with the cookie swapped), `stage.paste/select/scroll/hover/drag` (chapter 9's conflict
+ordering is a real HTML5 drag: Chromium emits the drag events for a mouse-driven drag, and the drop onto a
+card makes the child). Popups from "Print HTML" are closed on open; downloads are awaited. Every chapter was
+smoke-recorded silently and checked frame by frame; chapter 8 needed its own wait (the signed-out proposal
+page is a reduced card, not the full layout). Found on the way: the English narration of chapter 4 still said
+"Amber lines" (fixed; the Norwegian already said blue).
 
 ### Decisions needed (Q26–Q30)
 
@@ -775,7 +793,7 @@ for the review fixes, phase 3 and the deploy.
 
 ### Phase 6 — Tutorial video
 
-Both scripts match the app as of 2026-11-16 (floating bar, filter/order selects, stay-in-place toast, blue pending highlight). Production is Phase V above: V.1 + V.2 are built (chapter 6 in English, `npm run tutorial -- 6`), the Norwegian track takes the owner's recordings per beat (`--list-beats`); V.3 (the other chapters) is next now that the design pass is done; V.4 is the final recording.
+Both scripts match the app as of 2026-11-16 (floating bar, filter/order selects, stay-in-place toast, blue pending highlight). Production is Phase V above: V.1 + V.2 are built (chapter 6 in English, `npm run tutorial -- 6`), the Norwegian track takes the owner's recordings per beat (`--list-beats`); V.3 (all chapters, `npm run tutorial -- all --burn`, the phone clip) is done; V.4 is the owner's review and the release recording.
 
 ### Phase 7 — Launch
 

@@ -11,7 +11,7 @@ const Database = require('better-sqlite3');
 const ROOT = path.join(__dirname, '..', '..');
 const PORT = 3002;
 const DB_PATH = path.join(ROOT, 'data', 'tutorial_votetext.db');
-const ENV = { ...process.env, NODE_ENV: 'development', DATABASE_PATH: DB_PATH, PORT: String(PORT), SESSION_SECRET: 'tutorial-secret', RESEND_API_KEY: '', VARIANT_COOLDOWN_SECONDS: '0', COMMENT_COOLDOWN_SECONDS: '0' };
+const ENV = { ...process.env, NODE_ENV: 'development', DATABASE_PATH: DB_PATH, PORT: String(PORT), SESSION_SECRET: 'tutorial-secret', RESEND_API_KEY: '', SIGNUP_MODE: 'open', VARIANT_COOLDOWN_SECONDS: '0', COMMENT_COOLDOWN_SECONDS: '0' };
 
 function runNode(script) {
     return new Promise((resolve, reject) => {
@@ -64,9 +64,28 @@ async function startServer() {
         proc.kill();
         throw err;
     }
+    const baseUrl = `http://localhost:${PORT}`;
+    // The newest code for an address, read from the database as the e2e setup does (no mail is sent in development)
+    const latestOtp = email => {
+        const rdb = new Database(DB_PATH, { readonly: true });
+        try { return rdb.prepare('SELECT code FROM otp_codes WHERE email = ? ORDER BY id DESC LIMIT 1').get(email.toLowerCase()); } finally { rdb.close(); }
+    };
+    // Creates an account through the real OTP flow (chapter 3 invites a user who signed up in chapter 1); returns the session cookie value
+    const signUp = async email => {
+        const post = (path, body) => fetch(`${baseUrl}/api/auth/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await post('request-otp', { email });
+        const otp = latestOtp(email);
+        if (!otp) throw new Error(`No OTP stored for ${email}`);
+        const r = await post('verify-otp', { email, code: otp.code });
+        const m = (r.headers.get('set-cookie') || '').match(/session_id=([^;]+)/);
+        if (!r.ok || !m) throw new Error(`Sign-up of ${email} failed (${r.status})`);
+        return decodeURIComponent(m[1]);
+    };
     return {
-        baseUrl: `http://localhost:${PORT}`,
+        baseUrl,
         ...seed,
+        latestOtp,
+        signUp,
         stop: () => new Promise(resolve => { proc.once('exit', resolve); proc.kill(); }),
     };
 }

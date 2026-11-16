@@ -11,8 +11,10 @@ words are spoken. Norwegian version: `tutorial-video-script.no.md`.
 **Scripted recording (since 2026-11-16):**
 
 ```bash
+npm run tutorial -- all --burn   # every chapter → tutorial/out/votetext-tutorial-en.mp4 (+ .subtitled.mp4, chapter markers) and one clip per chapter
 npm run tutorial -- 6            # chapter 6 in English with Kokoro narration → tutorial/out/ch06-en.mp4 + .srt
 npm run tutorial -- 6 --silent   # same clip without voice (pace and pointer review)
+npm run tutorial -- 6 --phone    # chapter 6 on an iPhone viewport (touch, bottom sheet) → tutorial/out/ch06-en.phone.mp4
 npm run tutorial -- 6 --lang no --list-beats   # Norwegian: the text to read per beat and the WAV name to save it as
 npm run tutorial -- 6 --lang no            # Norwegian clip from your recordings in tutorial/out/audio/no/ (ch06-1.wav …)
 ```
@@ -171,7 +173,7 @@ proposed so far.
 
 [screen: hover a blue-highlighted line — tooltip with proposal numbers]
 
-Amber lines already have proposals attached. Hover one and you see which proposals
+Blue lines already have proposals attached. Hover one and you see which proposals
 touch that line.
 
 [screen: pick "This page" in the filter above the proposal list, then "All"; open the order selector and pick "Most voted", then back to "Document order"]

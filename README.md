@@ -344,7 +344,7 @@ votetext/
 │   ├── seed.js             # Optional: seed with sample data
 │   └── seed-demo.js        # Tutorial-video demo data (four personas, four lifecycle stages)
 ├── tutorial/
-│   ├── record.js           # npm run tutorial -- <chapter>: scripted recording of one tutorial chapter (Playwright + Kokoro + ffmpeg)
+│   ├── record.js           # npm run tutorial -- <chapter|all> [--phone]: scripted recording of the tutorial (Playwright + Kokoro + ffmpeg)
 │   ├── lib/                # server boot (port 3002, own DB), script parser, cursor overlay, stage primitives, TTS, WAV, ffmpeg assembly
 │   └── chapters/           # one action script per chapter (ch06-propose.js …); out/ is gitignored
 ├── src/
@@ -527,6 +527,7 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Automatic page detection on import (2026-10-23, UC-23) — `lines_per_page: "auto"` keeps the source page and line numbers of paged markdown from `pdf2md.py`; opened to creators the same day
 - [ ] Hardened server layout and offsite backups on the live VM (in-place conversion, guide in the ops repository)
 - [x] Proposing and browsing on phones (Phase M, 2026-10-29/30, UC-24/UC-25) — selection toolbar (`public/selection.js`, Chromium phone project in Playwright), bottom-sheet modals that follow the keyboard, stay on the document after submitting with a toast, proposal filter + order remembered per device with `my_vote` for *Not yet voted by me*, sticky bottom bar with the list as a sheet, Previous/Next in the chosen order
-- [ ] Tutorial video production, the remaining chapters (Phase V.3, next; V.4 final recording): action scripts for chapters 0–5 and 7–13, the phone clip, concatenation with chapter markers; Norwegian narration from the owner's own recordings (Kokoro has no Norwegian voice — `npm run tutorial -- 6 --lang no --list-beats` prints the text and file name per beat)
+- [x] Tutorial video production, all chapters (Phase V.3, 2026-11-16): `npm run tutorial -- all --burn` records the fourteen chapters against a fresh seed and joins them into one English video with chapter markers; `--phone` records chapter 6 on an iPhone viewport; Norwegian narration comes from the owner's own recordings (Kokoro has no Norwegian voice — `npm run tutorial -- 6 --lang no --list-beats` prints the text and file name per beat)
+- [ ] Tutorial video release (Phase V.4): owner review of the English video (voice, pace), the Norwegian takes, then one final `all` run per language
 - [x] Modal keyboard and focus (Phase K, 2026-11-10): every modal is a `role="dialog"`, focus moves in and back, Escape closes, Tab wraps; on phones the sheet takes focus so the keyboard waits; toast placement without `:has()`
 - [x] Visual design pass (Phase 4, 2026-11-16) — one token block in `style.css` (blue primary, five semantic tints, system font stack, 8/12/16/20 px radius scale, light only; a contract test keeps hex colours out of the components), the review, conflict and final-voting screens brought to the same language, phone header tabs with a current-page marker, document header and access rows that wrap instead of overflowing, list controls built once (K.3), `FINAL VOTING` badge

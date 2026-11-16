@@ -308,7 +308,7 @@ test('tutorial toolkit: the script parser yields one beat per cue, the same coun
     }
 });
 
-test('tutorial toolkit: WAV round trip, narration laid onto the track at its beat offset, SRT and ASS timing', () => {
+test('tutorial toolkit: WAV round trip, narration laid onto the track at its beat offset, SRT and ASS timing, concat plan', () => {
     const fs = require('fs');
     const os = require('os');
     const path = require('path');
@@ -344,6 +344,12 @@ test('tutorial toolkit: WAV round trip, narration laid onto the track at its bea
     assert.match(ass, /^Style: Default,Liberation Sans,36,/m);
     assert.match(ass, /^Dialogue: 0,0:00:00\.50,0:00:01\.46,Default,,0,0,0,,First sentence of the narration\.$/m);
     assert.equal((ass.match(/^Dialogue:/gm) || []).length, 1);
+
+    const { concatPlan } = require('../tutorial/lib/assemble');
+    const plan = concatPlan([{ file: '/x/ch00-en.mp4', title: '0. Intro', durationMs: 40000 }, { file: "/x/it's/ch01-en.mp4", title: '1. Signing in; then = done', durationMs: 65500 }]);
+    assert.equal(plan.totalMs, 105500);
+    assert.match(plan.list, /^ffconcat version 1\.0\nfile '\/x\/ch00-en\.mp4'\nfile '\/x\/it'\\''s\/ch01-en\.mp4'\n$/);
+    assert.match(plan.meta, /^;FFMETADATA1\n\[CHAPTER\]\nTIMEBASE=1\/1000\nSTART=0\nEND=40000\ntitle=0\. Intro\n\[CHAPTER\]\nTIMEBASE=1\/1000\nSTART=40000\nEND=105500\ntitle=1\. Signing in\\; then \\= done\n$/);
     fs.rmSync(dir, { recursive: true, force: true });
 });
 
