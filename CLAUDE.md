@@ -15,7 +15,7 @@ npm run init-db   # initialise data/votetext.db from schema.sql (run once)
 npm run migrate   # bring an existing database in line with schema.sql (idempotent, one transaction)
 npm run seed      # seed sample users + document (prints browser session cookie)
 npm run seed-demo # tutorial-video demo data (four personas, four documents)
-npm run tutorial -- 6 # record tutorial chapter 6 as a narrated clip (tutorial/record.js; --silent skips Kokoro; output in tutorial/out/, gitignored)
+npm run tutorial -- 6 # record tutorial chapter 6 as a narrated clip (tutorial/record.js; --silent skips Kokoro; --lang no --list-beats prints the text + WAV name per beat for the owner's Norwegian takes; output in tutorial/out/, gitignored)
 npm run dev       # start with nodemon auto-reload → http://localhost:3000
 npm start         # production start
 npm test          # integration + unit + frontend-contract + migration + deploy-contract tests (isolated DBs, no email needed)

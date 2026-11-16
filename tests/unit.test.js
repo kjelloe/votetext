@@ -308,12 +308,12 @@ test('tutorial toolkit: the script parser yields one beat per cue, the same coun
     }
 });
 
-test('tutorial toolkit: WAV round trip, narration laid onto the track at its beat offset, SRT timing', () => {
+test('tutorial toolkit: WAV round trip, narration laid onto the track at its beat offset, SRT and ASS timing', () => {
     const fs = require('fs');
     const os = require('os');
     const path = require('path');
     const { writeWav, readWav, buildTrack } = require('../tutorial/lib/wav');
-    const { writeSrt } = require('../tutorial/lib/assemble');
+    const { writeSrt, writeAss } = require('../tutorial/lib/assemble');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vt-tutorial-'));
     const rate = 24000;
     const tone = new Float32Array(rate);
@@ -338,5 +338,45 @@ test('tutorial toolkit: WAV round trip, narration laid onto the track at its bea
     const srt = fs.readFileSync(writeSrt(timeline, path.join(dir, 'x.srt')), 'utf8');
     assert.match(srt, /^1\n00:00:00,500 --> 00:00:01,460\nFirst sentence of the narration\.\n/);
     assert.ok(!srt.includes('\n2\n'), 'a beat without narration gets no subtitle');
+    const ass = fs.readFileSync(writeAss(timeline, path.join(dir, 'x.ass'), { width: 1920, height: 1200 }), 'utf8');
+    assert.match(ass, /^PlayResX: 1920$/m);
+    assert.match(ass, /^PlayResY: 1200$/m);
+    assert.match(ass, /^Style: Default,Liberation Sans,36,/m);
+    assert.match(ass, /^Dialogue: 0,0:00:00\.50,0:00:01\.46,Default,,0,0,0,,First sentence of the narration\.$/m);
+    assert.equal((ass.match(/^Dialogue:/gm) || []).length, 1);
+    fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('tutorial toolkit: a recorded take per chapter and beat replaces the synthesised voice, and a language without a Kokoro voice names the takes it is missing', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { writeWav } = require('../tutorial/lib/wav');
+    const { synthesise, recordedFile, listBeats, DEFAULT_VOICE } = require('../tutorial/lib/tts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vt-tutorial-'));
+    const beats = [
+        { index: 1, cue: 'a', text: 'Første setning.' },
+        { index: 2, cue: 'b', text: '' },
+        { index: 3, cue: 'c', text: 'Tredje setning.' },
+    ];
+    assert.equal(DEFAULT_VOICE.no, undefined, 'Kokoro has no Norwegian voice');
+    assert.equal(path.relative(dir, recordedFile(dir, 'no', 6, 3)), path.join('audio', 'no', 'ch06-3.wav'));
+
+    const listing = listBeats(beats, { lang: 'no', chapter: 6, outDir: dir });
+    assert.match(listing, /ch06-1\.wav\n  Første setning\./);
+    assert.match(listing, /ch06-3\.wav\n  Tredje setning\./);
+    assert.ok(!listing.includes('ch06-2'), 'a silent beat needs no take');
+
+    await assert.rejects(synthesise(beats, { lang: 'no', chapter: 6, outDir: dir }), /ch06-1\.wav[\s\S]*ch06-3\.wav[\s\S]*--silent/);
+
+    const take = recordedFile(dir, 'no', 6, 1);
+    fs.mkdirSync(path.dirname(take), { recursive: true });
+    writeWav(take, new Float32Array(12000), 24000);
+    fs.copyFileSync(take, recordedFile(dir, 'no', 6, 3));
+    const audio = await synthesise(beats, { lang: 'no', chapter: 6, outDir: dir });
+    assert.deepStrictEqual(Object.keys(audio), ['1', '3']);
+    assert.equal(audio[1].file, take);
+    assert.ok(Math.abs(audio[1].duration - 0.5) < 1e-6);
+    assert.match(listBeats(beats, { lang: 'no', chapter: 6, outDir: dir }), /ch06-1\.wav  \(recorded\)/);
     fs.rmSync(dir, { recursive: true, force: true });
 });

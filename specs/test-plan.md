@@ -1,7 +1,7 @@
 # VoteText — Test Plan
 
 > Automated: `npm test` runs four files — `tests/api.test.js` (integration, isolated SQLite DB on port 3099),
-> `tests/unit.test.js` (pure helpers in `src/lib/text.js`, plus the tutorial-script cue contract and the `tutorial/lib` parser, WAV-track and SRT helpers), `tests/frontend.test.js` (cross-file JS contracts) and
+> `tests/unit.test.js` (pure helpers in `src/lib/text.js`, plus the tutorial-script cue contract and the `tutorial/lib` parser, WAV-track, subtitle and recorded-take helpers), `tests/frontend.test.js` (cross-file JS contracts) and
 > `tests/migrate.test.js` (schema migration from historical snapshots).
 > Browser: `npm run test:e2e` runs the Playwright suite (own server on port 3001).
 > Manual UI: open `http://localhost:3000` after `npm run dev` and follow the flows below.
@@ -536,7 +536,7 @@ ownership test grants bob `creator` first.
 
 ## Unit tests (`tests/unit.test.js`)
 
-> 37 tests: the pure helpers in `src/lib/text.js` plus the tutorial-script and tutorial-toolkit contracts — no DB, no server. Run as
+> 38 tests: the pure helpers in `src/lib/text.js` plus the tutorial-script and tutorial-toolkit contracts — no DB, no server. Run as
 > part of `npm test` (which executes `tests/api.test.js`, `tests/unit.test.js`,
 > and `tests/frontend.test.js`).
 
@@ -548,7 +548,7 @@ ownership test grants bob `creator` first.
 - Inserts are points — an insert proposed over a selected range keeps the selected text, and only a change spanning the insertion point overlaps it
 - `escapeHtml` — markup and quotes neutralised, null tolerated
 - Tutorial script — the `[screen: …]` cues of the EN and NO files are identical and in the same order (one action script per chapter drives both recordings)
-- Tutorial toolkit (`tutorial/lib`, 2026-11-16) — the parser yields 14 chapters with one beat per cue and equal counts in EN and NO, `plainText` strips markdown, every action script in `tutorial/chapters/` has one function per cue of its chapter; WAV write/read round trip, a narration clip lands on the track at its beat offset with silence around it, the SRT block carries the beat's start time and silent beats get no subtitle
+- Tutorial toolkit (`tutorial/lib`, 2026-11-16) — the parser yields 14 chapters with one beat per cue and equal counts in EN and NO, `plainText` strips markdown, every action script in `tutorial/chapters/` has one function per cue of its chapter; WAV write/read round trip, a narration clip lands on the track at its beat offset with silence around it, the SRT block carries the beat's start time and silent beats get no subtitle; the ASS file for the burnt-in copy names the real picture size and carries the same timing; a recorded take `audio/<lang>/chNN-<beat>.wav` replaces the synthesised voice, `--list-beats` lists the text and file per narrated beat, and a language without a Kokoro voice stops with the missing file names
 - `tests/frontend.test.js` (14 tests) additionally asserts: `selection.js` declares `wireSelectionToolbar`/`openForkModal` and the route table never references them; `env(safe-area-inset-*)` in `style.css` is matched by `viewport-fit=cover` in `index.html` (otherwise the insets are 0 on iPhones) and every fixed overlay (`.doc-bottom-bar`, `.selection-toolbar`, `#toast-container`, `#modal-overlay`) is hidden in the print stylesheet; the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
 
 ---

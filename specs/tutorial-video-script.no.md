@@ -7,6 +7,14 @@ elementer i grensesnittet, som er engelskspråklig. Oppsett, rollebesetning,
 dokumentoversikt og innhold som skal skrives inn under opptak: se produksjonsnotatene
 og vedleggene i den engelske filen.
 
+Opptaket er skriptet (`npm run tutorial`, se den engelske filen). Kokoro har ingen norsk stemme, så
+den norske fortellerstemmen leses inn per stikkord:
+
+```bash
+npm run tutorial -- 6 --lang no --list-beats   # teksten som skal leses per stikkord, og filnavnet opptaket skal lagres som
+npm run tutorial -- 6 --lang no                # norsk klipp fra opptakene i tutorial/out/audio/no/ (ch06-1.wav …)
+```
+
 ---
 
 ## Kapittel 0 — Intro *(0:30)*

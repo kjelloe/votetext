@@ -13,7 +13,8 @@ words are spoken. Norwegian version: `tutorial-video-script.no.md`.
 ```bash
 npm run tutorial -- 6            # chapter 6 in English with Kokoro narration → tutorial/out/ch06-en.mp4 + .srt
 npm run tutorial -- 6 --silent   # same clip without voice (pace and pointer review)
-npm run tutorial -- 6 --lang no --silent   # Norwegian take; drop your own recordings into tutorial/out/audio/no/
+npm run tutorial -- 6 --lang no --list-beats   # Norwegian: the text to read per beat and the WAV name to save it as
+npm run tutorial -- 6 --lang no            # Norwegian clip from your recordings in tutorial/out/audio/no/ (ch06-1.wav …)
 ```
 
 `tutorial/record.js` boots its own server on port 3002 with a fresh seeded database, drives the browser
