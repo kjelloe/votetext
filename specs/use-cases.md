@@ -70,7 +70,7 @@ The lines-per-page selector auto-populates with the detected value. A `(detected
    - **Title** (required) and **Rationale** (optional).
    - **Grayed-out info row** just above "Submit proposal" shows the resolved character range (`chars N–M`).
 5. User chooses operation, fills in new text and title, clicks "Submit proposal".
-6. System posts to `POST /api/documents/:id/variants`; on success the modal closes and the reader stays on the document: the lines turn amber, the list and counts refresh in place, and a toast *Proposal #N added · Open* links to the proposal page (UC-24, since 2026-10-30; before that the app navigated to the proposal).
+6. System posts to `POST /api/documents/:id/variants`; on success the modal closes and the reader stays on the document: the lines are highlighted in blue (the pending-proposal colour), the list and counts refresh in place, and a toast *Proposal #N added · Open* links to the proposal page (UC-24, since 2026-10-30; before that the app navigated to the proposal).
 
 ### Alternate flow — no selection
 
@@ -958,7 +958,7 @@ Text caps on every stored field, hourly quotas (documents, copies, invitations p
 
 1. The user selects a passage. When the mouse button or finger lifts (`pointerup`/`mouseup`/`touchend`, or 350 ms after the last `selectionchange` when native touch handles are dragged), a small floating bar appears on the selection: **Propose**, plus **Variant of #N** when the selection overlaps exactly one forkable proposal, or **Variant…** when it overlaps several.
 2. Mouse: the bar sits above the selection. Touch: below it, because iOS and Android draw their own callout above. Either placement flips when there is no room (the sticky header counts as no room), and the bar stays within the viewport horizontally. It follows the selection on scroll and resize.
-3. **Propose** opens the usual *Propose variant* modal (UC-2) with the captured range; the bar hides. While the modal is open the captured lines keep a blue mark (focusing the form collapses the native selection). After submitting, the reader stays on the document: the lines turn amber, the list and counts refresh in place, and a toast *Proposal #N added · Open* offers the proposal page. The same holds for the sidebar and bottom-bar **Propose** buttons, on desktop too.
+3. **Propose** opens the usual *Propose variant* modal (UC-2) with the captured range; the bar hides. While the modal is open the captured lines keep a blue mark (focusing the form collapses the native selection). After submitting, the reader stays on the document: the lines turn blue (pending), the list and counts refresh in place, and a toast *Proposal #N added · Open* offers the proposal page. The same holds for the sidebar and bottom-bar **Propose** buttons, on desktop too.
 4. **Variant of #N** loads that proposal and opens the *Fork proposal* modal (UC-16) with the parent (number, title, text) shown above the form and its text prefilled; the new proposal keeps the parent's lines (`based_on`) and the reader stays on the document as in step 3. **Variant…** first shows a chooser listing the overlapping proposals, with the note that a variant keeps the proposal's lines and only changes the wording, and that different lines call for **Propose** instead.
 5. The bar hides when the selection collapses, on Escape, when the route changes, and when one of its buttons is used. Pressing a button does not clear the selection (the press is `preventDefault`ed and the captured range is snapshotted when the bar is shown).
 

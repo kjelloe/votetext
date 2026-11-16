@@ -33,7 +33,7 @@ Update all documentation artifacts after a VoteText feature is completed. Work t
 - `plan-update.md` — move the item to "Done", adjust the remaining phases and the test counts
 - `specs/user-stories.md` — if a browser flow changed; keep the coverage map's e2e count right
 - `specs/manual-validation.md` — add a walkthrough and a sign-off row for anything not covered by e2e
-- `specs/tutorial-video-script.md` AND `specs/tutorial-video-script.no.md` — the `[screen: …]` cues are identical in both (a unit test fails otherwise); change them together and translate the narration; each cue is a beat of the scripted recording (plan-update.md § Phase V)
+- `specs/tutorial-video-script.md` AND `specs/tutorial-video-script.no.md` — the `[screen: …]` cues are identical in both (a unit test fails otherwise); change them together and translate the narration; each cue is a beat of the scripted recording: when a cue is added or removed, the chapter's action script in `tutorial/chapters/` needs one function per cue (the unit test checks the count); narration changes re-synthesise automatically (cached by text hash)
 - `.env.example` and the README configuration table — for every new or removed `process.env` variable
 - `.claude/commands/vt-*.md` — if the feature changes what a skill tells you to do
 - `cloud-init-example.yaml`, `cloud-init-hardened-example.yaml`, `deploy.env.example` and `scripts/deploy.sh` — for anything that changes how the server is provisioned or deployed; keep the two templates' headers in step and run `npm run test:deploy`

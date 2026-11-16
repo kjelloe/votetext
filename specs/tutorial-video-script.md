@@ -8,7 +8,20 @@ words are spoken. Norwegian version: `tutorial-video-script.no.md`.
 
 ## Production notes
 
-**Setup (before every recording session):**
+**Scripted recording (since 2026-11-16):**
+
+```bash
+npm run tutorial -- 6            # chapter 6 in English with Kokoro narration → tutorial/out/ch06-en.mp4 + .srt
+npm run tutorial -- 6 --silent   # same clip without voice (pace and pointer review)
+npm run tutorial -- 6 --lang no --silent   # Norwegian take; drop your own recordings into tutorial/out/audio/no/
+```
+
+`tutorial/record.js` boots its own server on port 3002 with a fresh seeded database, drives the browser
+through the chapter's action script (`tutorial/chapters/`), one function per `[screen: …]` cue below, and
+records the video with a drawn pointer. Nothing in this file needs to be done by hand any more; the notes
+below describe what the recording shows and are kept for anyone recording manually.
+
+**Manual setup (if ever recording by hand):**
 
 ```bash
 npm run clean-db && npm run seed-demo && npm run dev
@@ -46,10 +59,10 @@ cookie in a separate browser profile (or container tab):
   or reseed before retakes of earlier chapters.
 
 **Before recording** — record after the visual design pass so the video shows the
-final look. Every cue below matches the app as of 2026-10-30. Production is scripted
-(Playwright recording with a drawn pointer, synthesised narration per cue, ffmpeg assembly) —
-see `plan-update.md` § Phase V; the `[screen: …]` cues are the beats, so keep them identical in
-both language files and in the same order.
+final look. Every cue below matches the app as of 2026-11-16 (pending proposals highlight lines in blue, not amber). Production is scripted
+(Playwright recording with a drawn pointer, Kokoro narration per cue, ffmpeg assembly) —
+see `plan-update.md` § Phase V and ARCHITECTURE § Tutorial toolkit; the `[screen: …]` cues are the beats, so keep them identical in
+both language files and in the same order, and give the chapter's action script one function per cue.
 
 Document text cannot be edited after creation. If a pasted draft is wrong, use **Copy**
 and correct the text in the new document.
@@ -155,7 +168,7 @@ the garden charter.
 The text sits on the left with numbered lines. On the right: every change that's been
 proposed so far.
 
-[screen: hover an amber-highlighted line — tooltip with proposal numbers]
+[screen: hover a blue-highlighted line — tooltip with proposal numbers]
 
 Amber lines already have proposals attached. Hover one and you see which proposals
 touch that line.
@@ -200,9 +213,9 @@ The proposal form asks for three things: a short title, the new wording, and —
 importantly — *why*. A good rationale is what turns a change request into an argument
 the group can weigh.
 
-[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the sheet closes, the lines turn amber, a toast "Proposal #N added · Open" appears; click "Open"]
+[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the sheet closes, the lines turn blue, a toast "Proposal #N added · Open" appears; click "Open"]
 
-Submitted. Bjørn is still on the document: the lines are amber, the card is in the list, and
+Submitted. Bjørn is still on the document: the lines are highlighted in blue, the card is in the list, and
 a small message offers the proposal's page. He opens it.
 
 [screen: on the proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
@@ -210,7 +223,7 @@ a small message offers the proposal's page. He opens it.
 Until voting starts, Bjørn can refine the wording — or withdraw the proposal
 entirely if the discussion changes his mind.
 
-[screen: click "← Back to document" — the new card in the sidebar, the selected lines now amber]
+[screen: click "← Back to document" — the new card in the sidebar, the selected lines now highlighted in blue]
 
 Back on the document, the proposal sits attached to the exact lines it would change —
 and on a phone the same flow runs from a bar that floats on the selected words.

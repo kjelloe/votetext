@@ -1,13 +1,13 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-11-13 (Phase M + K committed as 1220fd9; Phase V voice decided; header below is the 2026-10-03 review context)_
+_Last updated: 2026-11-16 (Phase K complete incl. K.4; Phase V.1 + V.2 built for English; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status on 2026-11-16: **363 node tests** and **89 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+Test status on 2026-11-16: **365 node tests** and **89 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
 At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
@@ -581,7 +581,7 @@ one commit with K.1–K.2.
 
 **K.4 done 2026-11-16:** `MODAL_TEXT`, `modalInitial` (node → value at open) and `requestCloseModal()` in `app.js`; Escape and the overlay click use it, ×/Cancel/submit call `closeModal()` directly. Fourth test in `modal.spec.js` (dismiss keeps dialog and text, overlay click asks too, accept closes, Cancel and an untouched form never ask). app.js 1 642 lines. 89 e2e.
 
-## Phase V — Tutorial video production (analysed and designed 2026-11-10, voice decided 2026-11-13, not started)
+## Phase V — Tutorial video production (designed 2026-11-10, voice decided 2026-11-13, V.1 + V.2 built 2026-11-16 for English)
 
 **Ask:** short clips with voice-over, a visible pointer that moves and clicks, and typing that the
 viewer can follow — in English and Norwegian — showing how VoteText works.
@@ -677,9 +677,9 @@ last and the seed is rebuilt before each chapter anyway (seeding takes well unde
 
 | Phase | Content | Effort |
 |---|---|---|
-| V.1 | Toolkit without audio: server boot + seed, cursor overlay, stage primitives, script parser, timeline; chapter 6 (proposing) recorded in EN as a silent clip for review of pace and pointer | M |
-| V.2 | Voice and assembly: `tts.js` (kokoro-js for EN, Piper or recorded files for NO), `assemble.js` (mix, mux, SRT, title card), chapter 6 in EN and NO with voice; README/ARCHITECTURE/tutorial production notes | M |
-| V.3 | All 14 chapters + the phone clip; `all` mode with concat and chapter markers; a `npm run tutorial` script if the owner wants one (package.json `scripts` only, no dependency) | L |
+| V.1 | **Done 2026-11-16.** Toolkit without audio: server boot + seed, cursor overlay, stage primitives, script parser, timeline; chapter 6 (proposing) recorded in EN as a silent clip for review of pace and pointer | M |
+| V.2 | **Done 2026-11-16 (EN).** Voice and assembly: `tts.js` (kokoro-js for EN; recorded files for NO), `assemble.js` (track, mux, SRT, burnt-in copy), chapter 6 in EN with voice; README/ARCHITECTURE/CLAUDE.md/tutorial production notes | M |
+| V.3 | All 14 chapters + the phone clip (`devices['iPhone 13']`, touch dot pointer, chapter 6 only); `all` mode with concat and chapter markers; `--list-beats` for the owner's Norwegian takes; owner review of the `bm_george` voice against `bf_emma` | L |
 | V.4 | After the design pass: re-record everything with one command; owner review; optional C (own voice per beat) | S |
 
 **Tests.** The toolkit is not part of `npm test`. `tests/unit.test.js` already asserts (since
@@ -692,13 +692,37 @@ from selectors, and chapter 6 exercises the Phase M bar). V.3 waits for the desi
 remaining twelve scripts are written once against the final DOM. The existing plan item "record
 after the design pass" (Phase 6) becomes V.4.
 
+### V.1 + V.2 done 2026-11-16 (English)
+
+Built as designed, with these differences: audio is WAV throughout and the narration track is laid
+out in Node (`lib/wav.js`) instead of an ffmpeg `adelay`/`amix` graph, which the installed ffmpeg 4.4
+handles unevenly; the title card is rendered in the recorded page for 3 s (no concat per chapter);
+`stage.narrate()` lets an action script start the narration mid-beat (chapter 6 beat 3: the words
+"Submitted…" come after the 30 s of typing, not before); `npm run tutorial -- <chapter>` exists as a
+script line. One devDependency added with the owner's go: `kokoro-js` (pulls `@huggingface/transformers`
+and the ONNX runtime; the q8 model, ~90 MB, lands in the package cache on first run, never in the repo).
+Chapter 6 recorded in English: 87 s, five beats, `bm_george`, sidecar and burnt-in subtitles; frames
+checked (pointer, drag selection, floating bar, typed form, spotlight). Running `--lang no` needs
+`--silent` or the owner's WAV files in `out/audio/no/` (Q30). Found on the way and fixed: the scripts and
+UC-2/UC-24 said pending lines turn *amber*; the app highlights them in blue (`--color-highlight-pending`),
+so three cues and two narration lines changed in both languages. Chapter 1 has a cue with no narration
+(the profile save, followed at once by the empty list) — the toolkit treats it as a silent beat.
+Tests: two unit tests in `tests/unit.test.js` (parser shape and EN/NO parity, one action per cue in
+every `chapters/` file; WAV round trip, track offsets, SRT). The toolkit itself is not under `npm test`
+beyond those contracts; a recording is the review.
+
+**Norwegian track (parallel, owner's voice).** Same action scripts; `npm run tutorial -- 6 --lang no --silent`
+produces the timeline and the Norwegian `.srt` and lists the expected file names; the owner records
+one WAV per beat (any sample rate, mono, 16-bit or float) and drops them in, then the same command
+without `--silent` picks them up. V.3 adds a `--list-beats` print of the narration per beat to read from.
+
 ### Decisions needed (Q26–Q30)
 
 | # | Question | Recommendation |
 |---|---|---|
 | Q26 | Voice: Azure neural TTS, `edge-tts`, Piper, or the owner's own recording? | **Decided 2026-11-13: Kokoro (kokoro-js) at build time** — a local, keyless voice; C stays open per beat |
 | Q30 | Norwegian voice, since Kokoro has none: Piper `no_NO-talesyntese-medium`, own recording, or Azure? | Piper for drafts, own recording for the release if Piper is not good enough |
-| Q27 | Resolution and ratio: 1280×800 (the script's recommended viewport) or 1920×1080? | 1280×800 layout, delivered at 1920×1200. Caveat found 2026-11-10: Playwright's `recordVideo` captures the screencast at its `size` option in CSS pixels and is not expected to honour `deviceScaleFactor` the way screenshots do, so V.1 first checks whether a 2× context gives crisp frames; the fallback is a 1920×1200 viewport with `zoom: 1.5` injected on `html` (Chromium only, which is the recording browser anyway) so the UI keeps the script's proportions |
+| Q27 | Resolution and ratio: 1280×800 (the script's recommended viewport) or 1920×1080? | **Settled 2026-11-16:** 1280×800 layout, 1920×1200 frames (the default `--scale 1.5`). Found on the way: an *emulated* `deviceScaleFactor` only pads the recorder's frame (content stays 1280×800), and CSS `zoom` on the root skews the app's own rectangle maths (the floating bar lands in the wrong place). What works is Chromium's `--force-device-scale-factor=1.5` launch flag with the plain 1280×800 viewport: the recorder then takes real device pixels and the text is sharp |
 | Q28 | Subtitles burnt in, sidecar only, or both? | Both: sidecar `.srt` always, a burnt-in variant for channels without caption support |
 | Q29 | Build V.1 + V.2 before the design pass? | Yes — the toolkit is ready the day the design lands, and chapter 6 gives an early look at pace and voice |
 
@@ -719,7 +743,7 @@ for the review fixes, phase 3 and the deploy.
 
 ### Phase 6 — Tutorial video
 
-Both scripts match the app as of 2026-10-30 (floating bar, filter/order selects, stay-in-place toast). Production is designed as Phase V above: V.1 + V.2 (toolkit, chapter 6 with voice) can start now; V.3 after the design pass; V.4 is the final recording.
+Both scripts match the app as of 2026-11-16 (floating bar, filter/order selects, stay-in-place toast, blue pending highlight). Production is Phase V above: V.1 + V.2 are built (chapter 6 in English, `npm run tutorial -- 6`); V.3 (the other chapters) after the design pass; V.4 is the final recording.
 
 ### Phase 7 — Launch
 

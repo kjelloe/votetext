@@ -285,3 +285,58 @@ test('tutorial scripts: the [screen: …] cues are identical and in the same ord
     assert.ok(en.length > 40, `expected the EN script to have its cues, found ${en.length}`);
     assert.deepStrictEqual(no, en, 'the Norwegian script must carry exactly the English [screen: …] cues, in the same order — one action script drives both recordings');
 });
+
+test('tutorial toolkit: the script parser yields one beat per cue, the same count per chapter in EN and NO, and every action script matches its chapter', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const { parseChapters, plainText } = require('../tutorial/lib/script');
+    const en = parseChapters('en'), no = parseChapters('no');
+    assert.equal(en.length, 14);
+    assert.deepStrictEqual(no.map(c => [c.number, c.beats.length]), en.map(c => [c.number, c.beats.length]));
+    for (const c of en) {
+        assert.ok(c.beats.length >= 1, `chapter ${c.number} has no cues`);
+        c.beats.forEach((b, i) => assert.equal(b.index, i + 1));
+        assert.ok(c.beats.filter(b => b.text).length >= 1, `chapter ${c.number} has no narration`);
+    }
+    assert.equal(plainText('A **bold** word, *why* and `code` — then'), 'A bold word, why and code, then');
+    const dir = path.join(__dirname, '..', 'tutorial', 'chapters');
+    for (const f of fs.readdirSync(dir)) {
+        const mod = require(path.join(dir, f));
+        const chapter = en.find(c => c.number === mod.chapter);
+        assert.ok(chapter, `${f}: chapter ${mod.chapter} is not in the script`);
+        assert.equal(mod.beats.length, chapter.beats.length, `${f}: one action per [screen: …] cue`);
+    }
+});
+
+test('tutorial toolkit: WAV round trip, narration laid onto the track at its beat offset, SRT timing', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { writeWav, readWav, buildTrack } = require('../tutorial/lib/wav');
+    const { writeSrt } = require('../tutorial/lib/assemble');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vt-tutorial-'));
+    const rate = 24000;
+    const tone = new Float32Array(rate);
+    for (let i = 0; i < rate; i++) tone[i] = 0.5;
+    const clip = path.join(dir, 'clip.wav');
+    writeWav(clip, tone, rate);
+    const back = readWav(clip);
+    assert.equal(back.rate, rate);
+    assert.ok(Math.abs(back.duration - 1) < 1e-6);
+    assert.ok(Math.abs(back.samples[10] - 0.5) < 1e-3);
+
+    const timeline = [
+        { beat: 1, cue: 'a', text: 'First sentence of the narration.', start: 500, end: 2000, audio: clip, duration: 1 },
+        { beat: 2, cue: 'b', text: '', start: 2000, end: 2600, audio: null, duration: 0 },
+    ];
+    const track = readWav(buildTrack(timeline, 3000, path.join(dir, 'track.wav')));
+    assert.equal(track.samples.length, 3 * rate);
+    assert.ok(Math.abs(track.samples[Math.round(0.25 * rate)]) < 1e-3, 'silence before the beat');
+    assert.ok(Math.abs(track.samples[Math.round(1.0 * rate)] - 0.5) < 1e-3, 'voice at the beat offset');
+    assert.ok(Math.abs(track.samples[Math.round(2.5 * rate)]) < 1e-3, 'silence after it');
+
+    const srt = fs.readFileSync(writeSrt(timeline, path.join(dir, 'x.srt')), 'utf8');
+    assert.match(srt, /^1\n00:00:00,500 --> 00:00:01,460\nFirst sentence of the narration\.\n/);
+    assert.ok(!srt.includes('\n2\n'), 'a beat without narration gets no subtitle');
+    fs.rmSync(dir, { recursive: true, force: true });
+});

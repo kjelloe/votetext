@@ -343,6 +343,10 @@ votetext/
 │   ├── deploy.sh           # Deploy over SSH: tests, upload, backup, migrate, health check, restore; --check audits the server
 │   ├── seed.js             # Optional: seed with sample data
 │   └── seed-demo.js        # Tutorial-video demo data (four personas, four lifecycle stages)
+├── tutorial/
+│   ├── record.js           # npm run tutorial -- <chapter>: scripted recording of one tutorial chapter (Playwright + Kokoro + ffmpeg)
+│   ├── lib/                # server boot (port 3002, own DB), script parser, cursor overlay, stage primitives, TTS, WAV, ffmpeg assembly
+│   └── chapters/           # one action script per chapter (ch06-propose.js …); out/ is gitignored
 ├── src/
 │   ├── server.js           # Express app entry point
 │   ├── db.js               # Database connection + helpers
@@ -510,7 +514,8 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
 - [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
-- [x] Tutorial video script (EN + NO) + reproducible demo data — `specs/tutorial-video-script.md`, `specs/tutorial-video-script.no.md`, `npm run seed-demo` (four personas, four documents frozen at each lifecycle stage)
+- [x] Tutorial video script (EN + NO) + reproducible demo data — `specs/tutorial-video-script.md`, `specs/tutorial-video-script.no.md`
+- [x] Tutorial recording toolkit (Phase V.1 + V.2, 2026-11-16): `npm run tutorial -- 6` records chapter 6 with a drawn pointer, human-paced typing, Kokoro narration (English, local CPU) and subtitles — `tutorial/`, `npm run seed-demo` (four personas, four documents frozen at each lifecycle stage)
 - [x] Moderation dashboard (UC-18) — supervisor+ hide/unhide for proposals and comments (moderator hides reversible via `hidden_by`, author deletes permanent), per-document moderation page, superadmin user-protection management
 - [x] Review fixes, phase 1 (2026-10-02) — draft rule on variant sub-routes and the global feed, resolve gate (overlapping winners and untallied proposals block resolution), working final-voting preview, withdraw only before voting, OTP attempt limit with `crypto.randomInt`, invite-only sign-in switch, activity metadata redaction, escaped invite email, `/healthz`, JSON 404 for unknown API routes — see `plan-update.md` for the remaining phases
 - [x] Review fixes, phase 2 (2026-10-02) — `scripts/migrate.js` rewritten to be driven by `schema.sql` (the old script crashed on databases created from early schemas), with a migration test over three historical schema snapshots; seven previously unlogged mutations now write activity entries; second review round fixed a stored XSS via non-numeric proposal offsets, modal handlers acting on a previously opened document, the dead end for documents without overlapping proposals, insert proposals deleting the selected text at resolve, and sign-in limits per client address
@@ -522,5 +527,5 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Automatic page detection on import (2026-10-23, UC-23) — `lines_per_page: "auto"` keeps the source page and line numbers of paged markdown from `pdf2md.py`; opened to creators the same day
 - [ ] Hardened server layout and offsite backups on the live VM (in-place conversion, guide in the ops repository)
 - [x] Proposing and browsing on phones (Phase M, 2026-10-29/30, UC-24/UC-25) — selection toolbar (`public/selection.js`, Chromium phone project in Playwright), bottom-sheet modals that follow the keyboard, stay on the document after submitting with a toast, proposal filter + order remembered per device with `my_vote` for *Not yet voted by me*, sticky bottom bar with the list as a sheet, Previous/Next in the chosen order
-- [ ] Tutorial video production (Phase V, designed 2026-11-10 in `plan-update.md`): Playwright-recorded clips per chapter with a drawn pointer and typed input, Kokoro (kokoro-js, local CPU, decided 2026-11-13) narration per cue in EN, Piper or recorded voice for NO, ffmpeg assembly; V.1 + V.2 before the design pass, the full recording after it
+- [ ] Tutorial video production, the remaining chapters (Phase V.3 after the design pass, V.4 final recording): action scripts for chapters 0–5 and 7–13, the phone clip, concatenation with chapter markers; Norwegian narration from the owner's own recordings (Kokoro has no Norwegian voice)
 - [x] Modal keyboard and focus (Phase K, 2026-11-10): every modal is a `role="dialog"`, focus moves in and back, Escape closes, Tab wraps; on phones the sheet takes focus so the keyboard waits; toast placement without `:has()`

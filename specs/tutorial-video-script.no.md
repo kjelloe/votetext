@@ -108,9 +108,9 @@ hagens vedtekter.
 Teksten ligger til venstre med nummererte linjer. Til høyre: alle endringene som er
 foreslått så langt.
 
-[screen: hover an amber-highlighted line — tooltip with proposal numbers]
+[screen: hover a blue-highlighted line — tooltip with proposal numbers]
 
-Ravgule linjer har allerede forslag knyttet til seg. Hold pekeren over en av dem, og
+Blåmarkerte linjer har allerede forslag knyttet til seg. Hold pekeren over en av dem, og
 du ser hvilke forslag som berører linjen.
 
 [screen: pick "This page" in the filter above the proposal list, then "All"; open the order selector and pick "Most voted", then back to "Document order"]
@@ -153,9 +153,9 @@ Forslagsskjemaet ber om tre ting: en kort tittel, den nye formuleringen, og — 
 viktigste — *hvorfor*. En god begrunnelse er det som gjør et endringsønske til et
 argument gruppen kan veie.
 
-[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the sheet closes, the lines turn amber, a toast "Proposal #N added · Open" appears; click "Open"]
+[screen: fill in title "Let guests visit without an escort", new text, rationale; click "Submit proposal" — the sheet closes, the lines turn blue, a toast "Proposal #N added · Open" appears; click "Open"]
 
-Sendt inn. Bjørn står fortsatt i dokumentet: linjene er ravgule, kortet ligger i listen, og
+Sendt inn. Bjørn står fortsatt i dokumentet: linjene er blåmarkerte, kortet ligger i listen, og
 en liten melding tilbyr forslagssiden. Han åpner den.
 
 [screen: on the proposal page, click "Edit", adjust the title, Save; then point at "Withdraw"]
@@ -163,7 +163,7 @@ en liten melding tilbyr forslagssiden. Han åpner den.
 Helt til avstemningen starter kan Bjørn finpusse formuleringen — eller trekke
 forslaget helt, hvis diskusjonen får ham på andre tanker.
 
-[screen: click "← Back to document" — the new card in the sidebar, the selected lines now amber]
+[screen: click "← Back to document" — the new card in the sidebar, the selected lines now highlighted in blue]
 
 Tilbake i dokumentet er forslaget festet til nøyaktig de linjene det ville endre —
 og på mobil går samme flyt fra en knapperad som flyter på de markerte ordene.
