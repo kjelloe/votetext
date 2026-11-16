@@ -285,3 +285,19 @@ test('safe-area padding needs viewport-fit=cover, and fixed overlays stay out of
         assert.ok(print.includes(sel), `${sel} is position: fixed and must be hidden in the print stylesheet`);
     }
 });
+
+test('style.css components draw only on the design tokens, and every document status has a badge rule', () => {
+    const css = fs.readFileSync(path.join(PUBLIC, 'style.css'), 'utf8');
+    const tokensEnd = css.indexOf('/* ===== Reset ===== */');
+    assert.ok(tokensEnd > 0, 'the token block must come first');
+    const body = css.slice(tokensEnd);
+    const hex = [...new Set(body.match(/#[0-9a-fA-F]{6}\b/g) || [])];
+    assert.deepStrictEqual(hex, [], `colours outside :root belong in the token block as a tint: ${hex.join(', ')}`);
+    for (const name of ['--color-muted', '--color-text-secondary', '--tint-success-bg']) {
+        if (body.includes(`var(${name})`)) assert.ok(css.slice(0, tokensEnd).includes(`${name}:`), `${name} is used but never defined`);
+    }
+    const schema = fs.readFileSync(path.join(__dirname, '..', 'schema.sql'), 'utf8');
+    const statuses = schema.match(/CHECK \(status IN \(([^)]+)\)\)/)[1].match(/'(\w+)'/g).map(q => q.replace(/'/g, ''));
+    assert.ok(statuses.includes('final_voting'));
+    for (const st of statuses) assert.ok(css.includes(`.status-${st}`), `document status "${st}" has no .status-${st} badge rule`);
+});

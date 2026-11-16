@@ -1,13 +1,13 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-11-16 (Phase K complete incl. K.4; Phase V.1 + V.2 built for English; header below is the 2026-10-03 review context)_
+_Last updated: 2026-11-16 (Phase K complete incl. K.4; Phase V.1 + V.2 built for English; Phase 4 design pass done; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status on 2026-11-16: **366 node tests** and **89 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+Test status on 2026-11-16: **367 node tests** and **89 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
 At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
@@ -552,7 +552,7 @@ values, which removes the focus hand-back. Do it when the design pass restyles t
 **Owner items, unchanged:** commit the working tree; deploy Phase P + M + K together and run the
 real-phone rows in `specs/manual-validation.md`; D1 (`howot-host-service.md`, `resume.txt`).
 
-**Order:** K.1 + K.2 (one commit, full suite) → K.4 (done) → owner deploy → phase 4 with K.3.
+**Order:** K.1 + K.2 (one commit, full suite) → K.4 (done) → owner deploy → phase 4 with K.3 (done 2026-11-16).
 
 **K.1 + K.2 done 2026-11-10:** `openModal`/`closeModal`/`wireModalKeys` in `app.js` as designed (`MODAL_FOCUSABLE`, `modalOpener`; one document keydown listener; coarse pointer → focus on `#modal-box`); `#modal-box:focus, #app-main:focus { outline: none }`; `setMain()` toggles `body.has-bottom-bar`, CSS rule renamed. Tests: `tests/e2e/modal.spec.js` (2 tests: focus in + dialog attributes + Escape returns focus; Tab/Shift+Tab wrap + × returns focus) and a phone assertion in `mobile.spec.js`. app.js 1 631 lines. Tests: 363 node (incl. the tutorial-cue contract), 87 e2e. K.3 stays in phase 4.
 
@@ -679,7 +679,7 @@ last and the seed is rebuilt before each chapter anyway (seeding takes well unde
 |---|---|---|
 | V.1 | **Done 2026-11-16.** Toolkit without audio: server boot + seed, cursor overlay, stage primitives, script parser, timeline; chapter 6 (proposing) recorded in EN as a silent clip for review of pace and pointer | M |
 | V.2 | **Done 2026-11-16 (EN).** Voice and assembly: `tts.js` (kokoro-js for EN; recorded files for NO), `assemble.js` (track, mux, SRT, burnt-in copy), chapter 6 in EN with voice; README/ARCHITECTURE/CLAUDE.md/tutorial production notes | M |
-| V.3 | All 14 chapters + the phone clip (`devices['iPhone 13']`, touch dot pointer, chapter 6 only); `all` mode with concat and chapter markers; owner review of the `bm_george` voice against `bf_emma`. **Done early (2026-11-16):** `--list-beats` and the per-beat recorded takes (`out/audio/<lang>/chNN-<beat>.wav`) for the owner's Norwegian recordings | L |
+| V.3 | **Next.** All 14 chapters + the phone clip (`devices['iPhone 13']`, touch dot pointer, chapter 6 only); `all` mode with concat and chapter markers; owner review of the `bm_george` voice against `bf_emma`. **Done early (2026-11-16):** `--list-beats` and the per-beat recorded takes (`out/audio/<lang>/chNN-<beat>.wav`) for the owner's Norwegian recordings | L |
 | V.4 | After the design pass: re-record everything with one command; owner review; optional C (own voice per beat) | S |
 
 **Tests.** The toolkit is not part of `npm test`. `tests/unit.test.js` already asserts (since
@@ -737,13 +737,36 @@ bottom margin).
 
 ## Remaining work packages
 
-### Phase 4 — Visual design pass
+### Phase 4 — Visual design pass — done 2026-11-16
 
-Now the next UI step (K.3 goes in here); Phase V V.1 + V.2 run in parallel. Agree direction first (palette, typography, density, light/dark),
-then tokens → components → responsive, with the full e2e suite (89 tests, incl. the XSS
-and regression specs and the Chromium phone project) as the gate. The phone layout fixes from
-phase 3 and the Phase M bar, sheet and list controls are functional only; the design pass
-should revisit them (the two `<select>`s may become segments on desktop).
+**Direction (owner: "as recommended", 2026-11-16):** keep the blue primary, one system font stack, the
+current density, light only; restyle the phone sheet and list controls on the way. CSS-first, no DOM
+changes beyond three small JS touches.
+
+**Done.** `style.css` now opens with one token block that every component draws on: the palette, five
+semantic tints (`--tint-*-bg/fg/border/soft`) replacing some sixty scattered hex values, a radius scale
+(8 / 12 / 16 / 20 px + pill) replacing eleven ad-hoc radii, `system-ui` / `ui-monospace` font stacks,
+one emphasis weight (700, was 600–900 mixed). Panel headers, toolbars and control strips share one
+surface token; selects share a drawn chevron; the toast accent is the primary blue (amber stays for
+voting notices). The review, conflict and final-voting screens were the oldest-looking and now use the
+same cards, badges and tints as the document page (conflict group = soft amber card, overall document
+vote = white card). Phone: the ≤ 480 px header renders the nav as underlined tabs with a current-page
+marker (`aria-current="page"`, set in `router()`); the document header wraps its action buttons under
+the title; access rows wrap; page headers wrap title, toolbar and notice. The list controls are a
+two-column grid in the sidebar and the sheet, still `<select>`s (the e2e browse tests drive them with
+`selectOption`; segments were not worth breaking that), built once per holder (**K.3 done**).
+
+**Found on the way and fixed:** `FINAL_VOTING` badge had no rule and showed the underscore
+(`statusBadge()` now prints the label with a space; `.status-final_voting` added); two undefined
+tokens (`--color-muted`, `--color-text-secondary`) made two texts fall back to black; a duplicate
+`.btn-success`; the document header, access rows and final-voting header overflowed a phone screen
+(found by a scripted overflow audit over every view and modal at 390 px); no nav link ever showed the
+current page; the manual checklist still said submitted lines turn amber.
+
+**Gate:** `tests/frontend.test.js` gained a design-token contract (no six-digit hex below the token
+block; a `.status-*` rule for every document status in `schema.sql`); the full e2e suite (89, Firefox +
+Chromium phone) and `npm test` green; every view and modal screenshotted at 1280 px and 390 px before
+and after. app.js 1 646 lines. Not done, by decision: dark mode, a webfont, segmented controls.
 
 ### Phase 5 — Manual validation
 
@@ -752,7 +775,7 @@ for the review fixes, phase 3 and the deploy.
 
 ### Phase 6 — Tutorial video
 
-Both scripts match the app as of 2026-11-16 (floating bar, filter/order selects, stay-in-place toast, blue pending highlight). Production is Phase V above: V.1 + V.2 are built (chapter 6 in English, `npm run tutorial -- 6`), the Norwegian track takes the owner's recordings per beat (`--list-beats`); V.3 (the other chapters) after the design pass; V.4 is the final recording.
+Both scripts match the app as of 2026-11-16 (floating bar, filter/order selects, stay-in-place toast, blue pending highlight). Production is Phase V above: V.1 + V.2 are built (chapter 6 in English, `npm run tutorial -- 6`), the Norwegian track takes the owner's recordings per beat (`--list-beats`); V.3 (the other chapters) is next now that the design pass is done; V.4 is the final recording.
 
 ### Phase 7 — Launch
 

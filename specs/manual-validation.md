@@ -150,7 +150,7 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 ## Sheets, bottom bar and browsing on a real phone (2026-10-30, UC-24/UC-25)
 
 - [ ] iPhone (Safari) and Android (Chrome): tap **Propose** on the bar → the form rises as a bottom sheet; tap the *New text* field → the sheet sits above the keyboard and **Submit proposal** is reachable without closing the keyboard; the selected lines stay marked blue behind the sheet
-- [ ] Submit → the sheet closes, the lines turn amber, the toast *Proposal #N added · Open* sits above the bottom bar and does not cover it; the page did not scroll
+- [ ] Submit → the sheet closes, the lines turn blue, the toast *Proposal #N added · Open* sits above the bottom bar and does not cover it; the page did not scroll
 - [ ] Select across a highlighted passage → **Variant of #N** → the sheet shows the parent proposal's text above the form
 - [ ] Scroll to the middle of the programme → the bottom bar is still there; **N proposals** opens the list sheet; change the order to *Most voted* → the list reorders; tap a card → proposal page; **← Back to document** returns to its page and line
 - [ ] On the proposal page, set *Not yet voted by me* on the document first, vote on a proposal, then **Next ›** skips it
@@ -180,6 +180,15 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 
 ---
 
+## Design pass (2026-11-16, phase 4)
+
+- [ ] Phone (≤ 480 px): the header shows the logo and account controls on one row and **Documents · Activity** as tabs below; the current tab is underlined in blue
+- [ ] Phone: open a document you own → the title and badge take the first row and **Settings · Copy · Change status** wrap below them; nothing is cut off at the right edge
+- [ ] Phone: **Manage access** → each row wraps (email, level select, then Block · Remove); **Final voting** and **Resolved text** headers stack title, toolbar and notice
+- [ ] Desktop and phone: the document list shows a **FINAL VOTING** badge (amber, no underscore) for a document in final voting
+- [ ] Desktop: change the proposal filter with the keyboard (Tab to it, arrow keys) → the list re-renders and the select keeps focus (K.3)
+- [ ] Desktop: the review, conflict and final-voting screens use the same card corners, badges and tints as the document page; the final-voting conflict group is a soft amber card, the overall document vote a white card
+
 ## Sign-off
 
 | UC | Validated by | Date | Result |
@@ -197,4 +206,5 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 | UC-25 (phone + desktop) | | | |
 | Phase K dialogs (screen reader) | | | |
 | K.4 discard guard (phone) | | | |
+| Design pass (phone + desktop) | | | |
 | Deploy | | | |

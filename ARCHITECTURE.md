@@ -76,7 +76,7 @@ votetext/
 │   ├── auth.js             — login, profile completion modal, profile page
 │   ├── review.js           — creator/supervisor/editor/admin views and modals: review, conflict resolution, final voting, resolved text, moderation, user admin, new document, settings, status
 │   ├── selection.js        — floating Propose / Variant toolbar on a text selection, fork modal, variant chooser, selected-line marks, keyboard-aware bottom sheet (Phase M)
-│   └── style.css           — design tokens + all component styles
+│   └── style.css           — design tokens (one block: palette, tints, radius scale, font stacks) + all component styles
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
 │   ├── use-cases.md        — detailed user flows (UC-1 …)
@@ -454,6 +454,8 @@ See `specs/use-cases.md` for full user-facing flows.
 All interpolated user values go through `esc()` before entering any innerHTML string. Trusted static HTML (from template literals with only escaped values) is safe. DOM node creation via `el()` never touches innerHTML.
 
 ---
+
+**Design tokens (phase 4, 2026-11-16).** `style.css` opens with one `:root` block and every component below it draws only on those names: the blue primary, five semantic tints (`--tint-{success,danger,warning,info,neutral}-{bg,fg,border,soft}`) for badges, alerts, diff blocks and flagged cards, a radius scale (`--radius-sm` 8 px for controls and chips, `--radius` 12, `--radius-lg` 16 for cards, `--radius-xl` 20 for dialogs and sheets, `--radius-pill`), the platform's own font stacks (`system-ui` and `ui-monospace`), one emphasis weight (700) and light mode only. `tests/frontend.test.js` fails on a six-digit hex colour below the token block and on a document status without a `.status-*` rule. Selects share a drawn chevron; the current nav link carries `aria-current="page"` (set in `router()`), which the ≤480 px header renders as an underlined tab. The proposal-list controls are built once per holder and only their counts and values refreshed on re-render (K.3), so an open select keeps focus.
 
 ## Deployment
 

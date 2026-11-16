@@ -44,7 +44,7 @@ function timeAgo(isoDate) {
 }
 
 function statusBadge(status) {
-    return `<span class="status-badge status-${esc(status)}">${esc(status)}</span>`;
+    return `<span class="status-badge status-${esc(status)}">${esc(status.replace('_', ' '))}</span>`;
 }
 
 function startCooldown(btn, label, seconds) {
@@ -297,6 +297,9 @@ const routes = [
 async function router() {
     if (state.votingBannerInterval) { clearInterval(state.votingBannerInterval); state.votingBannerInterval = null; }
     const hash = location.hash || '#/login';
+    for (const a of document.querySelectorAll('#app-nav .nav-link')) {
+        if (hash.startsWith(`#/${a.dataset.route}`)) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    }
     for (const [pattern, handler] of routes) {
         const m = hash.match(pattern);
         if (m) {
@@ -481,17 +484,18 @@ async function viewDocument(docId) {
         const html = displayed.length === 0
             ? `<p class="text-muted">${emptyText}</p>`
             : displayed.map(v => renderVariantCard(v, overlapMap[v.id] || [], totalComments, heatConfig)).join('');
-        const focused = document.activeElement && document.activeElement.closest('.proposal-controls') ? document.activeElement : null;
-        const focusHolder = focused && focused.closest('.proposal-controls-holder');
+        // The controls are built once per holder and only their counts and values refreshed, so an open select keeps focus
+        const counts = { all: `All (${variants.length})`, page: `This page (${getPageVariants().length})`, unvoted: `Not yet voted by me (${variants.filter(isUnvoted).length})` };
         for (const holder of document.querySelectorAll('.proposal-controls-holder')) {
-            holder.innerHTML = controlsHtml();
-            if (holder === focusHolder) holder.querySelector(`.${focused.className}`).focus();
+            if (!holder.querySelector('.proposal-controls')) {
+                holder.innerHTML = controlsHtml();
+                holder.querySelector('.proposal-filter').addEventListener('change', e => { prefs.filter = e.target.value; saveProposalPrefs(prefs); renderVariantList(); });
+                holder.querySelector('.proposal-sort').addEventListener('change', e => { prefs.sort = e.target.value; saveProposalPrefs(prefs); renderVariantList(); });
+            }
             const filterSel = holder.querySelector('.proposal-filter');
-            const sortSel = holder.querySelector('.proposal-sort');
+            for (const opt of filterSel.options) opt.textContent = counts[opt.value];
             filterSel.value = filter;
-            sortSel.value = prefs.sort;
-            filterSel.addEventListener('change', () => { prefs.filter = filterSel.value; saveProposalPrefs(prefs); renderVariantList(); });
-            sortSel.addEventListener('change', () => { prefs.sort = sortSel.value; saveProposalPrefs(prefs); renderVariantList(); });
+            holder.querySelector('.proposal-sort').value = prefs.sort;
         }
         for (const list of document.querySelectorAll('#variants-list, #variants-list-sheet')) list.innerHTML = html;
         const bottomBtn = document.getElementById('bottom-proposals-btn');
