@@ -1628,7 +1628,32 @@ async function startSession() {
     if (!state.pollTimer) state.pollTimer = setInterval(pollActivity, 30000);
 }
 
+/* ===== Theme (Phase D): the stored choice wins, else the system scheme; theme.js applied the stored one before first paint ===== */
+const darkScheme = matchMedia('(prefers-color-scheme: dark)');
+function currentTheme() {
+    let stored = null;
+    try { stored = localStorage.getItem('vt_theme'); } catch {}
+    return stored || (darkScheme.matches ? 'dark' : 'light');
+}
+function applyTheme() {
+    const dark = currentTheme() === 'dark';
+    const btn = document.getElementById('theme-toggle');
+    btn.setAttribute('aria-pressed', String(dark));
+    btn.title = btn.ariaLabel = dark ? 'Switch to light mode' : 'Switch to dark mode';
+}
+function wireThemeToggle() {
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+        const next = currentTheme() === 'dark' ? 'light' : 'dark';
+        try { localStorage.setItem('vt_theme', next); } catch {}
+        document.documentElement.dataset.theme = next;
+        applyTheme();
+    });
+    darkScheme.addEventListener('change', applyTheme);
+    applyTheme();
+}
+
 async function init() {
+    wireThemeToggle();
     try {
         const data = await api('GET', '/auth/me');
         state.user = data.user;

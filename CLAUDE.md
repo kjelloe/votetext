@@ -63,7 +63,8 @@ public/
     auth.js         — viewLogin, showProfileModal, viewProfile (depends on app.js globals)
     review.js       — creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, document settings, status change
     selection.js    — floating Propose / Variant toolbar on a text selection (wired from viewDocument), fork modal, variant chooser, selected-line marks while a sheet is open, visualViewport tracking for the phone bottom sheet (budget 600 lines)
-    style.css       — one token block first (--color-*, --tint-*-bg/fg/border/soft, --radius-*, --font-*), then components that use only those names (a frontend contract test rejects hex colours below the block and a document status without a .status-* rule); mobile-first, light only
+    style.css       — one token block first, every colour token a light-dark() pair (--color-*, --tint-*-bg/fg/border/soft, --radius-*, --font-*), then components that use only those names (a frontend contract test rejects hex colours and white/black rgba below the block and a document status without a .status-* rule); mobile-first
+    theme.js        — loaded from <head> (CSP: no inline scripts): sets data-theme on <html> from localStorage vt_theme before first paint; the toggle itself lives in app.js (applyTheme/wireThemeToggle)
 ```
 
 ---

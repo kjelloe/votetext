@@ -1,7 +1,7 @@
 'use strict';
 
 // Records one tutorial chapter, or all of them into one video with chapter markers:
-//   node tutorial/record.js <chapter|all> [--lang en|no] [--voice bm_george] [--silent] [--scale 1.5] [--burn] [--phone] [--list-beats]
+//   node tutorial/record.js <chapter|all> [--lang en|no] [--voice bm_george] [--silent] [--scale 1.5] [--burn] [--phone] [--dark] [--list-beats]
 // scale = Chromium device scale factor on the 1280×800 layout (1.5 → 1920×1200 frames); --phone records the iPhone 13
 // viewport with touch (390×844, default scale 2). Output under tutorial/out/: chNN-<lang>[.phone].webm (raw), .mp4, .srt,
 // .timeline.json; `all` adds votetext-tutorial-<lang>.mp4. --list-beats prints the narration per beat with the WAV name a
@@ -22,7 +22,7 @@ const VIEWPORT = { width: 1280, height: 800 };
 const PHONE = devices['iPhone 13'];
 
 function parseArgs(argv) {
-    const a = { lang: 'en', scale: null, silent: false, burn: false, list: false, phone: false };
+    const a = { lang: 'en', scale: null, silent: false, burn: false, list: false, phone: false, dark: false };
     const rest = [];
     for (let i = 0; i < argv.length; i++) {
         const v = argv[i];
@@ -33,6 +33,7 @@ function parseArgs(argv) {
         else if (v === '--burn') a.burn = true;
         else if (v === '--list-beats') a.list = true;
         else if (v === '--phone') a.phone = true;
+        else if (v === '--dark') a.dark = true;
         else rest.push(v);
     }
     a.all = rest[0] === 'all';
@@ -91,6 +92,7 @@ async function recordChapter(chapter, args, log) {
         const emulation = args.phone ? { userAgent: PHONE.userAgent, isMobile: true, hasTouch: true, deviceScaleFactor: 1 } : {};
         const context = await browser.newContext({ ...emulation, viewport, baseURL: server.baseUrl, recordVideo: { dir: OUT, size } });
         await context.addInitScript(CURSOR_INIT);
+        if (args.dark) await context.addInitScript(() => { try { localStorage.setItem('vt_theme', 'dark'); } catch (e) {} });
         if (actions.persona) await context.addCookies([{ name: 'session_id', value: server.cookies[actions.persona], domain: 'localhost', path: '/' }]);
         const page = await context.newPage();
         context.on('page', p => p.close().catch(() => {}));

@@ -1,13 +1,13 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-11-16 (Phase K complete incl. K.4; Phase V.1–V.3 built for English; Phase 4 design pass done; header below is the 2026-10-03 review context)_
+_Last updated: 2026-11-17 (Phase K complete incl. K.4; Phase V.1–V.3 built for English; Phase 4 design pass done; Phase D dark mode designed; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status on 2026-11-16: **367 node tests** and **89 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+Test status on 2026-11-17: **367 node tests** and **92 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
 At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
@@ -753,6 +753,107 @@ page is a reduced card, not the full layout). Found on the way: the English narr
 | Q28 | Subtitles burnt in, sidecar only, or both? | Both: sidecar `.srt` always, a burnt-in variant (from a generated `.ass` at the real picture size) for channels without caption support |
 | Q29 | Build V.1 + V.2 before the design pass? | Yes — the toolkit is ready the day the design lands, and chapter 6 gives an early look at pace and voice |
 
+## Phase D — Dark mode (designed and built 2026-11-17, "as recommended")
+
+**Ask (owner, 2026-11-17):** a dark design as an alternative to the light one, switched with an icon at the
+right end of the top bar, for every visitor, signed in or not, and back again.
+
+### What the design pass left us
+
+Every component already draws on the token block at the top of `style.css` (the contract test rejects hex
+colours below it), so a dark theme is a second set of values for the same names, not a second stylesheet.
+Thirty places still bypass the tokens with literal white or near-black: `#fff` text on filled buttons and
+badges, `rgba(255,255,255,…)` glass on the header, footer, bottom bar and dropzone, `rgba(15,23,42,…)` hover
+washes, the `rgba(2,6,23,0.55)` modal dim, `#fff` on the toast. Those become tokens first (`--color-on-primary`,
+`--color-surface-glass`, `--color-hover`, `--color-dim`), and the contract test is widened to three-digit hex
+and `rgba(255` / `rgba(15, 23` below the block. The CSP allows no inline scripts, which decides where the
+theme script lives (below).
+
+### Design
+
+**Tokens with `light-dark()`.** One block, two values per token:
+
+```css
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
+:root {
+    --color-bg: light-dark(#f6f8fb, #0b1220);
+    --color-surface: light-dark(#ffffff, #111a2e);
+    --color-surface-head: light-dark(#f8fafc, #15203a);
+    --color-text: light-dark(#0f172a, #e5e9f2);
+    --color-text-muted: light-dark(#64748b, #94a3b8);
+    --color-border: light-dark(#e6eaf2, #27324a);
+    --tint-success-bg: light-dark(#dcfce7, rgba(34, 197, 94, 0.18));
+    --tint-success-fg: light-dark(#15803d, #4ade80);
+    …
+}
+```
+
+`light-dark()` follows the element's `color-scheme`, so the system preference works with no script at all,
+the toggle only sets `data-theme` on `<html>`, native controls (selects, scrollbars, the date in the resolved
+banner) switch with it, and there is no duplicated block to drift. Supported in every evergreen browser since
+mid-2024 (Chrome 123, Firefox 120, Safari 17.5); older browsers get the first value, i.e. today's light theme.
+The primary blue stays `#2563eb` in both (it reads on both canvases; the hover darkens in light and lightens
+in dark: `light-dark(#1d4ed8, #3b82f6)`). Shadows shrink to borders in dark (`--shadow: light-dark(<today>,
+0 0 0 1px rgba(255,255,255,0.04))`), the pending/approved/rejected line highlights go from 0.12 to 0.22 alpha,
+the dim behind a dialog from 0.55 to 0.7. The tutorial title card and the Kokoro clip are untouched.
+
+**Toggle.** One icon button, last in `.header-inner` so it sits at the right edge whether `#user-area` shows
+*Log in* or the user menu: `<button id="theme-toggle" class="btn btn-ghost btn-icon" aria-label="Switch to dark
+mode" aria-pressed="false">` with two inline SVGs (sun, moon; the one for the *other* theme is shown, the way
+most apps do it) toggled by CSS on `data-theme`. Two states, not three: the first click moves away from
+whatever the system gave, the next click back; the stored choice wins over the system from then on. A
+"follow system again" option is not worth a third icon state; if wanted later it is one line on the Profile
+page. Touch target 40×40 (`.btn-icon`), focus ring from the tokens, `aria-pressed` reflects dark.
+
+**Persistence and first paint.** `localStorage['vt_theme'] = 'light' | 'dark'` (the pattern of
+`vt_proposal_prefs`; no schema change, no server call, works signed out). To avoid a light flash for a user
+who chose dark on a light system, a 6-line `public/theme.js` is loaded in `<head>` before the stylesheet:
+read the key, set `document.documentElement.dataset.theme`, done. It is an external same-origin script, so
+the CSP (`script-src 'self'`) allows it; `tests/frontend.test.js` "app.js is first" becomes "theme.js then
+app.js". `index.html` also gets `<meta name="color-scheme" content="light dark">` and two `theme-color`
+metas (`media="(prefers-color-scheme: …)"`) so the phone browser chrome matches.
+
+**Behaviour in `app.js` (≈15 lines).** `applyTheme(t)` sets `data-theme`, `aria-pressed` and the label;
+the button toggles between the current effective theme and the other (effective = stored, else
+`matchMedia('(prefers-color-scheme: dark)')`); a `change` listener on that media query re-renders the label
+while nothing is stored. Printing forces light: `@media print { :root { color-scheme: light } }`.
+
+**Tutorial.** `--dark` on `record.js` seeds `vt_theme=dark` through `addInitScript` so the clips can be
+recorded in either theme; the release video stays light (Q33).
+
+### Work packages
+
+| ID | Work | Effort |
+|---|---|---|
+| D.1 | Token the thirty literals; widen the contract test; `light-dark()` values for every token; dark check of every view and modal with the screenshot script from the design pass (both themes, 1280 and 390 px) | S–M |
+| D.2 | `theme.js`, `index.html` metas, the toggle button and `applyTheme()`; e2e test: the button flips `data-theme`, survives a reload, `aria-pressed` follows; the phone project checks the header still fits at 390 px with the extra button | S |
+| D.3 | Docs: ARCHITECTURE token paragraph, CLAUDE.md `style.css` line, README, manual-validation rows (system switch while open, phone sheet and toast in dark, print is light); `--dark` on the tutorial recorder | S |
+
+Order: D.1 → D.2 → D.3, one commit, full e2e as the gate. Recommended slot: before the V.4 release recording,
+so the video shows the header as it will ship.
+
+**Done 2026-11-17, as designed.** Every token in `style.css` is a `light-dark()` pair; the thirty literals
+became `--color-on-primary`, `--color-surface-glass`, `--color-hover`/`-strong`, `--color-line-sep` and
+`--color-dim`; shadows are three layers whose colours switch to `transparent` or a hairline in dark (a shadow
+list cannot sit inside `light-dark()`, which takes colours only). `public/theme.js` in `<head>`, the two
+`theme-color` metas, the sun/moon button last in `.header-inner`, `applyTheme()`/`wireThemeToggle()` in
+`app.js` (1 671 lines), print forced light, `--dark` on the tutorial recorder. Tests: `tests/e2e/theme.spec.js`
+(2: dark system → `aria-pressed`, click → `data-theme=light` + stored, reload keeps it, click back; light
+system stays light and the button sits at the header's right edge), a phone header assertion in
+`mobile.spec.js`, the contract test widened to three-digit hex, white/black rgba and a `light-dark(` check
+on eight core tokens. Every view and modal screenshotted with a dark system scheme at 1280 and 390 px.
+92 e2e, 367 node tests green.
+
+### Decisions needed (Q31–Q33)
+
+| # | Question | Recommendation |
+|---|---|---|
+| Q31 | Two-state toggle (light ↔ dark, stored choice wins) or three-state (system → light → dark)? | **Two-state**: one icon, no "auto" state to explain; the system preference is honoured until the first click |
+| Q32 | Icon: sun/moon outline icons showing the theme you would switch *to*, or a half-filled circle that stays the same? | **Sun/moon**, the convention users know; inline SVG so it inherits `currentColor` |
+| Q33 | Record the tutorial in dark too? | **No**: one video, light; `--dark` exists for a screenshot or a short clip if wanted |
+
 ## Remaining work packages
 
 ### Phase 4 — Visual design pass — done 2026-11-16
@@ -784,7 +885,7 @@ current page; the manual checklist still said submitted lines turn amber.
 **Gate:** `tests/frontend.test.js` gained a design-token contract (no six-digit hex below the token
 block; a `.status-*` rule for every document status in `schema.sql`); the full e2e suite (89, Firefox +
 Chromium phone) and `npm test` green; every view and modal screenshotted at 1280 px and 390 px before
-and after. app.js 1 646 lines. Not done, by decision: dark mode, a webfont, segmented controls.
+and after. app.js 1 646 lines. Not done, by decision: a webfont, segmented controls; dark mode is now its own Phase D (designed 2026-11-17).
 
 ### Phase 5 — Manual validation
 

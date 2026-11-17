@@ -24,6 +24,17 @@ async function selectWithTouch(page, from, to) {
     }, [from, to]);
 }
 
+test('phone: the header keeps logo, account controls and the theme toggle inside the viewport', async ({ page }) => {
+    await page.goto('/#/documents');
+    await expect(page.locator('#theme-toggle')).toBeVisible();
+    const r = await page.evaluate(() => {
+        const bad = [...document.querySelectorAll('#app-header *')].filter(el => el.getBoundingClientRect().right > window.innerWidth + 1);
+        return { bad: bad.length, scroll: document.documentElement.scrollWidth, w: window.innerWidth };
+    });
+    expect(r.bad).toBe(0);
+    expect(r.scroll).toBe(r.w);
+});
+
 test('phone: toolbar appears below the selection, inside the viewport; Propose opens the modal', async ({ page }) => {
     const docId = await createDoc('UC-24 phone doc', TEXT);
     await page.goto(`/#/documents/${docId}`);

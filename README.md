@@ -381,7 +381,8 @@ votetext/
     ├── app.js              # Client-side logic (vanilla JS, < 2000 lines)
     ├── review.js           # Creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, settings, status modal
     ├── selection.js        # Floating Propose / Variant toolbar on a text selection, fork modal, variant chooser
-    └── style.css           # Styles
+    ├── style.css           # Styles: one token block of light-dark() pairs, then components
+    └── theme.js            # Applies the stored theme before first paint (loaded from <head>)
 ```
 
 ---
@@ -510,7 +511,7 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [x] Configurable majority thresholds (UC-17) — simple / absolute / ⅔ / ¾; per-document default in settings with per-proposal override during the vote
 - [x] Fork a variant (UC-16) — propose a new variant based on an existing one via the `based_on` relation
 - [x] Supervisor access role (UC-19) — between voter and editor; runs the voting process (review, conflicts, tallies, voting-cycle transitions, invites up to own level) without document-editing rights
-- [x] Playwright e2e suite (`npm run test:e2e`) — 89 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
+- [x] Playwright e2e suite (`npm run test:e2e`) — 92 tests covering all 10 user stories plus an XSS guard-rail spec: login + profile modal, navigation, comments, propose/edit/withdraw, voting (incl. retract), share, review + conflicts, final-vote tallies + thresholds, resolved exports
 - [x] Access hardening + guard rails (2026-07-11) — single `resolveAccessLevel()` decision for every access check (closed a read hole in `/lines`/`/text`/`/variants`), superadmin acts as document admin everywhere, drafts never readable via `default_access`; read-access matrix tests (Group Y), pure-helper unit tests (`src/lib/text.js`), OTP/session expiry tests, backend↔frontend threshold sync contract
 - [x] Resolved text readable by all participants (US-10 alignment, 2026-07-11) — viewer+ on `resolved`/`archived` docs; final-voting preview stays supervisor+
 - [x] Comment editing UI (UC-20, 2026-07-11) — inline author edit within the window, "edited" marker, reply-grace window and "parent comment was edited" hint, previous text kept in the activity log
@@ -531,3 +532,4 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [ ] Tutorial video release (Phase V.4): owner review of the English video (voice, pace), the Norwegian takes, then one final `all` run per language
 - [x] Modal keyboard and focus (Phase K, 2026-11-10): every modal is a `role="dialog"`, focus moves in and back, Escape closes, Tab wraps; on phones the sheet takes focus so the keyboard waits; toast placement without `:has()`
 - [x] Visual design pass (Phase 4, 2026-11-16) — one token block in `style.css` (blue primary, five semantic tints, system font stack, 8/12/16/20 px radius scale, light only; a contract test keeps hex colours out of the components), the review, conflict and final-voting screens brought to the same language, phone header tabs with a current-page marker, document header and access rows that wrap instead of overflowing, list controls built once (K.3), `FINAL VOTING` badge
+- [x] Dark mode (Phase D, 2026-11-17) — every token a `light-dark()` pair, so the app follows the system scheme; a sun/moon button at the right end of the header switches for every visitor, the choice is kept in the browser and applied before first paint by `public/theme.js`

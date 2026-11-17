@@ -104,9 +104,12 @@ test('index.html loads all public JS files (none unregistered)', () => {
     }
 });
 
-test('index.html script order: app.js is first', () => {
+test('index.html script order: theme.js in <head>, then app.js first in <body>', () => {
     const order = scriptLoadOrder();
-    assert.equal(order[0], 'app.js', 'app.js must be the first script tag (provides globals for other files)');
+    assert.equal(order[0], 'theme.js', 'theme.js must load before the stylesheet so the stored theme applies before first paint');
+    assert.equal(order[1], 'app.js', 'app.js must be the first body script tag (provides globals for other files)');
+    const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+    assert.ok(html.indexOf('/theme.js') < html.indexOf('/style.css'), 'theme.js comes before the stylesheet');
 });
 
 test('all public JS files parse without syntax errors', () => {
@@ -291,8 +294,12 @@ test('style.css components draw only on the design tokens, and every document st
     const tokensEnd = css.indexOf('/* ===== Reset ===== */');
     assert.ok(tokensEnd > 0, 'the token block must come first');
     const body = css.slice(tokensEnd);
-    const hex = [...new Set(body.match(/#[0-9a-fA-F]{6}\b/g) || [])];
-    assert.deepStrictEqual(hex, [], `colours outside :root belong in the token block as a tint: ${hex.join(', ')}`);
+    const hex = [...new Set(body.match(/#[0-9a-fA-F]{3,6}\b|rgba\(\s*(?:255|15|16|2|0)\s*,[^)]*\)/g) || [])];
+    assert.deepStrictEqual(hex, [], `colours outside :root belong in the token block (dark mode needs both values): ${hex.join(', ')}`);
+    const tokens = css.slice(0, tokensEnd);
+    for (const name of ['--color-bg', '--color-surface', '--color-text', '--color-border', '--color-hover', '--color-dim', '--tint-success-bg', '--shadow']) {
+        assert.match(tokens, new RegExp(`${name}:[^;]*light-dark\\(`), `${name} needs a light and a dark value`);
+    }
     for (const name of ['--color-muted', '--color-text-secondary', '--tint-success-bg']) {
         if (body.includes(`var(${name})`)) assert.ok(css.slice(0, tokensEnd).includes(`${name}:`), `${name} is used but never defined`);
     }
