@@ -15,6 +15,7 @@ npm run tutorial -- all --burn   # every chapter → tutorial/out/votetext-tutor
 npm run tutorial -- 6            # chapter 6 in English with Kokoro narration → tutorial/out/ch06-en.mp4 + .srt
 npm run tutorial -- 6 --silent   # same clip without voice (pace and pointer review)
 npm run tutorial -- 6 --phone    # chapter 6 on an iPhone viewport (touch, bottom sheet) → tutorial/out/ch06-en.phone.mp4
+npm run tutorial -- 6 --dark     # the same clip in dark mode (the release video stays light)
 npm run tutorial -- 6 --lang no --list-beats   # Norwegian: the text to read per beat and the WAV name to save it as
 npm run tutorial -- 6 --lang no            # Norwegian clip from your recordings in tutorial/out/audio/no/ (ch06-1.wav …)
 ```

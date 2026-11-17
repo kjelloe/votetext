@@ -189,6 +189,15 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 - [ ] Desktop: change the proposal filter with the keyboard (Tab to it, arrow keys) → the list re-renders and the select keeps focus (K.3)
 - [ ] Desktop: the review, conflict and final-voting screens use the same card corners, badges and tints as the document page; the final-voting conflict group is a soft amber card, the overall document vote a white card
 
+## Dark mode (2026-11-17, Phase D)
+
+- [ ] Phone with the system set to dark: open the app signed out → it is dark at once, no light flash; the browser chrome matches; the header shows a sun icon at the right
+- [ ] Tap the icon → light; close and reopen the browser → still light; switch the phone's system setting → nothing changes (your choice wins); tap the icon again → dark
+- [ ] Dark, signed in: the bottom bar, the Propose sheet above the keyboard, the selected lines, the toast and the proposal list sheet are all readable; the status badges and vote colours keep their meaning
+- [ ] Desktop dark: review, conflicts, final voting (conflict group, greyed child, saved indicator), resolved text banner, Manage access dropdown, user search results
+- [ ] Print (Ctrl+P) from dark → the preview is light and the toggle is not printed
+- [ ] Screen reader: the button announces "Switch to dark mode, toggle button, not pressed" and flips after activation
+
 ## Sign-off
 
 | UC | Validated by | Date | Result |
@@ -207,4 +216,5 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 | Phase K dialogs (screen reader) | | | |
 | K.4 discard guard (phone) | | | |
 | Design pass (phone + desktop) | | | |
+| Dark mode (phone + desktop + print) | | | |
 | Deploy | | | |
