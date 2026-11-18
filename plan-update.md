@@ -916,6 +916,56 @@ on eight core tokens. Every view and modal screenshotted with a dark system sche
 | Q32 | Icon: sun/moon outline icons showing the theme you would switch *to*, or a half-filled circle that stays the same? | **Sun/moon**, the convention users know; inline SVG so it inherits `currentColor` |
 | Q33 | Record the tutorial in dark too? | **No**: one video, light; `--dark` exists for a screenshot or a short clip if wanted |
 
+## Security review 2026-11-18 (before onboarding more users; commits 938f012 + 7da2846; three read-only reviews, every listed finding verified in code)
+
+Nothing critical or high was found in the application. The authorisation core, the session scheme, the
+`esc()` discipline and the CSP held up to a second independent pass; the 2026-10-21 fixes are all in place.
+What remains is one information leak through the activity feeds, lifecycle looseness that lets a
+participant disturb a running vote, missing validation on the invite route that onboarding will exercise,
+three patched-upstream dependency advisories, and the hardened server template granting the deploy account
+more sudo than its own header promises. Production runs `SIGNUP_MODE=open`: anyone with an email address
+gets an account, which is fine while documents are reachable only by invitation, but is the first setting
+to revisit if the site becomes public.
+
+### T1 — Patch before onboarding (application)
+
+| # | Finding | Where | Fix |
+|---|---|---|---|
+| T1.1 | **Vote choices leak to every reader**: `vote_cast`/`vote_changed` are logged with `{ vote_value }` and both activity feeds return the row with `user_id`/`user_name`; `redactActivity` strips only `previous_text` and `email`, while `GET /variants/:id/votes` deliberately withholds identities below voter | variants.js:548, documents.js:611, activity.js:154, access.js:86 | Add `vote_value` to the redacted keys below supervisor (one line); test in group AA/AC |
+| T1.2 | **Proposing during `voting`/`final_voting`**: `POST /documents/:id/variants` refuses only resolved/archived, so any proposer adds untallied proposals that block `resolveBlocker` (422) until a supervisor marks each not applicable; fork already requires supervisor in those phases | documents.js:542 vs variants.js:147 | Require supervisor while `voting`/`final_voting`, mirror in app.js:376 and ARCHITECTURE |
+| T1.3 | **Invite email unvalidated**: `POST /documents/:id/access` checks only `!email`; a number throws (500), any string without `@` or of any length becomes a `users` row and an email attempt | documents.js:647 | Same check as auth.js:77 (`string`, `@`, ≤ 254); wrap user INSERT + access upsert + log in one `transaction()` |
+| T1.4 | **Dependency advisories** (production): `body-parser` < 1.20.9 (DoS via trailing bytes after a compressed body, high), `proxy-addr` < 2.0.8 (IP spoofing via IPv4-mapped IPv6 trust subnet, critical upstream; not reachable here because `trust proxy 1` is a hop count, not a subnet), `qs` ≤ 6.16.0 (stringify DoS, moderate) | package-lock.json via express 4.22.3 | `npm audit fix` (lockfile only, stays inside express 4.x ranges), `npm test`, redeploy |
+
+### T2 — Server template and deploy script (hardened layout)
+
+| # | Finding | Where | Fix |
+|---|---|---|---|
+| T2.1 | **Sudo wildcards reach root**: `/usr/bin/certbot *` accepts `--pre-hook`/`--deploy-hook` (arbitrary command as root); `/usr/bin/journalctl -u votetext *` without `--no-pager` pipes into `less`, whose `!sh` is a root shell. A leaked deploy key is root, which the template header says it must not be | cloud-init-hardened-example.yaml:106-108 | Exact certbot command (renewals run from `certbot.timer` as root anyway), `journalctl -u votetext --no-pager *`, `Defaults!VOTETEXT_SVC,VOTETEXT_WEB noexec`; apply on the live box by editing `/etc/sudoers.d/votetext` with `visudo -f` |
+| T2.2 | **App process reaches the backup key and backups**: `ReadWritePaths=… /opt/votetext/backups`, and the offsite key under `/opt/votetext/.ssh` is readable by the service user; an RCE in Node could wipe local and offsite backups | cloud-init-hardened-example.yaml:184, 242 | `InaccessiblePaths=/opt/votetext/.ssh`, drop `backups/` from `ReadWritePaths` (cron and deploy.sh write there outside the unit); update tests/deploy.test.js:500 |
+| T2.3 | **Audit accepts a world-readable data dir**: `--check` treats mode 755 as OK; the simple template creates `data/` 755 with umask 022 so the SQLite file (sessions, codes, emails) is readable by every local account | scripts/deploy.sh:108; cloud-init-example.yaml:428 | Warn unless 700/750/2770; confirm production is on the hardened layout (`--check` reports the service user) |
+| T2.4 | Video upload follows symlinks in the working tree (`[ -f ]` is true for a link; `tar -cz` stores the link; static serving follows it) — needs a tampered checkout, so low | scripts/deploy.sh:215, 240 | `[ -f "$f" ] && [ ! -L "$f" ]` |
+| T2.5 | Simple template serves plain HTTP (certbot without `--redirect`); cookie is `secure` so it cannot leak, but the app loads in cleartext | cloud-init-example.yaml:405 | Add `--redirect` |
+
+### T3 — Lifecycle and hygiene (decide, then fix in one pass)
+
+| # | Finding | Fix |
+|---|---|---|
+| T3.1 | Unhide after resolve leaves a live `pending` proposal on a resolved document (hidden rows are skipped by `loadOutcomes`) | Refuse unhide when resolved/archived, or set hidden pending rows `not_applicable` at resolve |
+| T3.2 | `voting → open` (admin) keeps `final_*` tallies while the proposer may edit `new_text`; a later resolve applies new text to old numbers | Clear tallies when leaving `final_voting` backwards, or block edits on tallied variants |
+| T3.3 | Comments and relations have no document-status check (comments on resolved documents are by design — confirm); `to_variant_id` not integer-checked (500 on an object) | Decide on comments; `Number.isInteger` on relation ids |
+| T3.4 | Per-document feed shows moderation actions (`user_blocked`, access changes) with target ids to every viewer | Redact or filter below supervisor |
+| T3.5 | Several mutation + `logActivity` pairs run outside `transaction()` (PATCH document, doc-vote, access, schedule, threshold, conflict order, comments PATCH, user protection) — a missing log row at worst | Wrap when touching those routes |
+| T3.6 | `tests/e2e/xss.spec.js` covers titles, variants and comments but not display names, organisations, the activity feed, user search, access modal or the print popups | One profile with the IMG payload and assertions on those views |
+| T3.7 | HSTS without `includeSubDomains`; no `Permissions-Policy`; `restore` in deploy.sh leaves `.deploy-stage` (incl. `.env.new`, mode 600) behind on failure; OTP codes stored in clear for their 10 minutes | Low; fold into the next hardening pass |
+
+### Verified as mitigated this time (no action)
+
+Sessions (32 random bytes, HMAC-signed cookie, timing-safe compare, `is_active` on every request, 72 h, HttpOnly/SameSite=Lax/Secure); OTP (per email 5 per 15 min, per IP 10 code requests and 20 wrong codes per 15 min, 100 sign-in requests/min, older codes invalidated, same response in `invited` mode whether or not the address is allowed, nginx `limit_req` on `/api/auth/`); `X-Forwarded-For` (nginx appends `$remote_addr`, `trust proxy 1` reads exactly that entry, the app binds loopback, ufw opens 2222/80/443 only); CSRF posture (SameSite=Lax + JSON content type + CORS allow-list); CSP blocks inline and external scripts; every `innerHTML` interpolation passes `esc()` or is a server integer/enum; hash router accepts digits only; localStorage values allow-listed; print popups escape every value and inherit the CSP; IDOR (every sub-route re-derives the document; cross-document parent/child refused); mass assignment (settings, profile and role whitelisted); SQL fully parameterised; `deleted_at IS NULL` on every document load; moderation hiding consistent across list, feed, relations, resolve, copy and share; secrets never in the release archive; backups by `VACUUM INTO` with retention.
+
+Effort: T1 ≈ S (four small changes + three API tests + `npm audit fix`), T2 ≈ S in the repo plus one `visudo` and one unit edit on the live box, T3 ≈ M. Recommended order: T1.4 and T1.1–T1.3 in one commit with tests, then T2.1–T2.3 (template + deploy.sh + `npm run test:deploy`), then T3 after the owner's decisions on T3.1–T3.3.
+
+---
+
 ## Remaining work packages
 
 ### Phase 4 — Visual design pass — done 2026-11-16
