@@ -722,6 +722,12 @@ mark.preview-ins {
     backdrop-filter: blur(6px);
 }
 .footer-credit { color: var(--color-primary); font-style: italic; font-weight: 600; }
+.footer-links { display: flex; gap: 1rem; margin-left: auto; margin-right: 1.5rem; flex-wrap: wrap; }
+.footer-link { color: var(--color-text-muted); font-weight: 600; text-decoration: none; }
+.footer-link:hover { color: var(--color-primary); }
+.login-card .login-tutorial { margin: -1.25rem 0 1.75rem; font-size: 0.875rem; }
+.login-card .login-tutorial a { color: var(--color-primary); font-weight: 600; text-decoration: none; }
+.login-card .login-tutorial a:hover { text-decoration: underline; }
 
 /* ===== Alerts / notices ===== */
 .alert {

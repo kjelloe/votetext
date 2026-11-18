@@ -1,12 +1,10 @@
 'use strict';
 
-// Chapter 10 — Recording the final vote (David, Watering document in final voting).
+// Chapter 10 — Recording the final vote (the supervisor, the document in final voting).
 
 const { sleep } = require('../lib/stage');
 
-const SPRINKLER = '.fv-card:has-text("Ban sprinklers")';
-const WEEKEND = '.fv-card:has-text("Open weekend watering")';
-const SHIFT = '.fv-card:has-text("Shift evening watering")';
+const card = text => `.fv-card:has-text("${text}")`;
 
 module.exports = {
     chapter: 10,
@@ -14,7 +12,7 @@ module.exports = {
     title: 'Recording the final vote',
     beats: [
         async (stage, { page, docs }) => {
-            await page.goto(`/#/documents/${docs.watering}/review`);
+            await page.goto(`/#/documents/${docs.final}/review`);
             await page.locator('.review-toolbar a:has-text("Voting walkthrough")').waitFor();
             await sleep(1500);
             await stage.spotlight('.review-final-badge', 1200);
@@ -23,34 +21,37 @@ module.exports = {
             await sleep(500);
             await stage.spotlight('.fv-list', 1500);
         },
-        async (stage) => {
-            await stage.glide(`${SPRINKLER} .fv-inputs`);
-            await stage.spotlight(`${SPRINKLER} .fv-inputs`, 1500);
-            await stage.spotlight(`${SPRINKLER} .fv-majority`, 2200);
+        async (stage, { t }) => {
+            const passed = card(t.passedCard);
+            await stage.glide(`${passed} .fv-inputs`);
+            await stage.spotlight(`${passed} .fv-inputs`, 1500);
+            await stage.spotlight(`${passed} .fv-majority`, 2200);
         },
-        async (stage) => {
-            await stage.select(`${WEEKEND} .fv-threshold-sel`, 'two_thirds');
-            await stage.spotlight(`${WEEKEND} .fv-threshold`, 2500);
+        async (stage, { t }) => {
+            await stage.select(`${card(t.thresholdCard)} .fv-threshold-sel`, 'two_thirds');
+            await stage.spotlight(`${card(t.thresholdCard)} .fv-threshold`, 2500);
         },
-        async (stage, { page }) => {
-            await stage.type(`${SHIFT} input[name="yes"]`, '12');
-            await stage.type(`${SHIFT} input[name="no"]`, '3');
-            await stage.type(`${SHIFT} input[name="abstain"]`, '1');
-            await stage.click(`${SHIFT} .fv-save-btn`);
+        async (stage, { page, t }) => {
+            const root = card(t.rootCard);
+            await stage.type(`${root} input[name="yes"]`, '12');
+            await stage.type(`${root} input[name="no"]`, '3');
+            await stage.type(`${root} input[name="abstain"]`, '1');
+            await stage.click(`${root} .fv-save-btn`);
             await page.locator('.fv-card-child-skipped').waitFor();
             await stage.spotlight('.fv-card-child-skipped', 2500);
         },
-        async (stage, { page }) => {
+        async (stage, { page, t }) => {
+            const passed = card(t.passedCard);
             const csv = page.waitForEvent('download').catch(() => null);
             await stage.click('.page-header button:has-text("Export CSV")');
             await csv;
             await sleep(900);
             await stage.click('.page-header button:has-text("Print HTML")');
             await sleep(1200);
-            await stage.glide(`${SPRINKLER} .fv-audit-btn`);
-            await stage.click(`${SPRINKLER} .fv-audit-btn`);
-            await page.locator(`${SPRINKLER} .fv-audit-entry`).first().waitFor();
-            await stage.spotlight(`${SPRINKLER} .fv-audit-list`, 2500);
+            await stage.glide(`${passed} .fv-audit-btn`);
+            await stage.click(`${passed} .fv-audit-btn`);
+            await page.locator(`${passed} .fv-audit-entry`).first().waitFor();
+            await stage.spotlight(`${passed} .fv-audit-list`, 2500);
         },
     ],
 };

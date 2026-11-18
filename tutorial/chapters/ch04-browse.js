@@ -1,24 +1,24 @@
 'use strict';
 
-// Chapter 4 — Finding and reading a document (Bjørn): list → charter → scroll → highlighted lines → list controls → jump link.
+// Chapter 4 — Finding and reading a document (the proposer): list → document → scroll → highlighted lines → list controls → jump link.
 
 const { sleep } = require('../lib/stage');
 
-const FEE_CARD = '.doc-sidebar .variant-card:has-text("Raise the annual fee")';
-const DOG_CARD = '.doc-sidebar .variant-card:has-text("Clarify the dog rule")';
+const card = text => `.doc-sidebar .variant-card:has-text("${text}")`;
 
 module.exports = {
     chapter: 4,
     persona: 'bjorn',
     title: 'Finding and reading a document',
     beats: [
-        async (stage, { page }) => {
+        async (stage, { page, t }) => {
+            const doc = `.doc-card:has-text("${t.readDoc}")`;
             await page.goto('/#/documents');
-            await page.locator('.doc-card:has-text("Community Garden Charter")').waitFor();
+            await page.locator(doc).waitFor();
             await sleep(1500);
-            await stage.hover('.doc-card:has-text("Community Garden Charter")', 600);
-            await stage.spotlight('.doc-card:has-text("Community Garden Charter") .status-badge', 1200);
-            await stage.click('.doc-card:has-text("Community Garden Charter")');
+            await stage.hover(doc, 600);
+            await stage.spotlight(`${doc} .status-badge`, 1200);
+            await stage.click(doc);
             await page.locator('#doc-lines-container .line-text').first().waitFor();
         },
         async (stage) => {
@@ -30,9 +30,9 @@ module.exports = {
             await sleep(600);
             await stage.scroll(-420, 1400);
         },
-        async (stage) => {
+        async (stage, { t }) => {
             await stage.hover('.line-text.has-variant >> nth=0', 1600);
-            await stage.hover(FEE_CARD, 400);
+            await stage.hover(card(t.firstCard), 400);
             await stage.spotlight('.line-text.hover-highlight', 2000);
         },
         async (stage) => {
@@ -44,14 +44,16 @@ module.exports = {
             await sleep(1200);
             await stage.select('.doc-sidebar .proposal-sort', 'doc');
         },
-        async (stage, { page }) => {
-            await stage.hover(DOG_CARD, 700);
-            await page.locator(`${DOG_CARD} .goto-link`).waitFor({ state: 'visible' });
-            await stage.spotlight(`${DOG_CARD} .goto-link`, 1200);
-            await stage.click(`${DOG_CARD} .goto-link`);
-            await page.locator('#doc-lines-container .line-text:has-text("4.3 Dogs")').waitFor();
-            await stage.spotlight('#doc-lines-container .line-text:has-text("4.3 Dogs")', 1500);
-            await stage.click(DOG_CARD);
+        async (stage, { page, t }) => {
+            const jump = card(t.jumpCard);
+            const line = `#doc-lines-container .line-text:has-text("${t.jumpLine}")`;
+            await stage.hover(jump, 700);
+            await page.locator(`${jump} .goto-link`).waitFor({ state: 'visible' });
+            await stage.spotlight(`${jump} .goto-link`, 1200);
+            await stage.click(`${jump} .goto-link`);
+            await page.locator(line).waitFor();
+            await stage.spotlight(line, 1500);
+            await stage.click(jump);
             await page.locator('.proposal-heading').waitFor();
             await sleep(800);
         },

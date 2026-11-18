@@ -286,23 +286,36 @@ test('tutorial scripts: the [screen: …] cues are identical and in the same ord
     assert.deepStrictEqual(no, en, 'the Norwegian script must carry exactly the English [screen: …] cues, in the same order — one action script drives both recordings');
 });
 
-test('tutorial toolkit: the script parser yields one beat per cue, the same count per chapter in EN and NO, and every action script matches its chapter', () => {
+test('tutorial toolkit: every scenario parses to 14 chapters with one beat per cue, EN/NO parity, the same cue count per chapter across scenarios, and every action script matches', () => {
     const fs = require('fs');
     const path = require('path');
     const { parseChapters, plainText } = require('../tutorial/lib/script');
-    const en = parseChapters('en'), no = parseChapters('no');
-    assert.equal(en.length, 14);
-    assert.deepStrictEqual(no.map(c => [c.number, c.beats.length]), en.map(c => [c.number, c.beats.length]));
-    for (const c of en) {
-        assert.ok(c.beats.length >= 1, `chapter ${c.number} has no cues`);
-        c.beats.forEach((b, i) => assert.equal(b.index, i + 1));
-        assert.ok(c.beats.filter(b => b.text).length >= 1, `chapter ${c.number} has no narration`);
+    const { loadScenario } = require('../tutorial/lib/seed');
+    const dir = path.join(__dirname, '..', 'tutorial', 'chapters');
+    const scenarios = fs.readdirSync(path.join(__dirname, '..', 'tutorial', 'scenarios')).filter(f => f.endsWith('.js')).map(f => loadScenario(f.replace(/\.js$/, '')));
+    assert.ok(scenarios.map(s => s.name).includes('garden') && scenarios.map(s => s.name).includes('oslo'));
+    const reference = parseChapters('en', loadScenario('garden').scripts);
+    assert.equal(reference.length, 14);
+    for (const sc of scenarios) {
+        const en = parseChapters('en', sc.scripts), no = parseChapters('no', sc.scripts);
+        assert.deepStrictEqual(no.map(c => [c.number, c.beats.length]), en.map(c => [c.number, c.beats.length]), `${sc.name}: NO must carry the EN cue count per chapter`);
+        assert.deepStrictEqual(en.map(c => [c.number, c.beats.length]), reference.map(c => [c.number, c.beats.length]), `${sc.name}: one action script serves every scenario, so the cue count per chapter must match the garden script`);
+        for (const c of en) {
+            assert.ok(c.beats.length >= 1, `${sc.name} chapter ${c.number} has no cues`);
+            c.beats.forEach((b, i) => assert.equal(b.index, i + 1));
+            assert.ok(c.beats.filter(b => b.text).length >= 1, `${sc.name} chapter ${c.number} has no narration`);
+            for (const b of [...c.beats, ...no.find(x => x.number === c.number).beats]) assert.ok(!/(^|\s)(---|\*\*\*)(\s|$)/.test(b.text), `${sc.name} chapter ${c.number} beat ${b.index}: a Markdown rule leaked into the narration`);
+        }
+        for (const key of ['inviteEmail', 'newUser', 'newDoc', 'readDoc', 'firstCard', 'jumpCard', 'jumpLine', 'discussCard', 'comment', 'commentMatch', 'propose', 'voteCard', 'shareCard', 'votingDoc', 'conflictA', 'conflictB', 'passedCard', 'thresholdCard', 'rootCard', 'resolvedDoc', 'modCard', 'modComment']) {
+            assert.ok(sc.targets[key], `${sc.name}: targets.${key} missing`);
+        }
+        assert.deepStrictEqual(sc.documents.map(d => d.key), ['open', 'voting', 'final', 'resolved'], `${sc.name}: one document per lifecycle stage, keyed by stage`);
+        assert.ok(sc.documents[0].variants.some(v => v.comments && v.comments.some(c => c.text.includes(sc.targets.modComment))), `${sc.name}: the moderation chapter needs its off-topic comment seeded`);
     }
     assert.equal(plainText('A **bold** word, *why* and `code` — then'), 'A bold word, why and code, then');
-    const dir = path.join(__dirname, '..', 'tutorial', 'chapters');
     for (const f of fs.readdirSync(dir)) {
         const mod = require(path.join(dir, f));
-        const chapter = en.find(c => c.number === mod.chapter);
+        const chapter = reference.find(c => c.number === mod.chapter);
         assert.ok(chapter, `${f}: chapter ${mod.chapter} is not in the script`);
         assert.equal(mod.beats.length, chapter.beats.length, `${f}: one action per [screen: …] cue`);
     }

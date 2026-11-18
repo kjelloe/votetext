@@ -1,24 +1,23 @@
 'use strict';
 
-// Chapter 12 — A word on moderation (David hides the gnome comment; Clara sees the placeholder; the moderation page).
+// Chapter 12 — A word on moderation (the supervisor hides the off-topic comment t.modComment; the voter sees the placeholder; the moderation page).
 
 const { sleep } = require('../lib/stage');
-
-const GNOME = '.comment:has-text("garden gnomes")';
 
 module.exports = {
     chapter: 12,
     persona: 'david',
     title: 'A word on moderation',
     beats: [
-        async (stage, { page, docs }) => {
-            await page.goto(`/#/documents/${docs.charter}`);
-            await stage.click('.doc-sidebar .variant-card:has-text("Clarify the dog rule")');
-            await page.locator(GNOME).waitFor();
-            await page.locator(GNOME).scrollIntoViewIfNeeded();
-            await stage.spotlight(GNOME, 1800);
+        async (stage, { page, docs, t }) => {
+            const offTopic = `.comment:has-text("${t.modComment}")`;
+            await page.goto(`/#/documents/${docs.open}`);
+            await stage.click(`.doc-sidebar .variant-card:has-text("${t.modCard}")`);
+            await page.locator(offTopic).waitFor();
+            await page.locator(offTopic).scrollIntoViewIfNeeded();
+            await stage.spotlight(offTopic, 1800);
             page.once('dialog', d => d.accept());
-            await stage.click(`${GNOME} .hide-comment-btn`);
+            await stage.click(`${offTopic} .hide-comment-btn`);
             await page.locator('.comment-text:has-text("hidden by moderator")').waitFor();
         },
         async (stage, { page, signIn }) => {

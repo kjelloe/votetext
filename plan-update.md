@@ -1,6 +1,6 @@
 # VoteText — Plan to Production
 
-_Last updated: 2026-11-17 (Phase K complete incl. K.4; Phase V.1–V.3 built for English; Phase 4 design pass done; Phase D dark mode designed; header below is the 2026-10-03 review context)_
+_Last updated: 2026-11-17 (Phase K complete incl. K.4; Phase V.1–V.3 built for English plus the Oslo scenario; Phase 4 design pass and Phase D dark mode done; videos shipped with the app; header below is the 2026-10-03 review context)_
 
 A full review on 2026-10-02 found access, correctness and security gaps, spec features
 with no UI, and a tutorial script describing behaviour the app does not have. Phases 1,
@@ -680,7 +680,7 @@ last and the seed is rebuilt before each chapter anyway (seeding takes well unde
 | V.1 | **Done 2026-11-16.** Toolkit without audio: server boot + seed, cursor overlay, stage primitives, script parser, timeline; chapter 6 (proposing) recorded in EN as a silent clip for review of pace and pointer | M |
 | V.2 | **Done 2026-11-16 (EN).** Voice and assembly: `tts.js` (kokoro-js for EN; recorded files for NO), `assemble.js` (track, mux, SRT, burnt-in copy), chapter 6 in EN with voice; README/ARCHITECTURE/CLAUDE.md/tutorial production notes | M |
 | V.3 | **Done 2026-11-16.** All 14 chapters, the phone clip (`--phone`, chapter 6), `all` mode with concat and chapter markers, `--list-beats` and per-beat recorded takes for the Norwegian track. Open: owner review of the `bm_george` voice against `bf_emma` | L |
-| V.4 | **Next.** Owner review of the full English video, fixes to pace or wording, the Norwegian takes; then `npm run tutorial -- all --burn` and `-- all --lang no` once more for the release | S |
+| V.4 | **In progress.** Owner review of the English videos: the Oslo video approved 2026-11-18 ("Video was good"), production record in `specs/tutorial-video-script.oslo.md`; the Norwegian takes follow `specs/tutorial-norwegian-recording.md`; then one `all --burn` per language and scenario for the release | S |
 
 **Tests.** The toolkit is not part of `npm test`. `tests/unit.test.js` already asserts (since
 2026-11-10) that the `[screen: …]` cues of the EN and NO scripts are identical and in the same order —
@@ -742,6 +742,47 @@ card makes the child). Popups from "Print HTML" are closed on open; downloads ar
 smoke-recorded silently and checked frame by frame; chapter 8 needed its own wait (the signed-out proposal
 page is a reduced card, not the full layout). Found on the way: the English narration of chapter 4 still said
 "Amber lines" (fixed; the Norwegian already said blue).
+
+### Videos shipped with the app, and a second scenario (2026-11-17)
+
+**Shipping.** The finished videos stay out of git (tens of MB, re-recorded after every UI change):
+`npm run tutorial:publish` copies `votetext-tutorial[-<scenario>]-<lang>.subtitled.mp4` from `tutorial/out/`
+into `public/video/` (gitignored apart from a README), `scripts/deploy.sh` uploads whatever is there from the
+working tree into the staged release right after the `git archive`, and prints them in its plan ("video …
+from the working tree, not from git"; a warning when the folder is empty). The server lists the files present
+at start-up as `config.tutorial_videos`, also on a new public `GET /api/auth/config` so the login page can show
+them without a session; the login card and the footer render one link per video. Checked with `npm run
+test:deploy` (the stand-in server received `public/video/`), one API test each for `/auth/me` and `/auth/config`.
+
+**Scenarios.** The owner wants the same tutorial told on a real document: Oslo Høyre's first programme draft
+(`doctools/1st-utkast-til-Oslo-Hoyres-program.md`, 23 pages, numbered lines with page markers — exactly the
+`lines_per_page: "auto"` format of UC-23). The toolkit got a scenario layer: `tutorial/scenarios/<name>.js` holds
+the cast, four documents keyed by stage (`open`, `voting`, `final`, `resolved`) with proposals, votes, comments,
+tallies and resolved text, the two script files and `targets` (card titles, line prefixes, typed texts). A
+data-driven seeder (`tutorial/lib/seed.js`) replaces the hand-written `scripts/seed-demo.js`, which is now a
+wrapper taking the scenario name; the garden scenario is the same data as before. Every chapter action script
+reads its targets from `ctx.t`, so one set of chapters serves every scenario, enforced by the unit test (equal
+cue counts per chapter across all scripts, EN/NO parity per scenario, every target key present).
+
+**The Oslo scenario.** A copy of the draft lives at `tutorial/scenarios/oslo-program.md` with the cover and
+contents pages dropped and the page markers renumbered, so the app's page 1 is the first page of text (the
+importer takes page numbers from the markers, and an empty first page would open the document on nothing).
+The open document is the whole draft (839 lines, 21 pages); the seeded proposals sit on pages 1–2 (the property
+tax sentence in the introduction, the kindergarten equal-treatment bullet), the recorded proposal on the
+"going around the city" sentence of the introduction, and the voting, final-voting and resolved documents are
+the introduction and the two kindergarten/school sections cut from the same pages — "changes only on the
+first few pages" as asked. All seeded texts are Norwegian (proposals, rationales, comments); the personas are
+the same four with Oslo Høyre affiliations. Scripts: `specs/tutorial-video-script.oslo.md` (EN, Kokoro) and
+`.oslo.no.md` (NO, the owner's takes), same cue count per chapter as the garden script. Recording:
+`npm run tutorial -- all --scenario oslo --burn` → `tutorial/out/oslo/votetext-tutorial-oslo-en.subtitled.mp4`; first run 11.9 minutes (12.1 after the subtitle fix of 2026-11-18), every chapter smoke-recorded and checked frame by frame (the jump link lands on page 2, the drag ordering and the greyed child work on the Norwegian titles). Both videos published to `public/video/` (29 + 36 MB); the login page and footer show "Tutorial (English)" and "Tutorial · Oslo (English)".
+
+**Owner review 2026-11-18.** The Oslo video approved as is; its setup is recorded under "Production record" in
+`specs/tutorial-video-script.oslo.md`, and the Norwegian recording procedure is written up step by step in
+`specs/tutorial-norwegian-recording.md` (take list, recorder settings, one-chapter check, full build, publish).
+Found on the way: the Oslo scripts separate chapters with `---` rules and the parser read them as narration, so
+the last subtitle of every chapter ended in " ---" (the parser now skips Markdown rules, unit test added, video
+re-recorded and republished); `--list-beats` only accepted a chapter number although the Norwegian script
+header advertised `all` (now prints every chapter, with a heading per chapter).
 
 ### Decisions needed (Q26–Q30)
 

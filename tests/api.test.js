@@ -990,6 +990,16 @@ test('GET /api/auth/me — returns config with voting defaults → 200', async (
     assert.ok(r.data.config, 'config present');
     assert.equal(typeof r.data.config.toast_dismiss_seconds, 'number');
     assert.equal(typeof r.data.config.voting_countdown_default_minutes, 'number');
+    assert.ok(Array.isArray(r.data.config.tutorial_videos), 'tutorial_videos lists the files under public/video/ (empty until published)');
+});
+
+test('GET /api/auth/config — the same settings without a session, for the login page → 200', async () => {
+    const r = await req('GET', '/auth/config');
+    assert.equal(r.status, 200);
+    assert.equal(r.data.config.toast_dismiss_seconds, 30);
+    assert.ok(Array.isArray(r.data.config.tutorial_videos));
+    for (const v of r.data.config.tutorial_videos) assert.match(v.url, /^\/video\/votetext-tutorial-(?:[a-z]+-)?[a-z]{2}\.subtitled\.mp4$/);
+    assert.equal(r.data.user, undefined, 'no user data for a visitor');
 });
 
 test('Setup: create fresh open doc for voting transition tests', async () => {

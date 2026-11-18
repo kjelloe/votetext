@@ -11,10 +11,12 @@ Opptaket er skriptet (`npm run tutorial`, se den engelske filen). Kokoro har ing
 den norske fortellerstemmen leses inn per stikkord:
 
 ```bash
-npm run tutorial -- 6 --lang no --list-beats   # teksten som skal leses per stikkord, og filnavnet opptaket skal lagres som
+npm run tutorial -- all --lang no --list-beats # teksten som skal leses per stikkord, og filnavnet opptaket skal lagres som (alle kapitlene; `6` i stedet for `all` gir ett kapittel)
 npm run tutorial -- 6 --lang no                # norsk klipp fra opptakene i tutorial/out/audio/no/ (ch06-1.wav …)
-npm run tutorial -- all --lang no              # alle kapitlene til én norsk video (tutorial/out/votetext-tutorial-no.mp4) når opptakene finnes
+npm run tutorial -- all --lang no --burn       # alle kapitlene til én norsk video (tutorial/out/votetext-tutorial-no.subtitled.mp4) når opptakene finnes
 ```
+
+Trinn for trinn: `tutorial-norwegian-recording.md`.
 
 ---
 

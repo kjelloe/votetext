@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const crypto = require('crypto');
 const { Router } = require('express');
 const { getOne, getAll, run } = require('../db');
@@ -205,14 +208,31 @@ router.post('/logout', (req, res) => {
     res.json({ message: 'Logged out' });
 });
 
-// GET /api/auth/me
-router.get('/me', requireAuth, (req, res) => {
-    const config = {
+// Tutorial videos are shipped under public/video/ by scripts/deploy.sh from the working tree (npm run tutorial:publish);
+// the login page and the footer link to the ones present at start-up: votetext-tutorial[-<scenario>]-<lang>.subtitled.mp4
+const VIDEO_DIR = path.join(__dirname, '..', '..', 'public', 'video');
+const VIDEO_NAME = /^votetext-tutorial-(?:([a-z]+)-)?([a-z]{2})\.subtitled\.mp4$/;
+const LANG_NAMES = { en: 'English', no: 'norsk' };
+const tutorialVideos = (fs.existsSync(VIDEO_DIR) ? fs.readdirSync(VIDEO_DIR) : [])
+    .map(f => f.match(VIDEO_NAME)).filter(Boolean)
+    .sort((a, b) => (a[1] ? 1 : 0) - (b[1] ? 1 : 0) || a[0].localeCompare(b[0]))
+    .map(m => ({ url: `/video/${m[0]}`, label: `Tutorial${m[1] ? ` · ${m[1][0].toUpperCase()}${m[1].slice(1)}` : ''} (${LANG_NAMES[m[2]] || m[2]})` }));
+
+function clientConfig() {
+    return {
         toast_dismiss_seconds: parseInt(process.env.TOAST_DISMISS_SECONDS || '30'),
         voting_countdown_default_minutes: parseInt(process.env.VOTING_COUNTDOWN_DEFAULT_MINUTES || '5'),
         comment_edit_window_minutes: parseInt(process.env.COMMENT_EDIT_WINDOW_MINUTES || '30'),
+        tutorial_videos: tutorialVideos,
     };
-    res.json({ user: req.user, config });
+}
+
+// GET /api/auth/config — the same settings for a visitor who is not signed in (login page)
+router.get('/config', (req, res) => res.json({ config: clientConfig() }));
+
+// GET /api/auth/me
+router.get('/me', requireAuth, (req, res) => {
+    res.json({ user: req.user, config: clientConfig() });
 });
 
 // GET /api/auth/search?q=... — find users by partial email, display_name, or organization

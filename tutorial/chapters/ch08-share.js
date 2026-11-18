@@ -1,6 +1,6 @@
 'use strict';
 
-// Chapter 8 — Sharing with an outsider (Bjørn shares his fee proposal; the last beat is the signed-out view).
+// Chapter 8 — Sharing with an outsider (the proposer shares t.shareCard; the last beat is the signed-out view).
 
 const { sleep } = require('../lib/stage');
 
@@ -9,9 +9,9 @@ module.exports = {
     persona: 'bjorn',
     title: 'Sharing with an outsider',
     beats: [
-        async (stage, { page, docs }) => {
-            await page.goto(`/#/documents/${docs.charter}`);
-            await stage.click('.doc-sidebar .variant-card:has-text("Raise the annual fee")');
+        async (stage, { page, docs, t }) => {
+            await page.goto(`/#/documents/${docs.open}`);
+            await stage.click(`.doc-sidebar .variant-card:has-text("${t.shareCard}")`);
             await page.locator('#share-variant-btn').waitFor();
             await sleep(600);
             await stage.click('#share-variant-btn');

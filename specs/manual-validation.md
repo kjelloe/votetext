@@ -198,6 +198,11 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 - [ ] Print (Ctrl+P) from dark → the preview is light and the toggle is not printed
 - [ ] Screen reader: the button announces "Switch to dark mode, toggle button, not pressed" and flips after activation
 
+## Tutorial videos in the app (2026-11-17)
+
+- [ ] After `npm run tutorial:publish` and a deploy: the login page shows "New here? Tutorial (English) ↗" and the footer the same link; the video plays in the browser and seeking works (Range requests); no link appears on a server without `public/video/*.mp4`
+- [ ] With the Oslo video published too: both links appear, labelled Tutorial (English) and Tutorial · Oslo (English)
+
 ## Sign-off
 
 | UC | Validated by | Date | Result |
@@ -217,4 +222,5 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 | K.4 discard guard (phone) | | | |
 | Design pass (phone + desktop) | | | |
 | Dark mode (phone + desktop + print) | | | |
+| Tutorial video links | | | |
 | Deploy | | | |

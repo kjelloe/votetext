@@ -1,19 +1,8 @@
 'use strict';
 
-// Chapter 2 — Creating a document (Anna): New document → paste Appendix A → Draft → Open.
+// Chapter 2 — Creating a document (the owner): New document → paste t.newDoc → Draft → Open.
 
 const { sleep } = require('../lib/stage');
-
-const TITLE = 'Spring Planting Plan 2027';
-const TEXT = [
-    'Spring Planting Plan 2027',
-    '',
-    '1. The common beds are planted on the last weekend of April.',
-    "2. This year's theme crops are squash, sugar peas, and dahlias.",
-    '3. Seedlings are raised in the greenhouse from mid-March; sign-up sheet on the door.',
-    '4. Each member contributes two hours to the planting weekend or one tray of seedlings.',
-    '5. The plan is evaluated at the September assembly.',
-].join('\n');
 
 module.exports = {
     chapter: 2,
@@ -30,10 +19,10 @@ module.exports = {
             await stage.click('#create-doc-btn');
             await page.locator('#new-doc-title').waitFor();
         },
-        async (stage) => {
+        async (stage, { t }) => {
             await sleep(500);
-            await stage.type('#new-doc-title', TITLE);
-            await stage.paste('#new-doc-text', TEXT);
+            await stage.type('#new-doc-title', t.newDoc.title);
+            await stage.paste('#new-doc-text', t.newDoc.text);
             await stage.spotlight('#new-doc-text', 1200);
         },
         async (stage, { page }) => {

@@ -16,7 +16,9 @@ npm run tutorial -- 6            # chapter 6 in English with Kokoro narration �
 npm run tutorial -- 6 --silent   # same clip without voice (pace and pointer review)
 npm run tutorial -- 6 --phone    # chapter 6 on an iPhone viewport (touch, bottom sheet) → tutorial/out/ch06-en.phone.mp4
 npm run tutorial -- 6 --dark     # the same clip in dark mode (the release video stays light)
-npm run tutorial -- 6 --lang no --list-beats   # Norwegian: the text to read per beat and the WAV name to save it as
+npm run tutorial -- all --scenario oslo --burn   # the Oslo programme scenario (tutorial-video-script.oslo.md) → tutorial/out/oslo/
+npm run tutorial:publish         # finished videos → public/video/, shipped by scripts/deploy.sh and linked from the app
+npm run tutorial -- all --lang no --list-beats # Norwegian: the text to read per beat and the WAV name to save it as, every chapter (see tutorial-norwegian-recording.md)
 npm run tutorial -- 6 --lang no            # Norwegian clip from your recordings in tutorial/out/audio/no/ (ch06-1.wav …)
 ```
 

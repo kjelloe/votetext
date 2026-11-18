@@ -14,7 +14,8 @@
     "test": "node --test tests/api.test.js tests/unit.test.js tests/frontend.test.js tests/migrate.test.js tests/deploy.test.js",
     "test:e2e": "playwright test",
     "test:deploy": "bash tests/deploy/run-local.sh",
-    "tutorial": "node tutorial/record.js"
+    "tutorial": "node tutorial/record.js",
+    "tutorial:publish": "node tutorial/publish.js"
   },
   "keywords": [
     "voting",

@@ -157,6 +157,9 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
+# Tutorial videos: published by npm run tutorial:publish, shipped by scripts/deploy.sh from the working tree
+public/video/*.mp4
+
 # Test artifacts
 playwright-report/
 test-results/

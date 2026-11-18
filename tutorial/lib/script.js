@@ -1,18 +1,20 @@
 'use strict';
 
-// Parses one chapter of specs/tutorial-video-script(.no).md into beats: each [screen: …] cue with the
-// narration paragraphs that follow it. The cues are identical in both languages (tests/unit.test.js).
+// Parses one chapter of a scenario's script (specs/tutorial-video-script*.md, EN and NO) into beats: each
+// [screen: …] cue with the narration paragraphs that follow it. The cues are identical in both languages of a
+// scenario, and every scenario has the same number of cues per chapter (tests/unit.test.js).
 
 const fs = require('fs');
 const path = require('path');
 
-const FILES = { en: 'tutorial-video-script.md', no: 'tutorial-video-script.no.md' };
+const DEFAULT_FILES = { en: 'tutorial-video-script.md', no: 'tutorial-video-script.no.md' };
 const CUE = /^\[screen: (.*)\]$/;
+const RULE = /^(?:-{3,}|\*{3,}|_{3,})$/;
 const HEADING = /^## (?:Chapter|Kapittel) (\d+) — (.*?)(?: \*\(.*)?$/;
 
-function scriptPath(lang) {
-    if (!FILES[lang]) throw new Error(`Unknown language "${lang}" (en or no)`);
-    return path.join(__dirname, '..', '..', 'specs', FILES[lang]);
+function scriptPath(lang, files = DEFAULT_FILES) {
+    if (!files[lang]) throw new Error(`Unknown language "${lang}" (en or no)`);
+    return path.join(__dirname, '..', '..', 'specs', files[lang]);
 }
 
 function plainText(markdown) {
@@ -25,8 +27,8 @@ function plainText(markdown) {
         .trim();
 }
 
-function parseChapters(lang) {
-    const lines = fs.readFileSync(scriptPath(lang), 'utf8').split('\n');
+function parseChapters(lang, files) {
+    const lines = fs.readFileSync(scriptPath(lang, files), 'utf8').split('\n');
     const chapters = [];
     let chapter = null;
     let beat = null;
@@ -54,15 +56,15 @@ function parseChapters(lang) {
             continue;
         }
         if (!beat) continue;
-        if (line.trim() === '') flush();
+        if (line.trim() === '' || RULE.test(line.trim())) flush();
         else paragraph.push(line.trim());
     }
     flush();
     return chapters;
 }
 
-function chapterBeats(lang, number) {
-    const chapter = parseChapters(lang).find(c => c.number === number);
+function chapterBeats(lang, number, files) {
+    const chapter = parseChapters(lang, files).find(c => c.number === number);
     if (!chapter) throw new Error(`Chapter ${number} not found in the ${lang} script`);
     return chapter;
 }

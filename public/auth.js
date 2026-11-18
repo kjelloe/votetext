@@ -7,6 +7,7 @@ async function viewLogin() {
         <div class="login-card">
             <h1>VoteText</h1>
             <p class="subtitle">Enter your email to get a login code</p>
+            ${state.config && state.config.tutorial_videos && state.config.tutorial_videos.length ? `<p class="login-tutorial">New here? ${state.config.tutorial_videos.map(v => `<a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.label)} ↗</a>`).join(' · ')}</p>` : ''}
             <div id="step-email">
                 <div class="form-group">
                     <label for="email-input">Email address</label>

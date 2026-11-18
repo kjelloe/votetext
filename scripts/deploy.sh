@@ -211,6 +211,13 @@ else
     echo "Currently  unknown (no version marker on the server yet)"
 fi
 [ "$WITH_ENV" = 1 ] && echo "     .env  will be replaced with $ENV_FILE"
+VIDEOS=()
+for f in public/video/*.mp4; do [ -f "$f" ] && VIDEOS+=("$f"); done
+if [ "${#VIDEOS[@]}" -gt 0 ]; then
+    echo "    video  ${VIDEOS[*]} ($(du -ch "${VIDEOS[@]}" | tail -1 | cut -f1), from the working tree, not from git)"
+else
+    echo "    video  none in public/video/ — the login page and footer will not link to a tutorial (npm run tutorial:publish)"
+fi
 [ "$RUN_MIGRATE" = 0 ] && echo "   schema  left as it is (no migration)"
 echo
 
@@ -226,6 +233,12 @@ STAGE="$APP/.deploy-stage"
 echo "==> Uploading $SHORT"
 git archive --format=tar "$SHA" -- "${SHIP[@]}" | gzip \
     | remote "rm -rf '$STAGE' && mkdir -p '$STAGE' && tar -xzf - -C '$STAGE'"
+
+# Tutorial videos are not committed (tens of MB, re-recorded often): they ride along from the working tree
+if [ "${#VIDEOS[@]}" -gt 0 ]; then
+    echo "==> Uploading ${#VIDEOS[@]} tutorial video(s) from public/video/"
+    tar -cz "${VIDEOS[@]}" | remote "tar -xzf - -C '$STAGE'"
+fi
 
 if [ "$WITH_ENV" = 1 ]; then
     remote "umask 077 && cat > '$STAGE/.env.new'" < "$ENV_FILE"

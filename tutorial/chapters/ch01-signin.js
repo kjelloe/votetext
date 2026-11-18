@@ -1,10 +1,8 @@
 'use strict';
 
-// Chapter 1 — Signing in (Erik, a new account): email → code read from the tutorial database → profile → empty list.
+// Chapter 1 — Signing in (a new account, t.inviteEmail): email → code read from the tutorial database → profile → empty list.
 
 const { sleep } = require('../lib/stage');
-
-const EMAIL = 'erik@demo.votetext';
 
 module.exports = {
     chapter: 1,
@@ -17,14 +15,14 @@ module.exports = {
             await sleep(800);
             await stage.spotlight('.login-card', 1800);
         },
-        async (stage, { page }) => {
-            await stage.type('#email-input', EMAIL);
+        async (stage, { page, t }) => {
+            await stage.type('#email-input', t.inviteEmail);
             await stage.click('#send-btn');
             await page.locator('#otp-input').waitFor({ state: 'visible' });
         },
-        async (stage, { page, server }) => {
+        async (stage, { page, server, t }) => {
             await sleep(1200);
-            const otp = server.latestOtp(EMAIL);
+            const otp = server.latestOtp(t.inviteEmail);
             if (!otp) throw new Error('No login code was stored for Erik');
             await stage.type('#otp-input', otp.code);
             await page.locator('#pm-name').waitFor();
@@ -33,9 +31,9 @@ module.exports = {
             await sleep(600);
             await stage.spotlight('#modal-box', 2200);
         },
-        async (stage, { page }) => {
-            await stage.type('#pm-name', 'Erik Moen', { clear: true });
-            await stage.type('#pm-org', 'Plot 7');
+        async (stage, { page, t }) => {
+            await stage.type('#pm-name', t.newUser.name, { clear: true });
+            await stage.type('#pm-org', t.newUser.org);
             await stage.click('#pm-save');
             await page.locator('#modal-overlay').waitFor({ state: 'hidden' });
         },

@@ -1,6 +1,6 @@
 'use strict';
 
-// Chapter 0 — Intro (Anna's document list). One function per [screen: …] cue.
+// Chapter 0 — Intro (the owner's document list). One function per [screen: …] cue.
 
 const { sleep } = require('../lib/stage');
 

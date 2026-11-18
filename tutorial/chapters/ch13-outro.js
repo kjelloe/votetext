@@ -1,6 +1,6 @@
 'use strict';
 
-// Chapter 13 — Outro (back on Anna's document list).
+// Chapter 13 — Outro (back on the owner's document list).
 
 const { sleep } = require('../lib/stage');
 

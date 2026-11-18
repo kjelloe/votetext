@@ -342,9 +342,11 @@ votetext/
 │   ├── migrate.js          # Bring an existing database in line with schema.sql (idempotent, one transaction)
 │   ├── deploy.sh           # Deploy over SSH: tests, upload, backup, migrate, health check, restore; --check audits the server
 │   ├── seed.js             # Optional: seed with sample data
-│   └── seed-demo.js        # Tutorial-video demo data (four personas, four lifecycle stages)
+│   └── seed-demo.js        # Tutorial-video demo data: npm run seed-demo [scenario] (tutorial/scenarios/garden.js or oslo.js)
 ├── tutorial/
-│   ├── record.js           # npm run tutorial -- <chapter|all> [--phone]: scripted recording of the tutorial (Playwright + Kokoro + ffmpeg)
+│   ├── record.js           # npm run tutorial -- <chapter|all> [--scenario oslo] [--phone]: scripted recording of the tutorial (Playwright + Kokoro + ffmpeg)
+│   ├── publish.js          # npm run tutorial:publish: finished videos → public/video/ (shipped by deploy.sh, linked from the app)
+│   ├── scenarios/          # cast, documents, proposals and chapter targets per scenario (garden, oslo + the programme draft)
 │   ├── lib/                # server boot (port 3002, own DB), script parser, cursor overlay, stage primitives, TTS, WAV, ffmpeg assembly
 │   └── chapters/           # one action script per chapter (ch06-propose.js …); out/ is gitignored
 ├── src/
@@ -367,7 +369,8 @@ votetext/
 ├── specs/
 │   ├── test-plan.md        # Test scenarios (automated + manual checklist)
 │   ├── use-cases.md        # Detailed user flows (UC-1 …)
-│   └── tutorial-video-script.md  # Video walkthrough script (EN; .no.md for Norwegian)
+│   ├── tutorial-video-script.md  # Video walkthrough script (EN; .no.md for Norwegian; .oslo.md/.oslo.no.md for the Oslo scenario, with its production record)
+│   └── tutorial-norwegian-recording.md  # Step by step: recording the Norwegian narration takes
 ├── tests/
 │   ├── api.test.js         # Integration tests (node:test, isolated DB)
 │   ├── unit.test.js        # Unit tests for src/lib/text.js
@@ -529,7 +532,9 @@ sqlite3 /opt/votetext/data/votetext.db "VACUUM INTO '/home/<DEPLOY_USER>/backups
 - [ ] Hardened server layout and offsite backups on the live VM (in-place conversion, guide in the ops repository)
 - [x] Proposing and browsing on phones (Phase M, 2026-10-29/30, UC-24/UC-25) — selection toolbar (`public/selection.js`, Chromium phone project in Playwright), bottom-sheet modals that follow the keyboard, stay on the document after submitting with a toast, proposal filter + order remembered per device with `my_vote` for *Not yet voted by me*, sticky bottom bar with the list as a sheet, Previous/Next in the chosen order
 - [x] Tutorial video production, all chapters (Phase V.3, 2026-11-16): `npm run tutorial -- all --burn` records the fourteen chapters against a fresh seed and joins them into one English video with chapter markers; `--phone` records chapter 6 on an iPhone viewport; Norwegian narration comes from the owner's own recordings (Kokoro has no Norwegian voice — `npm run tutorial -- 6 --lang no --list-beats` prints the text and file name per beat)
-- [ ] Tutorial video release (Phase V.4): owner review of the English video (voice, pace), the Norwegian takes, then one final `all` run per language
+- [x] Tutorial video shipped with the app (2026-11-17): `npm run tutorial:publish` puts the finished videos in `public/video/` (not committed), `scripts/deploy.sh` uploads them from the working tree next to the release, and the login page and footer link to every video present
+- [x] Second tutorial scenario (2026-11-17): the Oslo Høyre programme draft as the document (`tutorial/scenarios/oslo.js`, proposals on its first pages only), English and Norwegian scripts with the same cues, `npm run tutorial -- all --scenario oslo`
+- [ ] Tutorial video release (Phase V.4): Oslo video approved 2026-11-18; the Norwegian takes (`specs/tutorial-norwegian-recording.md`), then one final `all` run per language and scenario
 - [x] Modal keyboard and focus (Phase K, 2026-11-10): every modal is a `role="dialog"`, focus moves in and back, Escape closes, Tab wraps; on phones the sheet takes focus so the keyboard waits; toast placement without `:has()`
 - [x] Visual design pass (Phase 4, 2026-11-16) — one token block in `style.css` (blue primary, five semantic tints, system font stack, 8/12/16/20 px radius scale, light only; a contract test keeps hex colours out of the components), the review, conflict and final-voting screens brought to the same language, phone header tabs with a current-page marker, document header and access rows that wrap instead of overflowing, list controls built once (K.3), `FINAL VOTING` badge
 - [x] Dark mode (Phase D, 2026-11-17) — every token a `light-dark()` pair, so the app follows the system scheme; a sun/moon button at the right end of the header switches for every visitor, the choice is kept in the browser and applied before first paint by `public/theme.js`

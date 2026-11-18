@@ -1,6 +1,6 @@
 'use strict';
 
-// Chapter 11 — Reading the result (Clara, the resolved Tool Shed document).
+// Chapter 11 — Reading the result (the voter, the resolved document).
 
 const { sleep } = require('../lib/stage');
 
@@ -9,11 +9,12 @@ module.exports = {
     persona: 'clara',
     title: 'Reading the result',
     beats: [
-        async (stage, { page }) => {
+        async (stage, { page, t }) => {
+            const doc = `.doc-card:has-text("${t.resolvedDoc}")`;
             await page.goto('/#/documents');
-            await page.locator('.doc-card:has-text("Tool Shed")').waitFor();
+            await page.locator(doc).waitFor();
             await sleep(1200);
-            await stage.click('.doc-card:has-text("Tool Shed")');
+            await stage.click(doc);
             await page.locator('.doc-text-header a:has-text("Resolved text")').waitFor();
             await sleep(700);
             await stage.click('.doc-text-header a:has-text("Resolved text")');

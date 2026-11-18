@@ -1,11 +1,11 @@
 'use strict';
 
 // Records one tutorial chapter, or all of them into one video with chapter markers:
-//   node tutorial/record.js <chapter|all> [--lang en|no] [--voice bm_george] [--silent] [--scale 1.5] [--burn] [--phone] [--dark] [--list-beats]
+//   node tutorial/record.js <chapter|all> [--scenario garden|oslo] [--lang en|no] [--voice bm_george] [--silent] [--scale 1.5] [--burn] [--phone] [--dark] [--list-beats]
 // scale = Chromium device scale factor on the 1280×800 layout (1.5 → 1920×1200 frames); --phone records the iPhone 13
 // viewport with touch (390×844, default scale 2). Output under tutorial/out/: chNN-<lang>[.phone].webm (raw), .mp4, .srt,
-// .timeline.json; `all` adds votetext-tutorial-<lang>.mp4. --list-beats prints the narration per beat with the WAV name a
-// recorded take must have (the Norwegian track) and exits
+// .timeline.json (a scenario other than garden writes under out/<scenario>/); `all` adds votetext-tutorial[-<scenario>]-<lang>.mp4. --list-beats prints the narration per beat with the WAV name a
+// recorded take must have (the Norwegian track; with `all`, every chapter) and exits
 
 const fs = require('fs');
 const path = require('path');
@@ -15,14 +15,14 @@ const { startServer } = require('./lib/server');
 const { CURSOR_INIT } = require('./lib/cursor');
 const { Stage } = require('./lib/stage');
 const { synthesise, listBeats, DEFAULT_VOICE } = require('./lib/tts');
+const { loadScenario } = require('./lib/seed');
 const { writeSrt, mux, concat, probeDurationMs } = require('./lib/assemble');
 
-const OUT = path.join(__dirname, 'out');
 const VIEWPORT = { width: 1280, height: 800 };
 const PHONE = devices['iPhone 13'];
 
 function parseArgs(argv) {
-    const a = { lang: 'en', scale: null, silent: false, burn: false, list: false, phone: false, dark: false };
+    const a = { lang: 'en', scale: null, silent: false, burn: false, list: false, phone: false, dark: false, scenario: 'garden' };
     const rest = [];
     for (let i = 0; i < argv.length; i++) {
         const v = argv[i];
@@ -34,6 +34,7 @@ function parseArgs(argv) {
         else if (v === '--list-beats') a.list = true;
         else if (v === '--phone') a.phone = true;
         else if (v === '--dark') a.dark = true;
+        else if (v === '--scenario') a.scenario = argv[++i];
         else rest.push(v);
     }
     a.all = rest[0] === 'all';
@@ -58,28 +59,37 @@ function allChapters() {
 async function main() {
     const args = parseArgs(process.argv.slice(2));
     const log = m => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
-    if (args.list) { process.stdout.write(listBeats(chapterBeats(args.lang, args.chapter).beats, { lang: args.lang, chapter: args.chapter, outDir: OUT })); return; }
+    const scenario = loadScenario(args.scenario);
+    const OUT = path.join(__dirname, 'out', scenario.outDir || '');
+    if (args.list) {
+        for (const n of args.all ? allChapters() : [args.chapter]) {
+            const script = chapterBeats(args.lang, n, scenario.scripts);
+            if (args.all) process.stdout.write(`${n === allChapters()[0] ? '' : '\n'}=== Chapter ${n} — ${script.title}\n\n`);
+            process.stdout.write(listBeats(script.beats, { lang: args.lang, chapter: n, outDir: OUT }));
+        }
+        return;
+    }
     fs.mkdirSync(OUT, { recursive: true });
-    if (!args.all) { await recordChapter(args.chapter, args, log); return; }
+    if (!args.all) { await recordChapter(args.chapter, args, scenario, OUT, log); return; }
     const items = [];
     for (const n of allChapters()) {
-        const r = await recordChapter(n, args, log);
+        const r = await recordChapter(n, args, scenario, OUT, log);
         items.push({ file: r.mp4, burned: r.burned, title: `${n}. ${r.title}`, durationMs: probeDurationMs(r.mp4) });
     }
-    const out = concat(items, path.join(OUT, `votetext-tutorial-${args.lang}${args.phone ? '.phone' : ''}.mp4`));
+    const out = concat(items, path.join(OUT, `votetext-tutorial-${scenario.name === 'garden' ? '' : scenario.name + '-'}${args.lang}${args.phone ? '.phone' : ''}.mp4`));
     if (args.burn) concat(items.map(i => ({ ...i, file: i.burned })), out.replace(/\.mp4$/, '.subtitled.mp4'));
     log(`all ${items.length} chapters: ${path.relative(process.cwd(), out)} (${(items.reduce((s, i) => s + i.durationMs, 0) / 60000).toFixed(1)} min)`);
 }
 
-async function recordChapter(chapter, args, log) {
-    const script = chapterBeats(args.lang, chapter);
+async function recordChapter(chapter, args, scenario, OUT, log) {
+    const script = chapterBeats(args.lang, chapter, scenario.scripts);
     const actions = loadChapter(chapter);
     if (actions.beats.length !== script.beats.length) throw new Error(`Chapter ${chapter}: ${actions.beats.length} actions but ${script.beats.length} cues in the ${args.lang} script`);
     const base = path.join(OUT, `ch${String(chapter).padStart(2, '0')}-${args.lang}${args.phone ? '.phone' : ''}`);
-    log(`chapter ${chapter} — ${script.title}`);
+    log(`chapter ${chapter} — ${script.title} (scenario ${scenario.name})`);
 
     const audio = args.silent ? {} : await synthesise(script.beats, { lang: args.lang, chapter, voice: args.voice || DEFAULT_VOICE[args.lang], outDir: OUT, log });
-    const server = await startServer();
+    const server = await startServer({ scenario });
     log(`server on ${server.baseUrl}, documents ${JSON.stringify(server.docs)}`);
     const browser = await chromium.launch({ args: [`--force-device-scale-factor=${args.scale}`] });
     let videoPath;
@@ -102,7 +112,7 @@ async function recordChapter(chapter, args, log) {
         };
         stage = new Stage(page, { audio, log, touch: args.phone });
         await stage.titleCard(`${chapter}. ${script.title}`, actions.subtitle || '');
-        const ctx = { page, context, docs: server.docs, cookies: server.cookies, server, signIn };
+        const ctx = { page, context, docs: server.docs, cookies: server.cookies, server, signIn, scenario, t: scenario.targets };
         for (let i = 0; i < script.beats.length; i++) {
             await stage.beat(script.beats[i], () => actions.beats[i](stage, ctx));
         }

@@ -1658,7 +1658,11 @@ async function init() {
         const data = await api('GET', '/auth/me');
         state.user = data.user;
         state.config = data.config || {};
-    } catch {}
+    } catch {
+        try { state.config = (await api('GET', '/auth/config')).config || {}; } catch {}
+    }
+    const tutorialLinks = document.getElementById('tutorial-links');
+    for (const v of state.config.tutorial_videos || []) tutorialLinks.append(el('a', { class: 'footer-link', href: v.url, target: '_blank', rel: 'noopener' }, `${v.label} ↗`));
     updateHeader();
     window.addEventListener('hashchange', () => runRoute());
     await runRoute();
