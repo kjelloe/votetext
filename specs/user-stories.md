@@ -29,7 +29,7 @@ The stories assume a document has already been created and is in **Open** status
 **Actor:** Any user (first visit or returning)
 **Goal:** Authenticate and land on the document list
 
-1. User opens the app URL; the login page appears with an email field.
+1. User opens the app URL; the login page appears with an email field (and, when the server ships them, links to the tutorial videos — UC-26).
 2. User types their email address and clicks **Send code**.
 3. User opens their email, copies the one-time code, pastes it into the code field, and clicks **Verify**.
 4. *(First-time only)* A profile completion modal appears. User types their display name and organisation, then clicks **Save and continue** — or clicks **Skip** to fill it in later.

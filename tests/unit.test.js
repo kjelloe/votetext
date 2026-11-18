@@ -399,3 +399,23 @@ test('tutorial toolkit: a recorded take per chapter and beat replaces the synthe
     assert.match(listBeats(beats, { lang: 'no', chapter: 6, outDir: dir }), /ch06-1\.wav  \(recorded\)/);
     fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('tutorial videos: the server, the publish script and the recorder agree on the video file names', () => {
+    const fs = require('fs'), path = require('path');
+    const literal = f => {
+        const m = fs.readFileSync(path.join(__dirname, '..', f), 'utf8').match(/\/\^votetext-tutorial-[^\n]*?\$\//);
+        assert.ok(m, `${f}: no video-name pattern found`);
+        return new RegExp(m[0].slice(1, -1));
+    };
+    const server = literal('src/routes/auth.js'), publish = literal('tutorial/publish.js');
+    const record = fs.readFileSync(path.join(__dirname, '..', 'tutorial', 'record.js'), 'utf8');
+    assert.match(record, /votetext-tutorial-\$\{scenario\.name === 'garden' \? '' : scenario\.name \+ '-'\}\$\{args\.lang\}/, 'record.js names the video votetext-tutorial[-<scenario>]-<lang>');
+    for (const name of ['votetext-tutorial-en.subtitled.mp4', 'votetext-tutorial-no.subtitled.mp4', 'votetext-tutorial-oslo-en.subtitled.mp4', 'votetext-tutorial-oslo-no.subtitled.mp4']) {
+        assert.ok(server.test(name) && publish.test(name), `${name} must be published and listed`);
+    }
+    for (const name of ['votetext-tutorial-en.mp4', 'votetext-tutorial-en.phone.subtitled.mp4', 'votetext-tutorial-en.phone.mp4', 'ch06-en.subtitled.mp4']) {
+        assert.ok(!server.test(name) && !publish.test(name), `${name} is a working file, not a release`);
+    }
+    const m = 'votetext-tutorial-oslo-no.subtitled.mp4'.match(server);
+    assert.deepStrictEqual([m[1], m[2]], ['oslo', 'no'], 'the server pattern captures scenario and language for the label');
+});

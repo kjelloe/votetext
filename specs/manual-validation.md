@@ -202,6 +202,7 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 
 - [ ] After `npm run tutorial:publish` and a deploy: the login page shows "New here? Tutorial (English) ↗" and the footer the same link; the video plays in the browser and seeking works (Range requests); no link appears on a server without `public/video/*.mp4`
 - [ ] With the Oslo video published too: both links appear, labelled Tutorial (English) and Tutorial · Oslo (English)
+- [ ] After the Norwegian takes: `npm run tutorial -- all --scenario oslo --lang no --burn`, publish, deploy — a third link "Tutorial · Oslo (norsk)" appears, plays with Norwegian voice and Norwegian burnt-in subtitles, and the chapter markers show the Norwegian chapter titles
 
 ## Sign-off
 

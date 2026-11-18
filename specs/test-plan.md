@@ -1,8 +1,8 @@
 # VoteText — Test Plan
 
-> Automated: `npm test` runs four files — `tests/api.test.js` (integration, isolated SQLite DB on port 3099),
+> Automated: `npm test` runs five files — `tests/api.test.js` (integration, isolated SQLite DB on port 3099),
 > `tests/unit.test.js` (pure helpers in `src/lib/text.js`, plus the tutorial-script cue contract and the `tutorial/lib` parser, WAV-track, subtitle and recorded-take helpers), `tests/frontend.test.js` (cross-file JS contracts) and
-> `tests/migrate.test.js` (schema migration from historical snapshots).
+> `tests/migrate.test.js` (schema migration from historical snapshots) and `tests/deploy.test.js` (contracts between `scripts/deploy.sh`, the cloud-init templates and the shipped tutorial videos).
 > Browser: `npm run test:e2e` runs the Playwright suite (own server on port 3001).
 > Manual UI: open `http://localhost:3000` after `npm run dev` and follow the flows below.
 
@@ -537,7 +537,7 @@ ownership test grants bob `creator` first.
 
 ## Unit tests (`tests/unit.test.js`)
 
-> 38 tests: the pure helpers in `src/lib/text.js` plus the tutorial-script and tutorial-toolkit contracts — no DB, no server. Run as
+> 39 tests: the pure helpers in `src/lib/text.js` plus the tutorial-script and tutorial-toolkit contracts — no DB, no server. Run as
 > part of `npm test` (which executes `tests/api.test.js`, `tests/unit.test.js`,
 > and `tests/frontend.test.js`).
 
@@ -549,8 +549,8 @@ ownership test grants bob `creator` first.
 - Inserts are points — an insert proposed over a selected range keeps the selected text, and only a change spanning the insertion point overlaps it
 - `escapeHtml` — markup and quotes neutralised, null tolerated
 - Tutorial script — the `[screen: …]` cues of the EN and NO files are identical and in the same order (one action script per chapter drives both recordings)
-- Tutorial toolkit (`tutorial/lib`, 2026-11-16) — the parser yields 14 chapters with one beat per cue and equal counts in EN and NO (Markdown `---` rules between chapters never reach a beat's text), `plainText` strips markdown, every action script in `tutorial/chapters/` has one function per cue of its chapter; WAV write/read round trip, a narration clip lands on the track at its beat offset with silence around it, the SRT block carries the beat's start time and silent beats get no subtitle; the ASS file for the burnt-in copy names the real picture size and carries the same timing; the concat plan lists the chapter files and writes one ffmetadata chapter per clip with escaped titles; a recorded take `audio/<lang>/chNN-<beat>.wav` replaces the synthesised voice, `--list-beats` lists the text and file per narrated beat, and a language without a Kokoro voice stops with the missing file names
-- `tests/frontend.test.js` (15 tests) additionally asserts: `style.css` has no hex colour or white/black rgba below its token block, a `light-dark()` pair on the core tokens and a `.status-*` rule for every document status in `schema.sql` (the design-token contract); `theme.js` loads from `<head>` before the stylesheet and `app.js` is the first body script; `selection.js` declares `wireSelectionToolbar`/`openForkModal` and the route table never references them; `env(safe-area-inset-*)` in `style.css` is matched by `viewport-fit=cover` in `index.html` (otherwise the insets are 0 on iPhones) and every fixed overlay (`.doc-bottom-bar`, `.selection-toolbar`, `#toast-container`, `#modal-overlay`) is hidden in the print stylesheet; the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
+- Tutorial toolkit (`tutorial/lib`, 2026-11-16) — the parser yields 14 chapters with one beat per cue and equal counts in EN and NO (Markdown `---` rules between chapters never reach a beat's text), `plainText` strips markdown, every action script in `tutorial/chapters/` has one function per cue of its chapter; WAV write/read round trip, a narration clip lands on the track at its beat offset with silence around it, the SRT block carries the beat's start time and silent beats get no subtitle; the ASS file for the burnt-in copy names the real picture size and carries the same timing; the concat plan lists the chapter files and writes one ffmetadata chapter per clip with escaped titles; a recorded take `audio/<lang>/chNN-<beat>.wav` replaces the synthesised voice, `--list-beats` lists the text and file per narrated beat, and a language without a Kokoro voice stops with the missing file names; the video-name pattern is the same in `src/routes/auth.js` (listing), `tutorial/publish.js` (copying) and `tutorial/record.js` (naming): the four release names are accepted, chapter clips, raw and phone videos are not, and the server pattern captures scenario and language for the label
+- `tests/frontend.test.js` (16 tests) additionally asserts: the tutorial-video links are wired end to end (`#tutorial-links` in `index.html`, filled by `app.js` from `config.tutorial_videos`, the public `/auth/config` fallback for the signed-out login page, `auth.js` renders url and label through `esc()`, the route sends the list); `style.css` has no hex colour or white/black rgba below its token block, a `light-dark()` pair on the core tokens and a `.status-*` rule for every document status in `schema.sql` (the design-token contract); `theme.js` loads from `<head>` before the stylesheet and `app.js` is the first body script; `selection.js` declares `wireSelectionToolbar`/`openForkModal` and the route table never references them; `env(safe-area-inset-*)` in `style.css` is matched by `viewport-fit=cover` in `index.html` (otherwise the insets are 0 on iPhones) and every fixed overlay (`.doc-bottom-bar`, `.selection-toolbar`, `#toast-container`, `#modal-overlay`) is hidden in the print stylesheet; the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
 
 ---
 
@@ -573,7 +573,7 @@ ownership test grants bob `creator` first.
 
 ## Deploy tests
 
-> `tests/deploy.test.js` (6 tests, part of `npm test`) and `tests/deploy/run-local.sh` (`npm run test:deploy`, needs network, ~1 minute).
+> `tests/deploy.test.js` (7 tests, part of `npm test`; the seventh checks that the video upload follows the `git archive` upload, collects `public/video/*.mp4`, and that the videos are gitignored while the folder's README is tracked) and `tests/deploy/run-local.sh` (`npm run test:deploy`, needs network, ~1 minute).
 
 | Scenario | Expected |
 |----------|----------|

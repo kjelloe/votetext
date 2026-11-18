@@ -7,7 +7,7 @@ with no UI, and a tutorial script describing behaviour the app does not have. Ph
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status on 2026-11-17: **367 node tests** and **92 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+Test status on 2026-11-18: **371 node tests** (300 API + 39 unit + 16 frontend contract + 9 migration + 7 deploy contract) and **92 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
 At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
@@ -783,6 +783,27 @@ Found on the way: the Oslo scripts separate chapters with `---` rules and the pa
 the last subtitle of every chapter ended in " ---" (the parser now skips Markdown rules, unit test added, video
 re-recorded and republished); `--list-beats` only accepted a chapter number although the Norwegian script
 header advertised `all` (now prints every chapter, with a heading per chapter).
+
+**Omission pass 2026-11-18 (after commit 938f012).** Three contracts the round had left to the harness alone are
+now unit tests: the video-name pattern shared by `src/routes/auth.js`, `tutorial/publish.js` and `tutorial/record.js`
+(a renamed release would otherwise be copied but not listed, or listed but never copied); `scripts/deploy.sh`
+uploading `public/video/*.mp4` after the archive with the videos gitignored; and the login-card/footer wiring
+through `config.tutorial_videos` and the public `/auth/config`. Docs: UC-26 (tutorial videos in the app), US-1
+mentions the link, `public/video/` in both trees, the test plan said "four files" since the deploy tests were
+added, the skills (`vt-docs` lists the Oslo scripts, scenarios and the recording guide; `vt-check` checks that
+`public/video/` holds only its README in git and that `--list-beats` runs), a Norwegian row on the manual
+checklist. 371 node, 92 e2e.
+
+*Planned:* V.4 — the owner's Norwegian takes for both scenarios (`specs/tutorial-norwegian-recording.md`), then
+one `all --burn` per language and scenario; push and deploy of everything since 1220fd9 (Phase P/M/K, design
+pass, dark mode, videos); the manual-validation sign-off rows; the security review before more users join
+(asked 2026-11-18, see below). *Unplanned, done:* the `---` subtitle leak and `all --list-beats`. *Noticed, not
+done:* the recorder's `.timeline.json` does not record the scenario or the dark flag; the published videos are
+served by Express static through nginx with default proxy buffering (works, 36 MB files are buffered to disk on
+the proxy — set `proxy_buffering off` for `/video/` if playback start feels slow); `config.tutorial_videos` is
+read once at start-up, so a publish without a restart is not listed (deploy restarts, so only local dev notices);
+the labels are English-only ("Tutorial · Oslo (norsk)" mixes languages — acceptable until a Norwegian UI exists);
+no e2e test opens a video link (the login page is covered by the contract test and the manual row).
 
 ### Decisions needed (Q26–Q30)
 

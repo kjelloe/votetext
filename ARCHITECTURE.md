@@ -77,7 +77,8 @@ votetext/
 │   ├── review.js           — creator/supervisor/editor/admin views and modals: review, conflict resolution, final voting, resolved text, moderation, user admin, new document, settings, status
 │   ├── selection.js        — floating Propose / Variant toolbar on a text selection, fork modal, variant chooser, selected-line marks, keyboard-aware bottom sheet (Phase M)
 │   ├── style.css           — design tokens (one block of light-dark() pairs: palette, tints, radius scale, font stacks) + all component styles
-│   └── theme.js            — <head> script: stored theme onto <html> before first paint
+│   ├── theme.js            — <head> script: stored theme onto <html> before first paint
+│   └── video/              — published tutorial videos (gitignored apart from README; filled by npm run tutorial:publish, shipped by deploy.sh, listed as config.tutorial_videos)
 ├── specs/
 │   ├── test-plan.md        — human-readable test scenarios
 │   ├── use-cases.md        — detailed user flows (UC-1 …)

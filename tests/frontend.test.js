@@ -104,6 +104,20 @@ test('index.html loads all public JS files (none unregistered)', () => {
     }
 });
 
+test('tutorial video links: the server lists them, app.js fills the footer slot, auth.js the login card', () => {
+    const html = fs.readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
+    const app = fs.readFileSync(path.join(PUBLIC, 'app.js'), 'utf8');
+    const auth = fs.readFileSync(path.join(PUBLIC, 'auth.js'), 'utf8');
+    const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'auth.js'), 'utf8');
+    assert.match(html, /id="tutorial-links"/, 'index.html has the footer slot');
+    assert.match(app, /getElementById\('tutorial-links'\)/, 'app.js fills the footer slot');
+    assert.match(app, /state\.config\.tutorial_videos/, 'app.js reads config.tutorial_videos');
+    assert.match(app, /\/auth\/config/, 'app.js falls back to the public config when there is no session, so the login page can show the links');
+    assert.match(auth, /tutorial_videos[\s\S]*esc\(v\.url\)[\s\S]*esc\(v\.label\)/, 'auth.js renders every video escaped');
+    assert.match(route, /tutorial_videos/, 'the server sends tutorial_videos');
+    assert.match(route, /router\.get\('\/config'/, 'GET /auth/config exists for the signed-out login page');
+});
+
 test('index.html script order: theme.js in <head>, then app.js first in <body>', () => {
     const order = scriptLoadOrder();
     assert.equal(order[0], 'theme.js', 'theme.js must load before the stylesheet so the stored theme applies before first paint');

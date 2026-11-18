@@ -385,7 +385,8 @@ votetext/
     ├── review.js           # Creator/supervisor/editor/admin views and modals: review, conflicts, final voting, resolved text, moderation, user admin, manage-access, new document, settings, status modal
     ├── selection.js        # Floating Propose / Variant toolbar on a text selection, fork modal, variant chooser
     ├── style.css           # Styles: one token block of light-dark() pairs, then components
-    └── theme.js            # Applies the stored theme before first paint (loaded from <head>)
+    ├── theme.js            # Applies the stored theme before first paint (loaded from <head>)
+    └── video/              # Published tutorial videos (gitignored apart from README.md; npm run tutorial:publish fills it, deploy.sh ships it)
 ```
 
 ---

@@ -92,3 +92,12 @@ test('deploy.env.example lists every DEPLOY_* variable the script reads, and dep
     for (const v of used) assert.ok(example.includes(v + '='), `${v} missing from deploy.env.example`);
     assert.match(read('.gitignore'), /^deploy\.env$/m);
 });
+
+test('deploy.sh ships public/video/*.mp4 from the working tree after the git archive, and git ignores the videos', () => {
+    const archive = deploy.indexOf('git archive');
+    const upload = deploy.indexOf('tar -cz "${VIDEOS[@]}"');
+    assert.ok(archive > 0 && upload > archive, 'the video upload follows the archive upload (the stage must exist first)');
+    assert.match(deploy, /public\/video\/\*\.mp4/, 'the plan collects public/video/*.mp4');
+    assert.match(read('.gitignore'), /^public\/video\/\*\.mp4$/m);
+    assert.ok(fs.existsSync(path.join(ROOT, 'public', 'video', 'README.md')), 'the folder itself is tracked through its README');
+});

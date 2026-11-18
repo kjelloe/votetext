@@ -1004,6 +1004,27 @@ Each modal is announced as a dialog with its title (`role="dialog"`, `aria-modal
 
 ---
 
+## UC-26: Tutorial videos in the app
+
+**Actor:** Any visitor, signed in or not.
+**Entry point:** The login card ("New here? Tutorial (English) ↗ · Tutorial · Oslo (English) ↗") and the footer of every page.
+
+### Main flow
+
+1. The server lists the release videos present in `public/video/` when it starts (`votetext-tutorial[-<scenario>]-<lang>.subtitled.mp4`) and sends them as `config.tutorial_videos` with `/auth/me`, and on the public `GET /api/auth/config` for the signed-out login page.
+2. The login card shows one link per video under the subtitle; the footer shows the same links on every page. Each opens the MP4 in a new tab; the browser's player handles seeking (Express static answers Range requests).
+3. Without any video on the server, neither the login line nor the footer links are rendered.
+
+### Rules
+
+- Labels are built from the file name: `Tutorial (English)`, `Tutorial · Oslo (norsk)`; the plain video sorts first.
+- The videos are not in git: `npm run tutorial:publish` copies them from `tutorial/out/`, `scripts/deploy.sh` ships the folder from the working tree with the release. A new video needs a restart (the deploy does one).
+- Production: `specs/tutorial-video-script*.md`, `specs/tutorial-norwegian-recording.md`, ARCHITECTURE § Tutorial toolkit.
+
+**Tests:** `GET /auth/config` and `tutorial_videos` in group J (`tests/api.test.js`), the wiring contract in `tests/frontend.test.js`, the name-pattern and deploy contracts in `tests/unit.test.js` and `tests/deploy.test.js`; manual rows in `manual-validation.md`.
+
+---
+
 ## Planned / future use cases
 
 All specced use cases are implemented in the API. The open UI gaps against them (supervisor buttons, profile modal trigger, access-level editing, "based on" display, line tooltip) and their order are tracked in `plan-update.md`, phase 3.

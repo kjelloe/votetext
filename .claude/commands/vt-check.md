@@ -47,8 +47,9 @@ List all hash routes in `public/app.js` and confirm each has a view function (th
 ```bash
 git status --short
 git ls-files playwright-report tests/e2e/.auth test-results
+git ls-files public/video
 ```
-Flag tracked test artifacts and leftover `data/*.db-wal` / `-shm` files from test runs.
+Flag tracked test artifacts and leftover `data/*.db-wal` / `-shm` files from test runs. `public/video` must list only `README.md` (the videos ship from the working tree, never from git).
 
 **8. Deploy tooling**
 ```bash
@@ -64,7 +65,14 @@ npm outdated 2>&1 | head
 ```
 Report vulnerabilities in production dependencies. Do not run `npm audit fix` or change `package.json` — the owner decides on upgrades (CLAUDE.md).
 
-**10. Open work**
+**10. Tutorial toolkit**
+```bash
+npm run tutorial -- all --lang no --list-beats | grep -m1 "==="
+npm run tutorial -- 6 --scenario oslo --lang no --list-beats | grep -c "\.wav"
+```
+Both must run without starting a server or Kokoro (the first prints a chapter heading, the second prints 5). The script contracts (cue parity, one action per cue, the video-name pattern) are in `npm test`.
+
+**11. Open work**
 Read the "Remaining work packages" section of `plan-update.md` and report the next unstarted phase in one line.
 
 ## Output format
