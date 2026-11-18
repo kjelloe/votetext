@@ -126,6 +126,7 @@ write_files:
         -d <YOUR_DOMAIN> \
         --non-interactive \
         --agree-tos \
+        --redirect \
         -m <YOUR_EMAIL>
 
       sudo systemctl reload nginx

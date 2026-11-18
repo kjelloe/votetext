@@ -105,7 +105,7 @@ else
 fi
 DB=$(envval DATABASE_PATH "$APP/.env"); DB=${DB:-./data/votetext.db}; case "$DB" in /*) ;; *) DB="$APP/${DB#./}" ;; esac
 if [ -f "$DB" ]; then
-    perm=$(stat -c '%a' "$(dirname "$DB")"); case "$perm" in *0|*5) ok "data dir mode $perm" ;; *) warn "data dir mode $perm — should not be world-writable" ;; esac
+    perm=$(stat -c '%a' "$(dirname "$DB")"); case "$perm" in 700|750|770|2750|2770) ok "data dir mode $perm" ;; *) warn "data dir mode $perm — the database holds sessions and codes; chmod 750 $(dirname "$DB")" ;; esac
     ok "database $(du -h "$DB" | cut -f1)"
 else
     warn "no database at $DB"
@@ -212,7 +212,7 @@ else
 fi
 [ "$WITH_ENV" = 1 ] && echo "     .env  will be replaced with $ENV_FILE"
 VIDEOS=()
-for f in public/video/*.mp4; do [ -f "$f" ] && VIDEOS+=("$f"); done
+for f in public/video/*.mp4; do [ -f "$f" ] && [ ! -L "$f" ] && VIDEOS+=("$f"); done
 if [ "${#VIDEOS[@]}" -gt 0 ]; then
     echo "    video  ${VIDEOS[*]} ($(du -ch "${VIDEOS[@]}" | tail -1 | cut -f1), from the working tree, not from git)"
 else
@@ -322,7 +322,7 @@ restore() {
         if healthy; then
             say "Previous version is running again"
         else
-            say "WARNING: the previous version did not come back — check: sudo journalctl -u $SERVICE -n 50"
+            say "WARNING: the previous version did not come back — check: sudo journalctl -u $SERVICE --no-pager -n 50"
         fi
     fi
     exit 1
@@ -377,7 +377,7 @@ say "Starting $SERVICE"
 sudo systemctl start "$SERVICE"
 if ! healthy; then
     say "Health check failed — last service log lines:"
-    sudo journalctl -u "$SERVICE" -n 20 --no-pager || true
+    sudo journalctl -u "$SERVICE" --no-pager -n 20 || true
     restore
 fi
 trap - ERR

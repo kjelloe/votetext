@@ -46,6 +46,10 @@ test('every sudo command in deploy.sh is allowed by the hardened sudoers', () =>
     for (const m of sudoers.matchAll(/Cmnd_Alias \w+ = (.+)/g)) allowed.push(...m[1].split(',').map(s => s.trim()));
     assert.ok(allowed.length >= 8, 'sudoers aliases parsed');
     assert.match(sudoers, /<DEPLOY_USER> ALL=\(votetext\) NOPASSWD: ALL/, 'deploy user may act as the service user');
+    assert.ok(!/certbot \*/.test(sudoers), 'certbot takes --pre-hook/--deploy-hook: the rule must spell out the one command');
+    assert.ok(allowed.some(r => /^\/usr\/bin\/certbot --nginx -d <YOUR_DOMAIN> .*--redirect .*-m <YOUR_EMAIL>$/.test(r)), 'the exact certbot command first-deploy.sh runs');
+    assert.ok(allowed.every(r => !r.includes('journalctl') || r.includes('--no-pager')), 'journalctl without --no-pager opens less, whose ! runs a shell as root');
+    assert.match(sudoers, /^Defaults!VOTETEXT_SVC noexec$/m);
 
     const uses = [...deploy.matchAll(/\bsudo(?: -n)? ((?:systemctl|journalctl|ufw|nginx|certbot|-l)\b[^|;&\n]*)/g)]
         .map(m => m[1].replace(/\s*\d?>.*$/, '').replace(/"?\$SERVICE"?/g, 'votetext').replace(/"$/, '').trim().replace(/\s+/g, ' '));
@@ -77,11 +81,13 @@ for (const [name, yaml] of [['cloud-init-example.yaml', simple], ['cloud-init-ha
     });
 }
 
-test('hardened unit runs as the service user and can only write data/ and backups/', () => {
+test('hardened unit runs as the service user, writes only data/ and cannot reach the offsite key', () => {
     const unit = fileBlock(hardened, '/etc/systemd/system/votetext.service');
     assert.match(unit, /^User=votetext$/m);
     assert.match(unit, /^ProtectSystem=strict$/m);
-    assert.match(unit, /^ReadWritePaths=\/opt\/votetext\/data \/opt\/votetext\/backups$/m);
+    assert.match(unit, /^ReadWritePaths=\/opt\/votetext\/data$/m, 'backups are written by cron and deploy.sh outside the unit');
+    assert.match(unit, /^InaccessiblePaths=-\/opt\/votetext\/\.ssh$/m);
+    assert.match(fileBlock(hardened, '/etc/cron.d/votetext-backup'), /votetext sqlite3 .*\/opt\/votetext\/backups\//, 'the backup cron still writes backups/ as the service user');
     assert.match(unit, /^NoNewPrivileges=true$/m);
     assert.ok(!/MemoryDenyWriteExecute/.test(unit), 'Node needs writable+executable memory for its JIT');
 });
@@ -98,6 +104,17 @@ test('deploy.sh ships public/video/*.mp4 from the working tree after the git arc
     const upload = deploy.indexOf('tar -cz "${VIDEOS[@]}"');
     assert.ok(archive > 0 && upload > archive, 'the video upload follows the archive upload (the stage must exist first)');
     assert.match(deploy, /public\/video\/\*\.mp4/, 'the plan collects public/video/*.mp4');
+    assert.match(deploy, /\[ -f "\$f" \] && \[ ! -L "\$f" \] && VIDEOS\+=/, 'symlinks in public/video/ are not shipped');
     assert.match(read('.gitignore'), /^public\/video\/\*\.mp4$/m);
     assert.ok(fs.existsSync(path.join(ROOT, 'public', 'video', 'README.md')), 'the folder itself is tracked through its README');
+});
+
+test('the --check audit warns about a data directory other accounts can read, and the simple template redirects to HTTPS', () => {
+    const audit = deploy.match(/case "\$perm" in ([^)]+)\) ok "data dir mode/);
+    assert.ok(audit, 'the audit checks the data dir mode');
+    const accepted = audit[1].split('|');
+    assert.deepEqual(accepted, ['700', '750', '770', '2750', '2770']);
+    assert.ok(!accepted.includes('755'), 'a world-readable data dir exposes the SQLite file (sessions, codes, emails)');
+    const script = fileBlock(simple, '/home/<DEPLOY_USER>/first-deploy.sh');
+    assert.match(script, /certbot --nginx[\s\S]*?--redirect[\s\S]*?-m <YOUR_EMAIL>/, 'the simple template must redirect HTTP to HTTPS like the hardened one');
 });

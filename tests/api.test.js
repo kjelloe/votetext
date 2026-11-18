@@ -3382,3 +3382,71 @@ test('AE2: my_vote is per user — another voter sees null until they vote, and 
     const owner = await req('GET', `/documents/${aeDocId}/variants`, { cookie: sessionCookie });
     assert.equal(owner.data.variants[0].my_vote, 1);
 });
+
+// ============================================================================
+// Group AF — security review 2026-11-18 (T1.1–T1.3 in plan-update.md)
+// ============================================================================
+
+let afDocId, afVarId, afProposerCookie, afVoterCookie;
+
+test('AF1: setup — voting document with a proposer and a voter who has voted', async () => {
+    const d = await req('POST', '/documents', { body: { title: 'AF review', text: 'Alpha beta gamma.\nDelta epsilon zeta.' }, cookie: sessionCookie });
+    assert.equal(d.status, 201);
+    afDocId = d.data.document.id;
+    await req('POST', `/documents/${afDocId}/status`, { body: { status: 'open' }, cookie: sessionCookie });
+    for (const [email, level] of [['af-proposer@test.com', 'proposer'], ['af-voter@test.com', 'voter']]) {
+        const r = await req('POST', `/documents/${afDocId}/access`, { body: { email, access_level: level }, cookie: sessionCookie });
+        assert.equal(r.status, 201, JSON.stringify(r.data));
+    }
+    afProposerCookie = await loginAs('af-proposer@test.com');
+    afVoterCookie = await loginAs('af-voter@test.com');
+    const v = await req('POST', `/documents/${afDocId}/variants`, { body: { char_start: 0, char_end: 5, operation: 'replace', new_text: 'Omega', title: 'AF v1' }, cookie: afProposerCookie });
+    assert.equal(v.status, 201, 'a proposer may propose while the document is open');
+    afVarId = v.data.variant.id;
+    const s = await req('POST', `/documents/${afDocId}/status`, { body: { status: 'voting' }, cookie: sessionCookie });
+    assert.equal(s.status, 200, JSON.stringify(s.data));
+    const vote = await req('POST', `/variants/${afVarId}/vote`, { body: { vote_value: -1 }, cookie: afVoterCookie });
+    assert.equal(vote.status, 200, JSON.stringify(vote.data));
+});
+
+test('AF2: vote_value in activity metadata is only readable by supervisor+ (T1.1)', async () => {
+    const pick = rows => rows.filter(a => ['vote_cast', 'vote_changed'].includes(a.action) && a.document_id === afDocId).map(a => JSON.parse(a.metadata));
+    const asProposer = pick((await req('GET', `/documents/${afDocId}/activity`, { cookie: afProposerCookie })).data.activity);
+    assert.ok(asProposer.length >= 1, 'the vote event itself is still listed');
+    assert.ok(asProposer.every(m => !('vote_value' in m)), 'how someone voted is hidden below supervisor');
+    const asOwner = pick((await req('GET', `/documents/${afDocId}/activity`, { cookie: sessionCookie })).data.activity);
+    assert.ok(asOwner.some(m => m.vote_value === -1), 'supervisor+ still sees the choice');
+    const feed = pick((await req('GET', '/activity', { cookie: sessionCookie })).data.activity);
+    assert.ok(feed.length >= 1 && feed.every(m => !('vote_value' in m)), 'the global feed is always redacted');
+});
+
+test('AF3: proposing during voting and final_voting needs supervisor (T1.2)', async () => {
+    const body = { char_start: 6, char_end: 10, operation: 'replace', new_text: 'Beta', title: 'AF late' };
+    let r = await req('POST', `/documents/${afDocId}/variants`, { body, cookie: afProposerCookie });
+    assert.equal(r.status, 403);
+    assert.match(r.data.error, /Supervisor/);
+    const n = db.prepare('SELECT COUNT(*) n FROM variants WHERE document_id = ?').get(afDocId).n;
+    assert.equal(n, 1, 'nothing written');
+    r = await req('POST', `/documents/${afDocId}/variants`, { body, cookie: sessionCookie });
+    assert.equal(r.status, 201, 'the owner (admin) may still add one');
+    await req('PATCH', `/variants/${r.data.variant.id}/review-status`, { body: { status: 'not_applicable' }, cookie: sessionCookie });
+    const fv = await req('POST', `/documents/${afDocId}/status`, { body: { status: 'final_voting' }, cookie: sessionCookie });
+    assert.equal(fv.status, 200, JSON.stringify(fv.data));
+    r = await req('POST', `/documents/${afDocId}/variants`, { body: { ...body, title: 'AF later' }, cookie: afProposerCookie });
+    assert.equal(r.status, 403);
+});
+
+test('AF4: invite email must be a string with @ and at most 254 characters, and nothing is written otherwise (T1.3)', async () => {
+    const users = () => db.prepare('SELECT COUNT(*) n FROM users').get().n;
+    const before = users();
+    for (const email of [42, null, 'no-at-sign', 'a'.repeat(250) + '@x.io', ['a@b.c']]) {
+        const r = await req('POST', `/documents/${afDocId}/access`, { body: { email, access_level: 'viewer' }, cookie: sessionCookie });
+        assert.equal(r.status, 400, `${JSON.stringify(email)} must be refused`);
+        assert.equal(r.data.error, 'Valid email required');
+    }
+    assert.equal(users(), before, 'no user row for a refused invite');
+    const ok = await req('POST', `/documents/${afDocId}/access`, { body: { email: ' AF-Viewer@Test.com ', access_level: 'viewer' }, cookie: sessionCookie });
+    assert.equal(ok.status, 201);
+    assert.equal(users(), before + 1);
+    assert.ok(db.prepare('SELECT id FROM users WHERE email = ?').get('af-viewer@test.com'), 'trimmed and lower-cased');
+});

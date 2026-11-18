@@ -54,7 +54,7 @@ The lines-per-page selector auto-populates with the detected value. A `(detected
 **Entry point:** Document viewer
 
 ### Preconditions
-- Document is open (status `draft` or `open`).
+- Document is open (status `draft` or `open`). During `voting` and `final_voting` only supervisor+ may add a proposal (the server answers 403, the Propose button and the selection toolbar are not offered), because every untallied proposal blocks resolution until a supervisor marks it not applicable; resolved and archived documents refuse with 422.
 - User has `proposer` (or higher) access level.
 
 ### Main flow
@@ -232,7 +232,7 @@ When a user with no explicit access record requests any document endpoint:
 
 ### Invite user — exact email
 
-If the intended recipient does not appear in search results (new user or non-searchable), the inviter types a full email address directly and clicks Invite. The system creates a user record if none exists.
+If the intended recipient does not appear in search results (new user or non-searchable), the inviter types a full email address directly and clicks Invite. The server accepts only a string containing `@` of at most 254 characters (400 otherwise, nothing written) and creates a user record if none exists.
 
 ### Invite email (new users only)
 
@@ -763,7 +763,7 @@ Supervisor may `POST /documents/:id/access` for users **without an existing acce
 
 ### Browser controls (2026-10-03)
 
-Every control is gated on `my_access_level` with `hasLevel(doc, level)` in `app.js`, mirroring the API: **Change status** for supervisor+ (the modal offers only the voting-cycle transitions below admin, including `final_voting → voting`), **Mark as Resolved** for supervisor+, **Settings** for editor+, **Propose** for proposer+ while the document is not resolved/archived, vote buttons enabled for voter+ while voting is open, the comment form for commenter+, **Fork** for proposer+ on open documents and supervisor+ during voting. The review, conflict and final-voting pages refuse below supervisor. Covered by `tests/e2e/supervisor.spec.js`.
+Every control is gated on `my_access_level` with `hasLevel(doc, level)` in `app.js`, mirroring the API: **Change status** for supervisor+ (the modal offers only the voting-cycle transitions below admin, including `final_voting → voting`), **Mark as Resolved** for supervisor+, **Settings** for editor+, **Propose** for proposer+ while the document is draft/open and supervisor+ during voting/final_voting (never when resolved/archived), vote buttons enabled for voter+ while voting is open, the comment form for commenter+, **Fork** for proposer+ on open documents and supervisor+ during voting. The review, conflict and final-voting pages refuse below supervisor. Covered by `tests/e2e/supervisor.spec.js`.
 
 ### Implementation checklist
 

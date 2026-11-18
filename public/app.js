@@ -373,7 +373,7 @@ async function viewDocument(docId) {
     const rawVariants = variantData.variants || [];
     const heatConfig = variantData.comment_heat || { orange: 10, red: 25 };
     const variants = rawVariants;
-    const canPropose = hasLevel(doc, 'proposer') && !['resolved', 'archived'].includes(doc.status);
+    const canPropose = hasLevel(doc, ['voting', 'final_voting'].includes(doc.status) ? 'supervisor' : 'proposer') && !['resolved', 'archived'].includes(doc.status);
 
     // Overlap map: variantId → [{id, num}] for all pairs whose char ranges intersect (rebuilt after a new proposal)
     const overlapMap = {};

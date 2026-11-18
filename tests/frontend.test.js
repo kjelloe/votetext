@@ -322,3 +322,10 @@ test('style.css components draw only on the design tokens, and every document st
     assert.ok(statuses.includes('final_voting'));
     for (const st of statuses) assert.ok(css.includes(`.status-${st}`), `document status "${st}" has no .status-${st} badge rule`);
 });
+
+test('propose controls mirror the server: proposer+ while open, supervisor+ during voting and final_voting, nothing when resolved', () => {
+    const app = readSrc('app.js');
+    const route = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'documents.js'), 'utf8');
+    assert.match(app, /const canPropose = hasLevel\(doc, \['voting', 'final_voting'\]\.includes\(doc\.status\) \? 'supervisor' : 'proposer'\) && !\['resolved', 'archived'\]\.includes\(doc\.status\)/);
+    assert.match(route, /\['voting', 'final_voting'\]\.includes\(doc\.status\) && !meetsLevel\(req\.userAccessLevel, 'supervisor', req\)/, 'POST /documents/:id/variants enforces the same rule');
+});

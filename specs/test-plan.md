@@ -532,6 +532,15 @@ Unit (`tests/unit.test.js`): `importPagedText` pages/skips/markers/offsets; `kee
 
 Also changed: the variants-list test no longer expects `top_percent` (setting retired).
 
+## Group AF — Security review 2026-11-18 (plan-update.md § Security review, T1.1–T1.3)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| AF1 | Setup: open document, `proposer` and `voter` invited, the proposer proposes, status → `voting`, the voter votes `-1` | 201 for the proposal while open; vote 200 |
+| AF2 | Activity feeds after the vote | proposer on `/documents/:id/activity`: the `vote_cast` row is listed but its metadata has no `vote_value`; owner: `vote_value: -1` present; global `/activity`: always redacted |
+| AF3 | `POST /documents/:id/variants` while `voting` | proposer → 403 "Supervisor access required…", no row written; owner → 201; after `final_voting` the proposer gets 403 again |
+| AF4 | `POST /documents/:id/access` with `42`, `null`, `"no-at-sign"`, a 255-character address, an array | 400 "Valid email required" each time and no `users` row; `" AF-Viewer@Test.com "` → 201, stored trimmed and lower-cased |
+
 Also changed: "cross-document relation" now expects 404 (no existence oracle); the copy-data
 ownership test grants bob `creator` first.
 
@@ -550,7 +559,7 @@ ownership test grants bob `creator` first.
 - `escapeHtml` — markup and quotes neutralised, null tolerated
 - Tutorial script — the `[screen: …]` cues of the EN and NO files are identical and in the same order (one action script per chapter drives both recordings)
 - Tutorial toolkit (`tutorial/lib`, 2026-11-16) — the parser yields 14 chapters with one beat per cue and equal counts in EN and NO (Markdown `---` rules between chapters never reach a beat's text), `plainText` strips markdown, every action script in `tutorial/chapters/` has one function per cue of its chapter; WAV write/read round trip, a narration clip lands on the track at its beat offset with silence around it, the SRT block carries the beat's start time and silent beats get no subtitle; the ASS file for the burnt-in copy names the real picture size and carries the same timing; the concat plan lists the chapter files and writes one ffmetadata chapter per clip with escaped titles; a recorded take `audio/<lang>/chNN-<beat>.wav` replaces the synthesised voice, `--list-beats` lists the text and file per narrated beat, and a language without a Kokoro voice stops with the missing file names; the video-name pattern is the same in `src/routes/auth.js` (listing), `tutorial/publish.js` (copying) and `tutorial/record.js` (naming): the four release names are accepted, chapter clips, raw and phone videos are not, and the server pattern captures scenario and language for the label
-- `tests/frontend.test.js` (16 tests) additionally asserts: the tutorial-video links are wired end to end (`#tutorial-links` in `index.html`, filled by `app.js` from `config.tutorial_videos`, the public `/auth/config` fallback for the signed-out login page, `auth.js` renders url and label through `esc()`, the route sends the list); `style.css` has no hex colour or white/black rgba below its token block, a `light-dark()` pair on the core tokens and a `.status-*` rule for every document status in `schema.sql` (the design-token contract); `theme.js` loads from `<head>` before the stylesheet and `app.js` is the first body script; `selection.js` declares `wireSelectionToolbar`/`openForkModal` and the route table never references them; `env(safe-area-inset-*)` in `style.css` is matched by `viewport-fit=cover` in `index.html` (otherwise the insets are 0 on iPhones) and every fixed overlay (`.doc-bottom-bar`, `.selection-toolbar`, `#toast-container`, `#modal-overlay`) is hidden in the print stylesheet; the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
+- `tests/frontend.test.js` (17 tests) additionally asserts: the Propose rule in `app.js` (`canPropose`: supervisor during voting/final_voting, proposer otherwise, never resolved/archived) and the 403 check in `POST /documents/:id/variants` spell out the same statuses; the tutorial-video links are wired end to end (`#tutorial-links` in `index.html`, filled by `app.js` from `config.tutorial_videos`, the public `/auth/config` fallback for the signed-out login page, `auth.js` renders url and label through `esc()`, the route sends the list); `style.css` has no hex colour or white/black rgba below its token block, a `light-dark()` pair on the core tokens and a `.status-*` rule for every document status in `schema.sql` (the design-token contract); `theme.js` loads from `<head>` before the stylesheet and `app.js` is the first body script; `selection.js` declares `wireSelectionToolbar`/`openForkModal` and the route table never references them; `env(safe-area-inset-*)` in `style.css` is matched by `viewport-fit=cover` in `index.html` (otherwise the insets are 0 on iPhones) and every fixed overlay (`.doc-bottom-bar`, `.selection-toolbar`, `#toast-container`, `#modal-overlay`) is hidden in the print stylesheet; the backend (`src/lib/text.js`) and frontend (`public/review.js`) copies of `passesThreshold` are textually identical; `ACCESS_LEVELS` has the same order in `public/app.js` and `src/middleware/access.js` (so `hasLevel()` ranks like the server); no inline event handlers, `javascript:` URLs, inline script bodies or external resources anywhere in `public/` (the CSP would block them)
 
 ---
 
@@ -573,13 +582,15 @@ ownership test grants bob `creator` first.
 
 ## Deploy tests
 
-> `tests/deploy.test.js` (7 tests, part of `npm test`; the seventh checks that the video upload follows the `git archive` upload, collects `public/video/*.mp4`, and that the videos are gitignored while the folder's README is tracked) and `tests/deploy/run-local.sh` (`npm run test:deploy`, needs network, ~1 minute).
+> `tests/deploy.test.js` (8 tests, part of `npm test`; the seventh checks that the video upload follows the `git archive` upload, collects `public/video/*.mp4` without symlinks, and that the videos are gitignored while the folder's README is tracked; the eighth the audit's data-dir modes and the simple template's HTTPS redirect) and `tests/deploy/run-local.sh` (`npm run test:deploy`, needs network, ~1 minute).
 
 | Scenario | Expected |
 |----------|----------|
 | `scripts/deploy.sh`, the wrapper and both templates' embedded `first-deploy.sh` | parse with `bash -n` (placeholders filled) |
 | Every `sudo …` the script runs | matches a `Cmnd_Alias` in the hardened sudoers; the deploy user may act as the service user |
-| Hardened unit | `User=votetext`, `ProtectSystem=strict`, `ReadWritePaths` = data + backups, `NoNewPrivileges`, no `MemoryDenyWriteExecute` |
+| Hardened unit | `User=votetext`, `ProtectSystem=strict`, `ReadWritePaths` = data only, `InaccessiblePaths=-/opt/votetext/.ssh` (the offsite key), `NoNewPrivileges`, no `MemoryDenyWriteExecute`; the backup cron still writes `backups/` as the service user |
+| Hardened sudoers | no `certbot *` (hooks run commands as root): the exact `certbot --nginx … --redirect …` line of `first-deploy.sh`; every `journalctl` rule carries `--no-pager`; `Defaults!VOTETEXT_SVC noexec` |
+| Audit and videos | `--check` accepts data-dir modes 700/750/770/2750/2770 only; the video upload skips symlinks (`[ ! -L ]`); the simple template's certbot call has `--redirect` |
 | Placeholders | every `<X>` in a template is explained in its header; `first-deploy.sh` no longer installs or creates the database |
 | `deploy.env.example` | lists every `DEPLOY_*` variable the script reads; `deploy.env` is gitignored |
 | Local run (`test:deploy`) | refused without `.env`; first deploy with `--env` healthy (the stand-in `.env` carries `VOTETEXT_URL`, mandatory in production), `.env` 600; redeploy keeps data; forced start failure restores code and database; older ref deploys without migration; dry run changes nothing; `--check` runs; separate service user → `.env` 640 and backups under the app dir. Runs in CI as the `deploy-harness` job |

@@ -143,7 +143,7 @@ Variant sub-routes (`/vote`, `/comments`, `/relations`) cannot use the middlewar
 
 Call `logActivity` for **every** mutation, inside the same `transaction()` as the mutation, and only when something actually changed. Valid actions are defined by the `CHECK` constraint on `activity_log.action` — see `schema.sql`. If you add a new action type, the schema constraint must be updated (discuss first, then follow `/vt-new-action`).
 
-Activity metadata is returned by the feeds. `redactActivity()` in `middleware/access.js` strips `previous_text` and `email` for readers below supervisor — add a key there if new metadata should not be readable by every participant.
+Activity metadata is returned by the feeds. `redactActivity()` in `middleware/access.js` strips `previous_text`, `email` and `vote_value` for readers below supervisor — add a key there if new metadata should not be readable by every participant.
 
 ---
 
@@ -155,7 +155,7 @@ Any transition to `resolved` goes through `resolveBlocker()` in `documents.js`: 
 
 ## Testing
 
-`npm test` runs five files under `node:test` (no extra deps): `tests/api.test.js` (integration, groups A–AE — see `specs/test-plan.md`), `tests/unit.test.js` (pure helpers in `src/lib/text.js`, plus the EN/NO tutorial-cue contract and the `tutorial/lib` parser, WAV and SRT helpers), `tests/frontend.test.js` (cross-file contracts in `public/`) `tests/migrate.test.js` (upgrades databases built from the historical schemas in `tests/fixtures/` — never edit those) and `tests/deploy.test.js` (every `sudo` in `scripts/deploy.sh` must be allowed by the hardened sudoers; the cloud-init templates' embedded scripts must parse). Browser tests are in `tests/e2e/` (`npm run test:e2e`). Key conventions:
+`npm test` runs five files under `node:test` (no extra deps): `tests/api.test.js` (integration, groups A–AF — see `specs/test-plan.md`), `tests/unit.test.js` (pure helpers in `src/lib/text.js`, plus the EN/NO tutorial-cue contract and the `tutorial/lib` parser, WAV and SRT helpers), `tests/frontend.test.js` (cross-file contracts in `public/`) `tests/migrate.test.js` (upgrades databases built from the historical schemas in `tests/fixtures/` — never edit those) and `tests/deploy.test.js` (every `sudo` in `scripts/deploy.sh` must be allowed by the hardened sudoers; the cloud-init templates' embedded scripts must parse). Browser tests are in `tests/e2e/` (`npm run test:e2e`). Key conventions:
 
 - **Never mock the database** — tests run against a real (ephemeral) SQLite file.
 - OTPs are retrieved directly from the test DB (`db.prepare(...).get()`), so SMTP is not required.

@@ -7,7 +7,7 @@ with no UI, and a tutorial script describing behaviour the app does not have. Ph
 2 and 3 are implemented and tested locally. **Nothing is committed or deployed**; the
 production server is live and still runs the old code.
 
-Test status on 2026-11-18: **371 node tests** (300 API + 39 unit + 16 frontend contract + 9 migration + 7 deploy contract) and **92 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
+Test status on 2026-11-18: **377 node tests** (304 API + 39 unit + 17 frontend contract + 9 migration + 8 deploy contract) and **92 Playwright e2e tests** green (two projects: Firefox desktop, Chromium phone).
 At the time of the 2026-10-03 review: 329 node (273 API + 30 unit + 12 frontend contract + 8 migration + 6 deploy contract) and 65 e2e.
 
 Effort labels are rough estimates: **S** under an hour, **M** about half a day,
@@ -963,6 +963,8 @@ to revisit if the site becomes public.
 Sessions (32 random bytes, HMAC-signed cookie, timing-safe compare, `is_active` on every request, 72 h, HttpOnly/SameSite=Lax/Secure); OTP (per email 5 per 15 min, per IP 10 code requests and 20 wrong codes per 15 min, 100 sign-in requests/min, older codes invalidated, same response in `invited` mode whether or not the address is allowed, nginx `limit_req` on `/api/auth/`); `X-Forwarded-For` (nginx appends `$remote_addr`, `trust proxy 1` reads exactly that entry, the app binds loopback, ufw opens 2222/80/443 only); CSRF posture (SameSite=Lax + JSON content type + CORS allow-list); CSP blocks inline and external scripts; every `innerHTML` interpolation passes `esc()` or is a server integer/enum; hash router accepts digits only; localStorage values allow-listed; print popups escape every value and inherit the CSP; IDOR (every sub-route re-derives the document; cross-document parent/child refused); mass assignment (settings, profile and role whitelisted); SQL fully parameterised; `deleted_at IS NULL` on every document load; moderation hiding consistent across list, feed, relations, resolve, copy and share; secrets never in the release archive; backups by `VACUUM INTO` with retention.
 
 Effort: T1 ≈ S (four small changes + three API tests + `npm audit fix`), T2 ≈ S in the repo plus one `visudo` and one unit edit on the live box, T3 ≈ M. Recommended order: T1.4 and T1.1–T1.3 in one commit with tests, then T2.1–T2.3 (template + deploy.sh + `npm run test:deploy`), then T3 after the owner's decisions on T3.1–T3.3.
+
+**Patched 2026-11-18 (owner: "go ahead")** — T1.1 (`vote_value` joins the redacted keys), T1.2 (403 below supervisor during `voting`/`final_voting`, `canPropose` in app.js mirrors it, UC-2 preconditions), T1.3 (invite address validated like `request-otp`, user + access + log in one transaction) with API group AF (4 tests) and one frontend contract; T2.1 (exact certbot line, `journalctl … --no-pager *`, `Defaults!VOTETEXT_SVC noexec`), T2.2 (`ReadWritePaths` data only, `InaccessiblePaths=-/opt/votetext/.ssh`), T2.3 (audit accepts 700/750/770/2750/2770 only), T2.4 (`[ ! -L ]`), T2.5 (`--redirect`) with two deploy contracts; `npm run test:deploy` green. Still with the owner: T1.4 `npm audit fix`, the `visudo` and unit edit on the live box (then `systemctl daemon-reload && systemctl restart votetext`, and `sudo systemctl restart votetext` as the deploy user to confirm `noexec` does not break it), `--check` for the data-dir mode, and the T3 decisions.
 
 ---
 

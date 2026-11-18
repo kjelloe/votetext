@@ -542,6 +542,9 @@ router.post('/:id/variants', requireAuth, requireDocumentAccess('proposer'), (re
         if (doc.status === 'resolved' || doc.status === 'archived') {
             return res.status(422).json({ error: 'Cannot propose on a resolved or archived document' });
         }
+        if (['voting', 'final_voting'].includes(doc.status) && !meetsLevel(req.userAccessLevel, 'supervisor', req)) {
+            return res.status(403).json({ error: 'Supervisor access required to propose during voting' });
+        }
 
         const wait = proposalCooldown(req.user.id);
         if (wait) return res.status(429).json(wait);
@@ -645,7 +648,7 @@ router.get('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (req
 router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (req, res, next) => {
     try {
         const { email, access_level } = req.body;
-        if (!email) return res.status(400).json({ error: 'Email required' });
+        if (typeof email !== 'string' || !email.includes('@') || email.length > 254) return res.status(400).json({ error: 'Valid email required' });
         if (!ACCESS_LEVELS.includes(access_level)) return res.status(400).json({ error: 'Invalid access level' });
         if (ACCESS_LEVELS.indexOf(access_level) > ACCESS_LEVELS.indexOf(req.userAccessLevel)) {
             return res.status(403).json({ error: `You cannot grant ${access_level} access — your own level is ${req.userAccessLevel}` });
@@ -664,17 +667,17 @@ router.post('/:id/access', requireAuth, requireDocumentAccess('supervisor'), (re
         if (isNewUser && process.env.NODE_ENV === 'production' && !budgetLeft()) {
             return res.status(503).json({ error: 'Too many emails are being sent right now. Try the invitation again later.' });
         }
-        if (!user) {
-            const r = run('INSERT INTO users (email, display_name) VALUES (?, ?)', [normalizedEmail, normalizedEmail.split('@')[0]]);
-            user = getOne('SELECT * FROM users WHERE id = ?', [r.lastInsertRowid]);
-        }
-
-        run(
-            "INSERT INTO user_document_access (user_id, document_id, access_level, invited_by) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, document_id) DO UPDATE SET access_level = excluded.access_level, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-            [user.id, req.params.id, access_level, req.user.id]
-        );
-
-        logActivity(req.user.id, req.params.id, null, 'user_invited', { email: normalizedEmail, access_level });
+        transaction(() => {
+            if (!user) {
+                const r = run('INSERT INTO users (email, display_name) VALUES (?, ?)', [normalizedEmail, normalizedEmail.split('@')[0]]);
+                user = getOne('SELECT * FROM users WHERE id = ?', [r.lastInsertRowid]);
+            }
+            run(
+                "INSERT INTO user_document_access (user_id, document_id, access_level, invited_by) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, document_id) DO UPDATE SET access_level = excluded.access_level, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                [user.id, req.params.id, access_level, req.user.id]
+            );
+            logActivity(req.user.id, req.params.id, null, 'user_invited', { email: normalizedEmail, access_level });
+        });
 
         if (isNewUser) {
             const appUrl = process.env.VOTETEXT_URL || `${req.protocol}://${req.get('host')}`;

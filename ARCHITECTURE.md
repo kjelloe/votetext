@@ -222,7 +222,7 @@ History: before 2026-07-11 this logic existed in five divergent copies; `/lines`
 
 ### Invite email
 
-When an invited email has no existing account, `POST /api/documents/:id/access` sends a fire-and-forget invitation email through `sendMail()` in `src/lib/mail.js` (same path as OTP). The plain-text part is a fixed template (role, address, app URL from `VOTETEXT_URL`, which production requires); only the HTML part names the inviter and the document, through `escapeHtml()`, so no user text reaches a mail client unescaped. Email failure does not roll back the access grant. Each inviter is limited to 20 invitations to new addresses per hour (in-memory, 429 beyond that).
+`POST /api/documents/:id/access` validates the address like `request-otp` (a string with `@`, at most 254 characters, trimmed and lower-cased) and writes the user row, the access record and the activity entry in one transaction. When an invited email has no existing account, it sends a fire-and-forget invitation email through `sendMail()` in `src/lib/mail.js` (same path as OTP). The plain-text part is a fixed template (role, address, app URL from `VOTETEXT_URL`, which production requires); only the HTML part names the inviter and the document, through `escapeHtml()`, so no user text reaches a mail client unescaped. Email failure does not roll back the access grant. Each inviter is limited to 20 invitations to new addresses per hour (in-memory, 429 beyond that).
 
 ### Global roles
 
@@ -269,7 +269,7 @@ Routes are grouped by resource and mounted in `server.js`:
 
 Unknown `/api/*` paths return a JSON 404 rather than the SPA shell.
 
-Activity metadata is redacted for readers below supervisor: `previous_text` (comment edits) and `email` (invites) are stripped by `redactActivity()` in `middleware/access.js`. `GET /api/documents/:id/activity` returns the full metadata to supervisor+; the cross-document `GET /api/activity` is always redacted. Both feeds and the document list use the same visibility rule (`VISIBLE_DOCUMENT_IDS_SQL`), so drafts never surface for users below editor.
+Activity metadata is redacted for readers below supervisor: `previous_text` (comment edits), `email` (invites) and `vote_value` (how a voter voted — `GET /variants/:id/votes` withholds identities below voter, so the feed must not hand them out) are stripped by `redactActivity()` in `middleware/access.js`. `GET /api/documents/:id/activity` returns the full metadata to supervisor+; the cross-document `GET /api/activity` is always redacted. Both feeds and the document list use the same visibility rule (`VISIBLE_DOCUMENT_IDS_SQL`), so drafts never surface for users below editor.
 
 All write endpoints (except logout) require a valid session cookie. Read endpoints on documents with `allow_anonymous_view = true` (and status ≠ `draft`) permit unauthenticated access. `GET /api/variants/:id` additionally allows anonymous access when `allow_anonymous_share = 1` on the variant — unless the variant is hidden by a moderator, in which case non-supervisors get 404.
 
@@ -442,7 +442,7 @@ See `specs/use-cases.md` for full user-facing flows.
 
 ### Role gating in the browser
 
-`hasLevel(doc, minLevel)` in `app.js` compares `doc.my_access_level` (returned by `GET /documents/:id`) with the same `ACCESS_LEVELS` order the server uses. Every control that triggers a write is shown only when the server would accept it: Change status (supervisor+, voting-cycle transitions only below admin), Mark as Resolved (supervisor+), Settings and Delete (editor+ / owner), Propose (proposer+, not resolved/archived), vote buttons (voter+, voting open — otherwise disabled with a note), comment form (commenter+), Fork (proposer+ on open, supervisor+ during voting), Manage access and Moderation (supervisor+, edits admin-only). The review, conflict and final-voting views call `_requireSupervisor(doc)` first.
+`hasLevel(doc, minLevel)` in `app.js` compares `doc.my_access_level` (returned by `GET /documents/:id`) with the same `ACCESS_LEVELS` order the server uses. Every control that triggers a write is shown only when the server would accept it: Change status (supervisor+, voting-cycle transitions only below admin), Mark as Resolved (supervisor+), Settings and Delete (editor+ / owner), Propose (proposer+ while draft/open, supervisor+ during voting/final_voting like Fork, never when resolved/archived — `POST /documents/:id/variants` answers 403 below that, since an untallied late proposal blocks the resolve gate), vote buttons (voter+, voting open — otherwise disabled with a note), comment form (commenter+), Fork (proposer+ on open, supervisor+ during voting), Manage access and Moderation (supervisor+, edits admin-only). The review, conflict and final-voting views call `_requireSupervisor(doc)` first.
 
 ### Session and modal hygiene
 

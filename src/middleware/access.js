@@ -82,14 +82,14 @@ const VISIBLE_DOCUMENT_IDS_SQL = `
     )`;
 
 // Strip activity metadata that only supervisors should read: the previous text
-// of edited comments and the email addresses of invitees.
+// of edited comments, the email addresses of invitees and how a voter voted.
+const REDACTED_METADATA = ['previous_text', 'email', 'vote_value'];
 function redactActivity(rows) {
     return rows.map(row => {
         let meta;
         try { meta = JSON.parse(row.metadata || '{}'); } catch { return row; }
-        if (!('previous_text' in meta) && !('email' in meta)) return row;
-        delete meta.previous_text;
-        delete meta.email;
+        if (!REDACTED_METADATA.some(k => k in meta)) return row;
+        for (const k of REDACTED_METADATA) delete meta[k];
         return { ...row, metadata: JSON.stringify(meta) };
     });
 }
