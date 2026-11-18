@@ -63,7 +63,7 @@ ls deploy.env .env.example 2>&1
 npm audit --omit=dev 2>&1 | tail -5
 npm outdated 2>&1 | head
 ```
-Report vulnerabilities in production dependencies. Do not run `npm audit fix` or change `package.json` — the owner decides on upgrades (CLAUDE.md).
+Report vulnerabilities in production dependencies. Do not run `npm audit fix` or change `package.json` — the owner decides on upgrades (CLAUDE.md). Findings under `nodemon` or `kokoro-js` (dev only, `--omit=dev` hides them) are noise unless they appear without the flag's exclusion; say so instead of listing them.
 
 **10. Tutorial toolkit**
 ```bash

@@ -204,6 +204,13 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 - [ ] With the Oslo video published too: both links appear, labelled Tutorial (English) and Tutorial · Oslo (English)
 - [ ] After the Norwegian takes: `npm run tutorial -- all --scenario oslo --lang no --burn`, publish, deploy — a third link "Tutorial · Oslo (norsk)" appears, plays with Norwegian voice and Norwegian burnt-in subtitles, and the chapter markers show the Norwegian chapter titles
 
+## Security review (2026-11-18)
+
+- [ ] Document in `voting`, signed in as a plain **proposer**: no Propose button, no bottom-bar Propose on the phone, drag-selecting text shows no toolbar; the same account on an `open` document still proposes
+- [ ] The same document as **supervisor** (or owner): Propose is offered during voting and the proposal lands as pending
+- [ ] Vote on a proposal as a voter, then open the document's Activity as another voter: the vote event is listed with the voter's name but without for/against; the owner's feed shows the choice
+- [ ] Manage access → type `nobody` (no `@`) and Invite: the error toast says *Valid email required* and the list is unchanged
+
 ## Sign-off
 
 | UC | Validated by | Date | Result |
@@ -224,4 +231,5 @@ Playwright covers the toolbar with programmatic selections (Firefox mouse, Chrom
 | Design pass (phone + desktop) | | | |
 | Dark mode (phone + desktop + print) | | | |
 | Tutorial video links | | | |
+| Security review 2026-11-18 | | | |
 | Deploy | | | |

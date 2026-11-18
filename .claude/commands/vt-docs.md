@@ -8,7 +8,7 @@ Update all documentation artifacts after a VoteText feature is completed. Work t
 
 ## 2. specs/test-plan.md
 - Add a new Group with a table of test scenarios — check the current last group letter in test-plan.md (do not trust this file's mapping to be complete) and use the letter matching the new group in tests/api.test.js
-- Group mapping for reference: A=auth, B=docs, C=variants, D=relations, E=voting, F=comments, G=access, H=status, I=activity, J=config, K=review-view, L=final-voting, M=gap-fixes, N=auto-assign, O=share, P=draft-restriction, Q=final-vote-log, R=resolved-text, S=copy-data, T=thresholds, U=fork, W=supervisor, V=hmac-sessions, X=moderation, Y=access-matrix+expiry, Z=comment-editing, AA=2026-10 review fixes, AB=activity-log actions, AC=security hardening (roles, caps), AD=paged import, AE=my_vote in the proposal list (after Z the letters double)
+- Group mapping for reference: A=auth, B=docs, C=variants, D=relations, E=voting, F=comments, G=access, H=status, I=activity, J=config, K=review-view, L=final-voting, M=gap-fixes, N=auto-assign, O=share, P=draft-restriction, Q=final-vote-log, R=resolved-text, S=copy-data, T=thresholds, U=fork, W=supervisor, V=hmac-sessions, X=moderation, Y=access-matrix+expiry, Z=comment-editing, AA=2026-10 review fixes, AB=activity-log actions, AC=security hardening (roles, caps), AD=paged import, AE=my_vote in the proposal list, AF=security review 2026-11-18 (after Z the letters double)
 - Every row must have a non-empty Expected column — fill it even if it seems obvious
 - Add any new manual UI checklist items at the bottom of the checklist section
 
@@ -30,7 +30,7 @@ Update all documentation artifacts after a VoteText feature is completed. Work t
 - Update a rule or pattern section if the feature changed how things must be done (access checks, email, logging, migrations, testing)
 
 ## 3d. Other artifacts — update only those the feature touches
-- `plan-update.md` — move the item to "Done", adjust the remaining phases and the test counts
+- `plan-update.md` — move the item to "Done", adjust the remaining phases and the test counts; a security finding gets a "Patched" note under its T table with the commit, the test group and what still waits on the owner (a server-side fix says where it lands: the repo template, or B.2 on the live VM)
 - `specs/user-stories.md` — if a browser flow changed; keep the coverage map's e2e count right
 - `specs/manual-validation.md` — add a walkthrough and a sign-off row for anything not covered by e2e
 - `specs/tutorial-video-script.md` AND `specs/tutorial-video-script.no.md` — the `[screen: …]` cues are identical in both (a unit test fails otherwise); change them together and translate the narration; each cue is a beat of the scripted recording: when a cue is added or removed, the chapter's action script in `tutorial/chapters/` needs one function per cue (the unit test checks the count), and the Oslo pair `tutorial-video-script.oslo.md` / `.oslo.no.md` must carry the same cue count per chapter (one set of chapters serves every scenario); narration changes re-synthesise automatically (cached by text hash) — a changed Norwegian beat means a new take (`specs/tutorial-norwegian-recording.md`)
